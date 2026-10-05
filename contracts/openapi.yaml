@@ -1,0 +1,330 @@
+# 前后端契约（唯一真相）
+#
+# 规则：
+#  - 前端不得绕过本契约访问磁盘；后端严格实现本契约。
+#  - 契约先行：改这里 → 同步 web/src/api/contract.ts → 改后端实现。
+#  - 单用户、家用部署（Tailscale 内网）。所有路径均为**服务端可见的真实磁盘路径**。
+openapi: 3.1.0
+info:
+  title: art-workspace API
+  version: 0.1.0
+  description: 照片整理 web 应用：目录浏览、RAW+JPEG 配对、星级/待删标记、按规则归档。
+servers:
+  - url: /api/v1
+    description: 前端经同源 /api/v1（Vite dev 代理或生产同域反向代理）
+
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
+
+  /session:
+    post:
+      summary: 单用户登录（换取会话 cookie）
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { password: { type: string } }, required: [password] } } }
+      responses:
+        "204": { description: 已建立会话（Set-Cookie） }
+        "401": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: 注销
+      responses:
+        "204": { description: 已注销 }
+
+  /folders:
+    get:
+      summary: 列出一个目录（下钻/上翻），并返回该目录可见照片数
+      parameters:
+        - { name: path, in: query, schema: { type: string }, description: 绝对路径；省略则返回已配置的根目录 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, folders, photoCount]
+                properties:
+                  path: { type: string }
+                  parent: { type: string, nullable: true }
+                  folders:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, path]
+                      properties:
+                        name: { type: string }
+                        path: { type: string }
+                        photoCount: { type: integer, description: 递归可见照片数（可为空表示未统计） }
+                        hasSubfolders: { type: boolean }
+                  photoCount: { type: integer, description: 本目录直接含有的照片对数 }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /photos:
+    get:
+      summary: 列出目录内的照片（配对后的一等实体）
+      parameters:
+        - { name: dir, in: query, required: true, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
+        - { name: filter, in: query, schema: { type: string, enum: [all, starred, trash, unmarked], default: all } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Photo" } }
+                  nextCursor: { type: string, nullable: true }
+                  total: { type: integer }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /photos/{id}/thumb:
+    get:
+      summary: 分层预览缩略图（JPEG）
+      description: 服务端按票 001 的分层管线提供：外部 JPEG → 内嵌 JPEG 提取 → LibRaw 兜底；结果进 512/2048 两档缓存。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: size, in: query, schema: { type: integer, enum: [512, 2048], default: 512 } }
+      responses:
+        "200": { description: JPEG 字节, content: { image/jpeg: { schema: { type: string, format: binary } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error", description: 该文件无法生成预览 }
+
+  /photos/{id}/file:
+    get:
+      summary: 原始文件（RAW 或 JPEG）下载/直出
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: variant, in: query, schema: { type: string, enum: [jpeg, raw, auto], default: auto } }
+      responses:
+        "200": { description: 原始字节, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /marks:
+    put:
+      summary: 批量写入星级/待删
+      description: |
+        语义（前后端共同不变式）：
+        - `stars > 0` 与 `del = true` 互斥；同时给出时以 `del` 为准（清星）。
+        - 以 **pair 为单位**：一次请求内的 RAW/JPEG 视为同一实体，一起写入。
+        - `stars` 通过共享 XMP 持久化（与 Lightroom / Capture One 互通）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items: { type: array, minItems: 1, items: { $ref: "#/components/schemas/MarkInput" } }
+      responses:
+        "200":
+          description: 写入结果（逐项）
+          content:
+            application/json:
+              schema: { type: object, required: [results], properties: { results: { type: array, items: { $ref: "#/components/schemas/MarkResult" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /trash:
+    get:
+      summary: 回收站内容
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/TrashEntry" } } } }
+    post:
+      summary: 移入回收站（逻辑删除，可恢复）
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: string } } } } } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/OpResult" } } } }
+    delete:
+      summary: 清空回收站（**唯一真正删除磁盘文件的入口**，需显式确认）
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { ids: { type: array, items: { type: string } }, confirm: { type: boolean, const: true } } } } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/OpResult" } } } }
+
+  /trash/restore:
+    post:
+      summary: 从回收站恢复
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: string } } } } } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/OpResult" } } } }
+
+  /archive/plan:
+    post:
+      summary: 预演归档（只计算不移动）
+      description: 按规则模板展开目标路径，返回将发生的移动、冲突与总体积，供用户确认。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dir]
+              properties:
+                dir: { type: string, description: 待归档目录 }
+                ruleId: { type: string }
+                ruleYaml: { type: string, description: 临时规则（未保存），与 ruleId 二选一 }
+                ids: { type: array, items: { type: string }, description: 省略 = 该目录全部标记照片 }
+                moveFlaggedOnly: { type: boolean, default: true, description: true = 只移动已打星/未待删者 }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ArchivePlan" } } } }
+        "422": { $ref: "#/components/responses/Error", description: 规则非法 }
+
+  /archive/apply:
+    post:
+      summary: 执行归档计划（原子化：失败可回滚）
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [planId], properties: { planId: { type: string } } } } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ArchiveResult" } } } }
+        "409": { $ref: "#/components/responses/Error", description: 计划已过期或冲突 }
+
+  /rules:
+    get:
+      summary: 列出归档规则
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Rule" } } } } } } }
+    put:
+      summary: 保存归档规则（校验后落盘）
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Rule" } } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Rule" } } } }
+        "422": { $ref: "#/components/responses/Error" }
+
+components:
+  responses:
+    Error:
+      description: 错误
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  schemas:
+    Health:
+      type: object
+      required: [ok, version, roots]
+      properties:
+        ok: { type: boolean }
+        version: { type: string }
+        roots: { type: array, items: { type: string }, description: 已配置的可浏览根目录 }
+
+    Photo:
+      type: object
+      description: 配对后的照片实体（RAW+JPEG 视为一个实体）
+      required: [id, dir, displayName, ar, kind, stars, del]
+      properties:
+        id: { type: string, description: 稳定 id（服务端生成，通常是主文件路径的 hash） }
+        dir: { type: string }
+        displayName: { type: string }
+        kind: { type: string, enum: [photo, video] }
+        ar: { type: number, description: 宽高比（w/h），用于布局占位 }
+        width: { type: integer }
+        height: { type: integer }
+        orientation: { type: integer, enum: [1, 2, 3, 4, 5, 6, 7, 8] }
+        capturedAt: { type: string, format: date-time, nullable: true }
+        camera: { type: string, nullable: true }
+        lens: { type: string, nullable: true }
+        hasRaw: { type: boolean }
+        hasJpeg: { type: boolean }
+        rawPath: { type: string, nullable: true }
+        jpegPath: { type: string, nullable: true }
+        sizeBytes: { type: integer }
+        mtime: { type: string, format: date-time }
+        stars: { type: integer, minimum: 0, maximum: 5 }
+        del: { type: boolean }
+        preview: { type: string, enum: [external_jpeg, embedded_jpeg, raw_decode, pending], description: 预览来源（排查用） }
+        focusHint: { type: string, enum: [sharp, soft, miss], nullable: true, description: 可选的模糊/跑焦提示（未来功能，前端可忽略） }
+
+    MarkInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        stars: { type: integer, minimum: 0, maximum: 5 }
+        del: { type: boolean }
+
+    MarkResult:
+      type: object
+      required: [id, ok]
+      properties:
+        id: { type: string }
+        ok: { type: boolean }
+        stars: { type: integer }
+        del: { type: boolean }
+        error: { type: string, nullable: true }
+
+    TrashEntry:
+      type: object
+      required: [id, displayName, trashedAt, originalDir]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        originalDir: { type: string }
+        trashedAt: { type: string, format: date-time }
+        sizeBytes: { type: integer }
+
+    OpResult:
+      type: object
+      required: [ok, failed]
+      properties:
+        ok: { type: integer, description: 成功条数 }
+        failed: { type: array, items: { type: object, properties: { id: { type: string }, error: { type: string } } } }
+
+    ArchivePlan:
+      type: object
+      required: [id, moves, expiresAt]
+      properties:
+        id: { type: string }
+        expiresAt: { type: string, format: date-time }
+        moves:
+          type: array
+          items:
+            type: object
+            required: [photoId, from, to]
+            properties:
+              photoId: { type: string }
+              from: { type: string }
+              to: { type: string }
+              conflict: { type: string, nullable: true, enum: [exists, same_path, null] }
+        summary: { type: object, properties: { count: { type: integer }, bytes: { type: integer }, newDirs: { type: array, items: { type: string } } } }
+
+    ArchiveResult:
+      type: object
+      required: [ok, moved, failed]
+      properties:
+        ok: { type: integer }
+        moved: { type: array, items: { type: string } }
+        failed: { type: array, items: { type: object, properties: { photoId: { type: string }, error: { type: string }, rolledBack: { type: boolean } } } }
+
+    Rule:
+      type: object
+      required: [id, name, yaml]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        yaml: { type: string, description: "目标路径模板与条件（DSL 由票 003 定稿）" }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: 机器可读错误码 }
+        message: { type: string }
+        detail: { type: object, additionalProperties: true }

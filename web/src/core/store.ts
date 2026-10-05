@@ -1,0 +1,288 @@
+import { useSyncExternalStore } from 'react';
+import { source } from '../api';
+import { NO_MARK, type FolderListing, type Mark, type Photo, type ViewMode } from './types';
+
+/**
+ * 挑片会话状态（前端唯一可写状态源）。
+ * 职责：照片列表、当前游标、打标（星级/待删互斥）、撤销栈、模式切换。
+ * 不负责：渲染（组件）、磁盘（后端）、缩略图生成（api 层）。
+ */
+
+export type UndoKind = 'stars' | 'del' | 'skip';
+
+export interface UndoEntry {
+  kind: UndoKind;
+  id: string;
+  /** 撤销前的值（stars 为数字，del 为布尔） */
+  prev?: number | boolean;
+  /** 撤销时卡片回飞方向：1 = 从右回，-1 = 从左回，0 = 淡入 */
+  dir: -1 | 0 | 1;
+}
+
+export interface AppState {
+  dir: string;
+  listing: FolderListing | null;
+  items: Photo[];
+  /** 模式 A 的当前卡片下标 */
+  cursor: number;
+  mode: ViewMode;
+  loading: boolean;
+  error: string | null;
+  /** 底部提示（最近一次动作；供人确认「刚才发生了什么」） */
+  notice: string;
+  /** 撤销/回退后新卡片的入场方向，与 entryToken 一起构成一次性动画信号 */
+  entryDir: -1 | 0 | 1;
+  entryToken: number;
+  canUndo: boolean;
+}
+
+const INITIAL: AppState = {
+  dir: '/photos/2026-冰岛',
+  listing: null,
+  items: [],
+  cursor: 0,
+  mode: 'a',
+  loading: false,
+  error: null,
+  notice: '',
+  entryDir: 0,
+  entryToken: 0,
+  canUndo: false,
+};
+
+type Listener = () => void;
+
+class AppStore {
+  private state: AppState = INITIAL;
+  private listeners = new Set<Listener>();
+  private undoStack: UndoEntry[] = [];
+  private saveTimer: number | null = null;
+
+  subscribe = (listener: Listener): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  getState = (): AppState => this.state;
+
+  private patch(partial: Partial<AppState>) {
+    this.state = { ...this.state, ...partial, canUndo: this.undoStack.length > 0 };
+    this.listeners.forEach((l) => l());
+  }
+
+  /* ── 载入 ───────────────────────────────────────────── */
+
+  async open(dir: string) {
+    this.patch({ dir, loading: true, error: null });
+    try {
+      const [listing, page] = await Promise.all([source.listFolders(dir), source.listPhotos({ dir })]);
+      this.undoStack = [];
+      this.patch({ listing, items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
+      this.flash(`载入 ${page.items.length} 张 · ${dir}`);
+    } catch (err) {
+      this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  setMode(mode: ViewMode) {
+    if (mode === this.state.mode) return;
+    this.patch({ mode });
+  }
+
+  /* ── 打标（星级与待删互斥） ─────────────────────────── */
+
+  setStars(id: string, stars: number, why = '打星') {
+    const it = this.find(id);
+    if (!it) return;
+    const prev = it.mark.stars;
+    if (prev === stars) {
+      if (stars === 0) return;
+      // 再点同一颗星 = 取消
+      this.pushUndo({ kind: 'stars', id, prev, dir: 0 });
+      this.write(id, { stars: 0, del: false });
+      this.flash(`${why}：#${this.label(id)} 清除星标`);
+      return;
+    }
+    this.pushUndo({ kind: 'stars', id, prev, dir: 0 });
+    this.write(id, { stars, del: false });
+    this.flash(`${why}：#${this.label(id)} → ${'★'.repeat(stars)}`);
+  }
+
+  toggleDel(id: string, why = '待删') {
+    const it = this.find(id);
+    if (!it) return;
+    const next = !it.mark.del;
+    this.pushUndo({ kind: 'del', id, prev: it.mark.del, dir: 0 });
+    this.write(id, { stars: next ? 0 : it.mark.stars, del: next });
+    this.flash(next ? `${why}：#${this.label(id)} 🗑 待删` : `${why}：#${this.label(id)} 已恢复`);
+  }
+
+  /** 清空当前照片的所有标记 */
+  clearMark(id: string) {
+    const it = this.find(id);
+    if (!it) return;
+    if (!it.mark.stars && !it.mark.del) return;
+    this.pushUndo({ kind: 'stars', id, prev: it.mark.stars, dir: 0 });
+    this.write(id, { stars: 0, del: false });
+    this.flash(`清空标记：#${this.label(id)}`);
+  }
+
+  /* ── 卡片流：推进 / 撤销 ────────────────────────────── */
+
+  /**
+   * 提交一次滑动并推进到下张。
+   * @param dir  1 = 右滑（喜欢，用 stars 张数）；-1 = 左滑（待删）
+   * @param stars 右滑时的星数（1..5）
+   */
+  commitSwipe(dir: 1 | -1, stars = 1) {
+    const it = this.current();
+    if (!it) return;
+    if (dir > 0) {
+      if (it.mark.stars === 0) {
+        this.pushUndo({ kind: 'stars', id: it.id, prev: 0, dir: 1 });
+        this.write(it.id, { stars, del: false });
+        this.flash(`右滑喜欢 ${stars} 星：#${this.label(it.id)}`);
+      } else {
+        this.pushUndo({ kind: 'skip', id: it.id, dir: 1 });
+        this.flash(`跳过：#${this.label(it.id)}`);
+      }
+    } else if (!it.mark.del) {
+      this.pushUndo({ kind: 'del', id: it.id, prev: false, dir: -1 });
+      this.write(it.id, { stars: 0, del: true });
+      this.flash(`左滑待删：#${this.label(it.id)} 🗑`);
+    } else {
+      this.pushUndo({ kind: 'skip', id: it.id, dir: -1 });
+      this.flash(`跳过：#${this.label(it.id)}`);
+    }
+    this.advance(1);
+  }
+
+  /** 跳过当前（键盘流里的「下一张」） */
+  skip(dir: 1 | -1 = 1) {
+    const it = this.current();
+    if (!it) return;
+    this.pushUndo({ kind: 'skip', id: it.id, dir });
+    this.advance(dir);
+  }
+
+  undo() {
+    const entry = this.undoStack.pop();
+    if (!entry) {
+      this.flash('没有可撤销的操作');
+      return;
+    }
+    const it = this.find(entry.id);
+    if (!it) {
+      this.flash('撤销失败：照片已不在列表中');
+      return;
+    }
+    if (entry.kind === 'stars') {
+      this.write(entry.id, { stars: Number(entry.prev ?? 0), del: false }, false);
+      this.flash(`撤销：#${this.label(entry.id)} 星级 → ${entry.prev ? '★'.repeat(Number(entry.prev)) : '无'}`);
+    } else if (entry.kind === 'del') {
+      this.write(entry.id, { stars: it.mark.stars, del: Boolean(entry.prev) }, false);
+      this.flash(`撤销：#${this.label(entry.id)} ${entry.prev ? '恢复待删' : '取消待删'}`);
+    } else {
+      this.flash(`撤销：回到 #${this.label(entry.id)}`);
+    }
+    const index = this.indexOf(entry.id);
+    this.patch({
+      cursor: index,
+      entryDir: entry.dir,
+      entryToken: this.state.entryToken + 1,
+    });
+    this.scheduleSave();
+  }
+
+  reset() {
+    this.items().forEach((it) => {
+      it.mark = { ...NO_MARK };
+    });
+    this.undoStack = [];
+    this.patch({ cursor: 0, entryDir: 0, entryToken: this.state.entryToken + 1 });
+    this.flash('已重置全部标记');
+    this.scheduleSave();
+  }
+
+  /* ── 内部 ───────────────────────────────────────────── */
+
+  current(): Photo | undefined {
+    return this.state.items[this.state.cursor];
+  }
+
+  indexOf(id: string): number {
+    return this.state.items.findIndex((i) => i.id === id);
+  }
+
+  private items(): Photo[] {
+    return this.state.items;
+  }
+
+  private find(id: string): Photo | undefined {
+    return this.state.items.find((i) => i.id === id);
+  }
+
+  /** 给提示信息用的短标签（显示名末尾序号，便于口头确认） */
+  private label(id: string): string {
+    const idx = this.indexOf(id);
+    const it = this.find(id);
+    return `${String(idx + 1).padStart(2, '0')}${it ? ` ${it.displayName}` : ''}`;
+  }
+
+  /** 就地更新标记并广播（items 数组本身是可变模型，靠 state 对象换代触发渲染） */
+  private write(id: string, mark: Partial<Mark>, broadcast = true) {
+    const it = this.find(id);
+    if (!it) return;
+    it.mark = { stars: mark.stars ?? it.mark.stars, del: mark.del ?? it.mark.del };
+    if (it.mark.stars > 0 && it.mark.del) it.mark.del = false; // 不变式：互斥
+    if (broadcast) this.patch({});
+    this.scheduleSave();
+  }
+
+  private pushUndo(entry: UndoEntry) {
+    this.undoStack.push(entry);
+    if (this.undoStack.length > 200) this.undoStack.shift();
+  }
+
+  private advance(delta: number) {
+    this.patch({
+      cursor: Math.max(0, Math.min(this.state.items.length, this.state.cursor + delta)),
+      entryDir: 0,
+    });
+  }
+
+  flash(notice: string) {
+    this.patch({ notice });
+  }
+
+  /** 标记变更合并保存到后端（mock 下是空操作） */
+  private scheduleSave() {
+    if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => {
+      this.saveTimer = null;
+      const payload = this.state.items.map((it) => ({ id: it.id, stars: it.mark.stars, del: it.mark.del }));
+      void source
+        .saveMarks(payload)
+        .catch((err: unknown) => this.flash(`保存失败：${err instanceof Error ? err.message : String(err)}`));
+    }, 400);
+  }
+}
+
+export const store = new AppStore();
+
+/** 订阅整个状态（state 对象仅在变更时换代，可安全用于 useSyncExternalStore） */
+export function useAppState(): AppState {
+  return useSyncExternalStore(store.subscribe, store.getState, store.getState);
+}
+
+export function counts(items: Photo[]): { starred: number; trash: number; none: number } {
+  let starred = 0;
+  let trash = 0;
+  for (const it of items) {
+    if (it.mark.del) trash++;
+    else if (it.mark.stars > 0) starred++;
+  }
+  return { starred, trash, none: items.length - starred - trash };
+}
