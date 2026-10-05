@@ -1,0 +1,80 @@
+<!doctype html><meta charset="utf-8"><title>audit</title>
+<style>html,body{margin:0}iframe{border:0;width:100vw;height:100vh;display:block}#out{display:none}</style>
+<iframe id="f" src="/002-culling-interaction.html"></iframe>
+<pre id="out"></pre>
+<script>
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const R = el => { const r = el.getBoundingClientRect(); return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) }; };
+const L = c => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }; return .2126 * f(c[0]) + .7152 * f(c[1]) + .0722 * f(c[2]); };
+const parseC = s => { const m = s.match(/\d+(\.\d+)?/g); return m ? m.slice(0, 3).map(Number) : null; };
+const opaque = s => s && !s.includes('rgba(0, 0, 0, 0)') && s !== 'transparent';
+
+async function auditFrame(w, h) {
+  const f = document.getElementById('f');
+  f.style.width = w + 'px'; f.style.height = h + 'px';
+  f.src = '/002-culling-interaction.html';
+  await sleep(1400);
+  const d = f.contentDocument, win = f.contentWindow;
+  const q = s => d.querySelector(s), all = s => [...d.querySelectorAll(s)];
+  const out = { viewport: w + 'x' + h, overflow: [], A: {}, C: {}, smallTargets: [], tinyText: [], contrast: [] };
+
+  out.overflow = all('body *').filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && (r.right > w + 1 || r.left < -1 || r.bottom > h + 1); })
+    .slice(0, 12).map(el => (el.className || el.tagName) + ' ' + JSON.stringify(R(el)));
+
+  // ---- A 模式 ----
+  const st = q('.va-stage'), stack = q('.va-stack'), card = q('.va-card'), row = q('.va-stars');
+  if (st && stack && card) {
+    const vr = w * h;
+    out.A.stack = R(stack); out.A.card = R(card);
+    out.A.photoAreaPct = +((out.A.card.w * out.A.card.h) / vr * 100).toFixed(1);
+    out.A.stage = R(st);
+    out.A.unders = all('.va-under').map(R);
+    out.A.row = R(row);
+    out.A.btns = { undo: R(q('.va-undo')), del: R(q('.va-del')) };
+    out.A.stars = all('.va-stars button').filter(b => !b.classList.contains('va-undo') && !b.classList.contains('va-del')).map(b => R(b)).slice(0, 5);
+    out.A.chips = all('.chips .chip').map(el => ({ t: el.textContent, ...R(el) }));
+    out.A.hintVisible = !!q('.va-hint') && getComputedStyle(q('.va-hint')).display !== 'none';
+  }
+
+  // ---- C 模式 ----
+  f.contentWindow.location.hash = '#variant=c';
+  await sleep(900);
+  const grid = q('.vc-wrap');
+  if (grid) {
+    const tiles = all('.vc-tile');
+    out.C.grid = R(grid); out.C.tiles = tiles.length;
+    out.C.tile0 = tiles[0] ? R(tiles[0]) : null;
+    out.C.columns = getComputedStyle(q('.vc-grid') || grid).columnCount;
+    out.C.marks = { stars: all('.vc-tile .stars-mini').filter(e => e.textContent).length, trash: all('.vc-tile.is-trash').length };
+  }
+  f.contentWindow.location.hash = '#variant=a';
+  await sleep(700);
+
+  // ---- 通用：点击目标 / 小字 / 对比度 ----
+  out.smallTargets = all('button').filter(b => { const r = b.getBoundingClientRect(); return r.height > 0 && (r.width < 40 || r.height < 40); })
+    .slice(0, 14).map(b => ({ c: b.className || b.id, w: +b.getBoundingClientRect().width.toFixed(0), h: +b.getBoundingClientRect().height.toFixed(0) }));
+  out.tinyText = all('body *').filter(el => el.children.length === 0 && el.textContent.trim() && parseFloat(getComputedStyle(el).fontSize) < 11 && getComputedStyle(el).display !== 'none')
+    .slice(0, 12).map(el => ({ c: el.className || el.tagName, fs: getComputedStyle(el).fontSize, t: el.textContent.trim().slice(0, 14) }));
+
+  const samples = ['.chip', '.stat', '.va-hint', '#log', '.segmented button', '.cull-top .name', '.vc-mk'];
+  for (const sel of samples) {
+    for (const el of all(sel).slice(0, 2)) {
+      const fg = parseC(getComputedStyle(el).color);
+      let e = el, bg = null;
+      while (e) { const b = getComputedStyle(e).backgroundColor; if (opaque(b)) { bg = parseC(b); break; } e = e.parentElement; }
+      if (fg && bg) {
+        const l1 = L(fg), l2 = L(bg), r = ((Math.max(l1, l2) + .05) / (Math.min(l1, l2) + .05));
+        out.contrast.push({ sel, t: el.textContent.trim().slice(0, 12), ratio: +r.toFixed(2), fs: getComputedStyle(el).fontSize, ok: r >= 4.5 });
+      }
+    }
+  }
+  return out;
+}
+
+window.addEventListener('load', async () => {
+  const res = [];
+  res.push(await auditFrame(390, 844));
+  res.push(await auditFrame(1280, 800));
+  document.getElementById('out').textContent = JSON.stringify(res, null, 1);
+});
+</script>
