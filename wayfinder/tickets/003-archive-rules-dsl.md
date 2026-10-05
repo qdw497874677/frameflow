@@ -45,6 +45,13 @@ blocked-by: []
 - Rapid Photo Downloader（最成熟的「按规则归档」）**没有文本语法**，是图形化勾选 Name/图像编号/日期/ISO/相机的组合器；它会一起改名 XMP，且遵循 Adobe 规范 `IMG_1234.xmp`（不是 `IMG_1234.ARW.xmp`） —— 影子文件的写法与我方 `pair` 定义一致。
 - Immich 用 `{{y}}/{{MM}}-{{dd}}/{{filename}}` 这种 mustache 模板，**重名追加序号、绝不覆盖** —— 冲突策略与我方 `rename` 一致。
 
+### 后记（票已关闭之后）
+
+**这套能力已被移出产品路线，实现已整体删除。** 用户 m01565 问「归档是什么，是不是可以简化掉」，m01572 定下「文件夹我可以先整理好，只需要导入文件夹扫描所有照片进行标记就可以了」。
+所以：状态 `closed` 表示「这个 DSL 问题有过答案」，不再表示「要按它实现」。规范草稿留在 [contracts/rules.md](../../contracts/rules.md)，语义见 [ADR 0002](../../docs/adr/0002-archive-rule-semantics.md)（已标为被取代），地图上已记入 Out of scope。
+同批删除：`web/src/features/archive/`、`web/src/features/rules/`、openapi 的 `/archive/*` 与 `/rules`、`server/` 的 `archive`/`rules` 模块。
+唯一还会被将来的票用到的是「影子文件成组」与「写 XMP 不覆盖」两条——它们已经归票 001 的 pair 定义。
+
 ### 未决
 
 - `devices.yaml` 与「项目名记忆」存在哪，归票 004（状态存哪）。

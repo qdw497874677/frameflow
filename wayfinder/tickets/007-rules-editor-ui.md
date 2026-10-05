@@ -2,12 +2,18 @@
 id: "007"
 title: 规则编辑器的形态
 labels: [wayfinder:prototype]
-status: open
-assignee: ""
+status: closed
+assignee: "qdw"
 blocked-by: []
 ---
 
-## Question
+## Resolution
+
+**不做**（关闭原因：scope）。规则编辑器服务的是归档规则引擎，而归档整套已被移出产品路线（用户 m01565 / m01572，见地图 Out of scope 与票 003 后记）。
+问题本身（表单 vs 文本、顺序呈现、命中预演、错误定位）没有答案，也不需要答案；前端 `web/src/features/rules/` 与 openapi 的 `/rules` 已删除。
+将来若重做归位/导出（新图），这份问题清单可以当起点。
+
+## Question（原样保留）
 
 规则 [DSL 已定义](../../contracts/rules.md)（YAML + `{token}` 模板、首条命中即停、条件 AND / 同字段数组 OR）。
 现在要定的是：**人在屏幕上怎么改它**。

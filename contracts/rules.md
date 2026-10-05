@@ -1,7 +1,11 @@
 # 归档规则 DSL · v1 规范
 
-状态：由 wayfinder 票 003 钉死。前端 `GET/PUT /rules` 读写的就是这份结构，后端实现以此为准，
-`web/src/core/types.ts` 的 `Rule` / `RuleMatch` 是它的 TypeScript 投影。
+> ⚠️ **已停放：这套能力不在产品路线上（2026 起）。**
+> 归档（含规则引擎、`/archive/*` 与 `/rules` 端点、前端两个页面）已整体移除：用户判定「文件夹我可以先整理好，只需要导入文件夹扫描所有照片进行标记就可以了」（m01572）。见地图的 Out of scope 与 [ADR 0003](../docs/adr/0003-project-is-a-mapped-directory.md)。
+> 本文保留为**规范草稿**，只在将来重做「导出 / 归位」时参考。当前实现里**没有** `Rule` 类型、没有规则页、契约里没有 `/rules`。
+
+状态：由 wayfinder 票 003 钉死（随后被移出路线，见上）。前端 `GET/PUT /rules` 曾读写这份结构，
+`web/src/core/types.ts` 的 `Rule` / `RuleMatch` 曾是它的 TypeScript 投影。
 
 ## 1. 文件与加载
 

@@ -1,23 +1,18 @@
-import type { ListPhotosOptions, PhotoPage, PhotoSource, PlanOptions } from './source';
+import type { ListPhotosOptions, PhotoPage, PhotoSource } from './source';
 import { PALETTES, mulberry, renderMockPhoto, type FocusKind, type MockSpec } from './mock/render';
 import type {
-  ArchiveMove,
-  ArchivePlan,
-  ArchiveResult,
   FolderListing,
   MarkInput,
   MarkResult,
   OpResult,
   Photo,
   Root,
-  Rule,
-  RuleMatch,
   TrashEntry,
 } from '../core/types';
 
 /**
- * Mock 数据源：浏览器内假照片 + 假目录树 + 假回收站/规则/归档。
- * 目的是让整套交互（尤其手势/物理、变焦、归档预演）能在没有后端的情况下开发到位；
+ * Mock 数据源：浏览器内假照片 + 假目录树 + 假回收站。
+ * 目的是让整套交互（尤其手势/物理、变焦、回收站）能在没有后端的情况下开发到位；
  * 一旦后端可用，把 api/index.ts 切到 httpSource 即可，UI 不改。
  */
 
@@ -97,142 +92,14 @@ function toPhoto(rec: MockRecord): Photo {
   };
 }
 
-/** 设备名从「Sony A7M4 · 24-70」里取出机器那半截 */
-function deviceOf(camera: string | null | undefined): string {
-  return (camera ?? '未知设备').split('·')[0]!.trim();
-}
-
-/** 项目名 = 根目录之后的第一段路径（/photos/2026-冰岛/A7M4/… → 2026-冰岛） */
-function projectOf(dir: string): string {
-  const rest = dir.split('/').filter(Boolean);
-  return rest[1] ?? '未分项目';
-}
-
-/** 模板变量展开：{root} {project} {device} {kind} {variant} {date} */
-function expandTemplate(tpl: string, rec: MockRecord & { stars: number }, root: string): string {
-  const date = (rec.mtime ?? '').slice(0, 10);
-  const vars: Record<string, string> = {
-    root,
-    project: projectOf(rec.dir),
-    device: deviceOf(rec.camera),
-    kind: rec.kind === 'video' ? '视频' : '照片',
-    variant: rec.stars >= 3 ? '修改后' : '原始',
-    date,
-  };
-  return tpl.replace(/\{(\w+)\}/g, (_, key: string) => vars[key] ?? `{${key}}`);
-}
-
-const DEMO_RULES: Rule[] = [
-  {
-    id: 'rule-starred',
-    name: '喜欢的（≥3 星）→ 修改后',
-    enabled: true,
-    match: { stars: { gte: 3 }, marked: true },
-    action: 'move',
-    dest: '{root}/{project}/{device}/照片/修改后',
-    onConflict: 'rename',
-    pair: true,
-  },
-  {
-    id: 'rule-raw',
-    name: '其余原图 → 原始',
-    enabled: true,
-    match: { kind: 'photo' },
-    action: 'move',
-    dest: '{root}/{project}/{device}/照片/原始',
-    onConflict: 'rename',
-    pair: true,
-  },
-  {
-    id: 'rule-video',
-    name: '视频 → 视频目录',
-    enabled: false,
-    match: { kind: 'video' },
-    action: 'move',
-    dest: '{root}/{project}/{device}/视频',
-    onConflict: 'rename',
-    pair: false,
-  },
-];
-
-function asArray<T>(v: T | T[] | undefined): T[] | undefined {
-  if (v === undefined) return undefined;
-  return Array.isArray(v) ? v : [v];
-}
-
-/** 包含匹配（大小写不敏感）；`=xxx` 表示精确相等 */
-function textOk(cond: string | string[] | undefined, value: string | undefined): boolean {
-  const list = asArray(cond);
-  if (!list) return true;
-  if (!value) return false;
-  const hay = value.toLowerCase();
-  return list.some((raw) => {
-    const s = raw.trim().toLowerCase();
-    return s.startsWith('=') ? hay === s.slice(1) : hay.includes(s);
-  });
-}
-
-function kindOk(cond: RuleMatch['kind'], kind: 'photo' | 'video'): boolean {
-  const list = asArray(cond)?.filter((k) => k !== 'any');
-  if (!list || list.length === 0) return true;
-  return list.includes(kind);
-}
-
-function starsOk(cond: RuleMatch['stars'], stars: number): boolean {
-  if (cond === undefined) return true;
-  if (typeof cond === 'number') return stars >= cond;
-  if (cond.eq !== undefined) return stars === cond.eq;
-  if (cond.gte !== undefined && stars < cond.gte) return false;
-  if (cond.lte !== undefined && stars > cond.lte) return false;
-  return true;
-}
-
-function takenOk(cond: RuleMatch['taken'], mtime: string): boolean {
-  if (!cond) return true;
-  const at = new Date(mtime).getTime();
-  if (Number.isNaN(at)) return false;
-  if (cond.after && at < new Date(cond.after).getTime()) return false;
-  if (cond.before && at > new Date(cond.before).getTime()) return false;
-  if (cond.lastDays !== undefined && Date.now() - at > cond.lastDays * 86_400_000) return false;
-  return true;
-}
-
-/** 从 glob 里剥掉要匹配的目录前缀（mock 只需支持「某个目录之下」这种写法） */
-function folderOk(cond: string | undefined, dir: string): boolean {
-  if (!cond) return true;
-  const prefix = cond.replace(/\*+.*$/, '').replace(/\/?$/, '');
-  return prefix === '' ? true : dir.toLowerCase().startsWith(prefix.toLowerCase());
-}
-
-/** 票 003 的命中语义：不同条件 AND、同字段数组 OR、待删永不参与归档 */
-function matches(rule: Rule, rec: MockRecord & { stars: number; del: boolean }): boolean {
-  const m = rule.match;
-  if (!rule.enabled) return false;
-  if (rec.del) return false;
-  if (rule.onlyFrom?.length && !rule.onlyFrom.some((g) => folderOk(g, rec.dir))) return false;
-  if (!kindOk(m.kind, rec.kind)) return false;
-  if (!starsOk(m.stars, rec.stars)) return false;
-  if (m.marked !== undefined && m.marked !== (rec.stars > 0)) return false;
-  // mock 里镜头写在机身的同一个字符串里，两个条件都按它匹配
-  if (!textOk(m.camera, rec.camera)) return false;
-  if (!textOk(m.lens, rec.camera)) return false;
-  if (!takenOk(m.taken, rec.mtime)) return false;
-  if (!folderOk(m.folder, rec.dir)) return false;
-  return true;
-}
-
 export function createMockSource(): PhotoSource {
   const records = buildRecords(MOCK_ROOT);
   const byId = new Map(records.map((r) => [r.id, r]));
   const cache = new Map<string, string>();
   /** 进了回收站的 id（列表里就看不见了） */
   const trashed = new Map<string, TrashEntry>();
-  /** 已经归档搬走的 id */
-  const movedAway = new Map<string, string>();
-  const rules: Rule[] = DEMO_RULES.map((r) => ({ ...r, match: { ...r.match } }));
   const starsById = new Map<string, number>();
   const delById = new Map<string, boolean>();
-  const plans = new Map<string, ArchivePlan>();
 
   const thumbUrl = (photoId: string, size: 512 | 2048) => {
     const rec = byId.get(photoId);
@@ -272,7 +139,7 @@ export function createMockSource(): PhotoSource {
           photoCount: (MOCK_TREE[`${path}/${name}`] ?? []).length ? undefined : COUNT,
           hasSubfolders: Boolean(MOCK_TREE[`${path}/${name}`]?.length),
         })),
-        photoCount: path === MOCK_ROOT ? records.length - trashed.size - movedAway.size : 0,
+        photoCount: path === MOCK_ROOT ? records.length - trashed.size : 0,
       };
     },
 
@@ -282,7 +149,7 @@ export function createMockSource(): PhotoSource {
       const items =
         opts.dir === MOCK_ROOT
           ? records
-              .filter((r) => !trashed.has(r.id) && !movedAway.has(r.id))
+              .filter((r) => !trashed.has(r.id))
               .map((rec) => {
                 const photo = toPhoto(rec);
                 photo.mark.stars = starsById.get(rec.id) ?? 0;
@@ -346,77 +213,6 @@ export function createMockSource(): PhotoSource {
         if (trashed.delete(id)) n++;
       });
       return { ok: n, failed: [] };
-    },
-
-    async listRules(): Promise<Rule[]> {
-      return rules.map((r) => ({ ...r, match: { ...r.match } }));
-    },
-
-    async saveRules(next: Rule[]): Promise<Rule[]> {
-      rules.length = 0;
-      rules.push(...next.map((r) => ({ ...r, match: { ...r.match } })));
-      return rules.map((r) => ({ ...r, match: { ...r.match } }));
-    },
-
-    async planArchive(opts: PlanOptions): Promise<ArchivePlan> {
-      const only = opts.ruleIds?.length ? new Set(opts.ruleIds) : null;
-      const active = rules.filter((r) => r.enabled && (!only || only.has(r.id)));
-      const moves: ArchiveMove[] = [];
-      const skipped: ArchivePlan['skipped'] = [];
-      let totalBytes = 0;
-
-      for (const rec of records) {
-        if (trashed.has(rec.id) || movedAway.has(rec.id) || rec.dir !== opts.dir) continue;
-        const stars = starsById.get(rec.id) ?? 0;
-        const del = delById.get(rec.id) ?? false;
-        if (opts.onlyStarred && stars === 0) continue;
-        if (del) {
-          skipped.push({ photoId: rec.id, displayName: rec.displayName, reason: '待删：先移入回收站' });
-          continue;
-        }
-        const withStars = { ...rec, stars, del };
-        const rule = active.find((r) => matches(r, withStars));
-        if (!rule) {
-          skipped.push({ photoId: rec.id, displayName: rec.displayName, reason: '没有匹配的规则' });
-          continue;
-        }
-        const to = `${expandTemplate(rule.dest, withStars, '/photos')}/${rec.displayName}`;
-        if (to === `${rec.dir}/${rec.displayName}`) {
-          skipped.push({ photoId: rec.id, displayName: rec.displayName, reason: '已经在目标目录' });
-          continue;
-        }
-        const size = rec.hasRaw ? 52_000_000 : 9_000_000;
-        totalBytes += size;
-        moves.push({
-          photoId: rec.id,
-          displayName: rec.displayName,
-          from: rec.dir,
-          to,
-          kind: 'photo' as const,
-          stars,
-          sizeBytes: size,
-          ruleId: rule.id,
-          ruleName: rule.name,
-        });
-      }
-
-      const plan: ArchivePlan = {
-        id: `plan-${Date.now()}`,
-        dir: opts.dir,
-        createdAt: new Date().toISOString(),
-        moves,
-        skipped,
-        totalBytes,
-      };
-      plans.set(plan.id, plan);
-      return plan;
-    },
-
-    async applyArchive(planId: string): Promise<ArchiveResult> {
-      const plan = plans.get(planId);
-      if (!plan) return { planId, moved: 0, failed: [{ id: planId, error: '预演不存在或已过期' }] };
-      plan.moves.forEach((m) => movedAway.set(m.photoId, m.to));
-      return { planId, moved: plan.moves.length, failed: [] };
     },
   };
 }

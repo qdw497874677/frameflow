@@ -73,8 +73,8 @@ export function SettingsPage() {
           </div>
           <Separator />
           <div className="space-y-1 text-muted-foreground">
-            <p>后端模块（server/）：scan 扫描配对 · preview 预览分层 · marks 星级写 XMP · trash 回收站 · archive 归档移动 · rules 规则引擎 · auth 鉴权 · httpapi 接口层。</p>
-            <p>不变式：磁盘是真相 · RAW+JPEG 成对原子 · 移动原子 · 缓存可重建。</p>
+            <p>后端模块（server/）：scan 扫描配对 · preview 预览分层 · marks 星级写 XMP · trash 回收站 · auth 鉴权 · httpapi 接口层。</p>
+            <p>不变式：磁盘是真相 · RAW+JPEG 成对原子 · 缓存可重建；应用只写星标（XMP）与回收站记录，不动原片。</p>
           </div>
         </CardContent>
       </Card>

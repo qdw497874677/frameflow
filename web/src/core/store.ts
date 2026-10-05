@@ -2,13 +2,10 @@ import { useSyncExternalStore } from 'react';
 import { source } from '../api';
 import {
   NO_MARK,
-  type ArchivePlan,
-  type ArchiveResult,
   type FolderListing,
   type Mark,
   type Photo,
   type Root,
-  type Rule,
   type TrashEntry,
   type View,
   type ViewMode,
@@ -70,9 +67,6 @@ export interface AppState {
   /** 哪些节点是展开的 */
   expanded: Record<string, boolean>;
   trash: TrashEntry[];
-  rules: Rule[];
-  plan: ArchivePlan | null;
-  archiveResult: ArchiveResult | null;
   /** 非挑片页的通用忙标志（载入回收站/规则/预演） */
   busy: boolean;
   loading: boolean;
@@ -101,9 +95,6 @@ const INITIAL: AppState = {
   tree: {},
   expanded: { '/photos': true },
   trash: [],
-  rules: [],
-  plan: null,
-  archiveResult: null,
   busy: false,
   loading: false,
   error: null,
@@ -163,8 +154,6 @@ class AppStore {
     if (view === this.state.view) return;
     this.patch({ view });
     if (view === 'trash') void this.loadTrash();
-    if (view === 'rules') void this.loadRules();
-    if (view === 'archive') void this.loadRules();
   }
 
   /** 载入根目录，并把第一个能用的根的子目录填进树里 */
@@ -236,59 +225,6 @@ class AppStore {
     const res = await source.emptyTrash(ids);
     await this.loadTrash();
     this.flash(`已真删 ${res.ok} 张（不可恢复）`);
-  }
-
-  /* ── 规则与归档 ─────────────────────────────────────── */
-
-  async loadRules() {
-    this.patch({ busy: true });
-    try {
-      const rules = await source.listRules();
-      this.patch({ rules, busy: false });
-    } catch (err) {
-      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  async saveRules(rules: Rule[]) {
-    const saved = await source.saveRules(rules);
-    this.patch({ rules: saved });
-    this.flash('规则已保存');
-  }
-
-  async toggleRule(id: string) {
-    const rules = this.state.rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
-    await this.saveRules(rules);
-  }
-
-  /** 预演：先看清楚会搬什么、搬到哪 */
-  async planArchive(opts: { ruleIds?: string[]; onlyStarred?: boolean } = {}) {
-    this.patch({ busy: true, archiveResult: null });
-    try {
-      const plan = await source.planArchive({ dir: this.state.dir, ...opts });
-      this.patch({ plan, busy: false });
-    } catch (err) {
-      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  async applyPlan() {
-    const plan = this.state.plan;
-    if (!plan) return;
-    this.patch({ busy: true });
-    try {
-      const result = await source.applyArchive(plan.id);
-      this.patch({ archiveResult: result, plan: null, busy: false });
-      this.flash(`归档完成：搬了 ${result.moved} 张`);
-      await this.open(this.state.dir);
-      await this.loadTree(this.state.dir);
-    } catch (err) {
-      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  clearPlan() {
-    this.patch({ plan: null, archiveResult: null });
   }
 
   /**

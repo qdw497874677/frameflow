@@ -1,6 +1,4 @@
 import type {
-  ArchivePlanDto,
-  ArchiveResultDto,
   FolderListingDto,
   MarkInputDto,
   MarkResultDto,
@@ -8,13 +6,10 @@ import type {
   PhotoDto,
   PhotoPageDto,
   RootDto,
-  RuleDto,
   TrashEntryDto,
 } from './contract';
-import type { ListPhotosOptions, PhotoPage, PhotoSource, PlanOptions } from './source';
+import type { ListPhotosOptions, PhotoPage, PhotoSource } from './source';
 import type {
-  ArchivePlan,
-  ArchiveResult,
   Folder,
   FolderListing,
   MarkInput,
@@ -22,7 +17,6 @@ import type {
   OpResult,
   Photo,
   Root,
-  Rule,
   TrashEntry,
 } from '../core/types';
 
@@ -91,55 +85,6 @@ export function toTrashEntry(dto: TrashEntryDto): TrashEntry {
     hasRaw: Boolean(dto.hasRaw),
     hasJpeg: Boolean(dto.hasJpeg),
     sizeBytes: dto.sizeBytes,
-  };
-}
-
-export function toRule(dto: RuleDto): Rule {
-  return {
-    id: dto.id,
-    name: dto.name,
-    enabled: dto.enabled !== false,
-    onlyFrom: dto.onlyFrom,
-    match: dto.match ? { ...dto.match } : {},
-    action: dto.action ?? 'move',
-    dest: dto.dest,
-    onConflict: dto.onConflict ?? 'rename',
-    pair: dto.pair !== false,
-  };
-}
-
-export function toRuleDto(rule: Rule): RuleDto {
-  return {
-    id: rule.id,
-    name: rule.name,
-    enabled: rule.enabled,
-    onlyFrom: rule.onlyFrom,
-    match: { ...rule.match },
-    action: rule.action,
-    dest: rule.dest,
-    onConflict: rule.onConflict,
-    pair: rule.pair,
-  };
-}
-
-export function toArchivePlan(dto: ArchivePlanDto): ArchivePlan {
-  return {
-    id: dto.id,
-    dir: dto.dir,
-    createdAt: dto.createdAt,
-    moves: dto.moves.map((m) => ({
-      photoId: m.photoId,
-      displayName: m.displayName,
-      from: m.from,
-      to: m.to,
-      kind: m.kind,
-      stars: m.stars ?? 0,
-      sizeBytes: m.sizeBytes,
-      ruleId: m.ruleId,
-      ruleName: m.ruleName,
-    })),
-    skipped: dto.skipped ?? [],
-    totalBytes: dto.totalBytes ?? 0,
   };
 }
 
@@ -221,30 +166,6 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
         body: JSON.stringify({ ids: ids ?? [] }),
       });
       return { ok: res.ok, failed: res.failed };
-    },
-
-    async listRules() {
-      const res = await request<{ rules: RuleDto[] }>(base, '/rules');
-      return res.rules.map(toRule);
-    },
-
-    async saveRules(rules: Rule[]) {
-      const body = JSON.stringify({ rules: rules.map(toRuleDto) });
-      const res = await request<{ rules: RuleDto[] }>(base, '/rules', { method: 'PUT', body });
-      return res.rules.map(toRule);
-    },
-
-    async planArchive(opts: PlanOptions) {
-      const body = JSON.stringify(opts);
-      return toArchivePlan(await request<ArchivePlanDto>(base, '/archive/plan', { method: 'POST', body }));
-    },
-
-    async applyArchive(planId: string): Promise<ArchiveResult> {
-      const res = await request<ArchiveResultDto>(base, '/archive/apply', {
-        method: 'POST',
-        body: JSON.stringify({ planId }),
-      });
-      return { planId: res.planId, moved: res.moved, failed: res.failed };
     },
   };
 }

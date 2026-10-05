@@ -86,7 +86,7 @@ export interface OpResult {
 export type ViewMode = 'a' | 'c';
 
 /** 侧边栏里可去的页面 */
-export type View = 'cull' | 'trash' | 'archive' | 'rules' | 'settings';
+export type View = 'cull' | 'trash' | 'settings';
 
 /** 一个照片根目录：磁盘上的入口。可以有多个（机身卡、移动硬盘、NAS） */
 export interface Root {
@@ -115,66 +115,3 @@ export interface TrashEntry {
   sizeBytes?: number;
 }
 
-/** 星级条件：写数字 = ≥n；写对象是区间 */
-export type RuleStars = number | { gte?: number; lte?: number; eq?: number };
-
-/** 规则匹配条件：不填 = 不限。不同条件是 AND；同一条件写数组是 OR */
-export interface RuleMatch {
-  kind?: 'any' | PhotoKind | Array<'any' | PhotoKind>;
-  stars?: RuleStars;
-  /** 是否打过星（含 1–5 星） */
-  marked?: boolean;
-  camera?: string | string[];
-  lens?: string | string[];
-  taken?: { after?: string; before?: string; lastDays?: number };
-  /** 当前目录的 glob */
-  folder?: string;
-}
-
-/** 规则命中后干什么。v1 只有移动与跳过（没有 copy） */
-export type RuleAction = 'move' | 'skip';
-
-/** 归档规则：先把「匹配什么」和「放到哪」说清楚，规则编辑 UI 见 wayfinder 票 007 */
-export interface Rule {
-  id: string;
-  name: string;
-  enabled: boolean;
-  /** 只处理匹配这些 glob 的目录 */
-  onlyFrom?: string[];
-  match: RuleMatch;
-  action: RuleAction;
-  /** 目标模板，变量见 contracts/rules.md：{root} {project} {device} {kind} {variant} {date:FORMAT} {folder:N} … */
-  dest: string;
-  onConflict: 'rename' | 'skip';
-  /** true = 主文件与影子文件（.xmp/.aae…）成组原子地一起搬 */
-  pair: boolean;
-}
-
-/** 预演里的一条移动 */
-export interface ArchiveMove {
-  photoId: string;
-  displayName: string;
-  from: string;
-  to: string;
-  kind: PhotoKind;
-  stars: number;
-  sizeBytes?: number;
-  ruleId: string;
-  ruleName: string;
-}
-
-/** 归档预演：先看清楚要搬什么、搬去哪，再动手 */
-export interface ArchivePlan {
-  id: string;
-  dir: string;
-  createdAt: string;
-  moves: ArchiveMove[];
-  skipped: { photoId: string; displayName: string; reason: string }[];
-  totalBytes: number;
-}
-
-export interface ArchiveResult {
-  planId: string;
-  moved: number;
-  failed: OpFailure[];
-}

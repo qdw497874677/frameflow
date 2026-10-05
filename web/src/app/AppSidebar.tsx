@@ -1,4 +1,4 @@
-import { Archive, Aperture, Images, ListChecks, RotateCcw, Settings, Star, Trash2, Undo2 } from 'lucide-react';
+import { Aperture, Images, RotateCcw, Settings, Star, Trash2, Undo2 } from 'lucide-react';
 import { counts, store, useAppState } from '@/core/store';
 import type { View } from '@/core/types';
 import {
@@ -21,12 +21,10 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { FolderTree } from '@/features/library/FolderTree';
 
-/** 侧边栏导航项（顺序就是工作流顺序：库 → 挑 → 删 → 归档 → 规则 → 设置） */
+/** 侧边栏导航项（顺序就是工作流顺序：挑 → 删 → 设置） */
 export const NAV: { id: View; label: string; icon: typeof Images }[] = [
   { id: 'cull', label: '挑片', icon: Images },
   { id: 'trash', label: '回收站', icon: Trash2 },
-  { id: 'archive', label: '归档', icon: Archive },
-  { id: 'rules', label: '规则', icon: ListChecks },
   { id: 'settings', label: '设置', icon: Settings },
 ];
 
@@ -46,7 +44,7 @@ export function AppSidebar() {
               </div>
               <div className="grid flex-1 text-left leading-tight">
                 <span className="truncate text-sm font-medium">art-workspace</span>
-                <span className="truncate text-xs text-muted-foreground">挑片 · 归档</span>
+                <span className="truncate text-xs text-muted-foreground">挑片 · 回收站</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

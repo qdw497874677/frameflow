@@ -9,8 +9,6 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { AppSidebar, NAV } from './AppSidebar';
 import { Stage } from './Stage';
 import { TrashPage } from '@/features/trash/TrashPage';
-import { ArchivePage } from '@/features/archive/ArchivePage';
-import { RulesPage } from '@/features/rules/RulesPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 
 /**
@@ -65,10 +63,6 @@ export function App() {
             <Stage />
           ) : view === 'trash' ? (
             <TrashPage />
-          ) : view === 'archive' ? (
-            <ArchivePage />
-          ) : view === 'rules' ? (
-            <RulesPage />
           ) : (
             <SettingsPage />
           )}
