@@ -153,7 +153,7 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
                 onClick={() => setCursor(i)}
                 aria-label={p.displayName}
                 className={cn(
-                  'relative h-14 shrink-0 overflow-hidden rounded-md ring-1 ring-white/10',
+                  'relative h-14 shrink-0 overflow-hidden rounded-none ring-1 ring-white/10',
                   i === cursor && 'ring-2 ring-gold',
                 )}
               >

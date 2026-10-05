@@ -25,7 +25,7 @@ export function TrashPage() {
     return (
       <div className="grid h-full grid-cols-2 gap-3 p-4 sm:grid-cols-4">
         {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="aspect-3/2 rounded-xl" />
+          <Skeleton key={i} className="aspect-3/2 rounded-none" />
         ))}
       </div>
     );
@@ -111,7 +111,7 @@ export function TrashPage() {
               <Card
                 key={t.photoId}
                 onClick={() => toggle(t.photoId)}
-                className={`cursor-pointer gap-0 overflow-hidden border-0 bg-card p-0 ring-1 transition ${
+                className={`cursor-pointer gap-0 overflow-hidden rounded-none border-0 bg-card p-0 ring-1 transition ${
                   on ? 'ring-2 ring-danger' : 'ring-white/10 hover:ring-white/25'
                 }`}
               >

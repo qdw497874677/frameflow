@@ -62,7 +62,7 @@ export function Grid() {
                 data-photo={p.id}
                 style={{ opacity: flight?.id === p.id ? 0 : 1 }}
                 className={cn(
-                  'group relative mb-2 break-inside-avoid overflow-hidden rounded-xl bg-card ring-1 ring-white/10',
+                  'group relative mb-2 break-inside-avoid overflow-hidden rounded-none bg-card ring-1 ring-white/10',
                   p.mark.del && 'ring-2 ring-danger/60',
                   here && !p.mark.del && 'ring-2 ring-gold/70',
                 )}

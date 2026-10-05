@@ -58,7 +58,7 @@ function UnderCard({
       }}
     >
       <PhotoCard photo={photo} width={frame.width} height={frame.height} index={0} total={0} bare />
-      <div className="pointer-events-none absolute inset-0 rounded-xl bg-background/25" />
+      <div className="pointer-events-none absolute inset-0 rounded-none bg-background/25" />
     </motion.div>
   );
 }

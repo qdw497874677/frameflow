@@ -40,7 +40,7 @@ export function FlightOverlay() {
 
   return (
     <motion.div
-      className="pointer-events-none fixed z-50 overflow-hidden rounded-xl ring-1 ring-white/10"
+      className="pointer-events-none fixed z-50 overflow-hidden rounded-none ring-1 ring-white/10"
       style={{
         left: flight.from.x,
         top: flight.from.y,

@@ -205,7 +205,7 @@ export function PhotoCard({ photo, width, height, index, total, zoomApi, bare = 
 
   return (
     <Card
-      className={cn('relative size-full overflow-hidden border-0 bg-card p-0 ring-1 ring-white/10', className)}
+      className={cn('relative size-full overflow-hidden rounded-none border-0 bg-card p-0 ring-1 ring-white/10', className)}
       style={{ width, height }}
     >
       <div
@@ -256,7 +256,7 @@ export function PhotoCard({ photo, width, height, index, total, zoomApi, bare = 
               type="button"
               onClick={reset}
               aria-label={`退出放大（${Math.round(view.s * 100)}%）`}
-              className="absolute right-2.5 bottom-2.5 size-[74px] overflow-hidden rounded-md ring-1 ring-white/15"
+              className="absolute right-2.5 bottom-2.5 size-[74px] overflow-hidden rounded-none ring-1 ring-white/15"
             >
               <img
                 src={source.thumbUrl(photo.id, 512)}
