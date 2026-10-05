@@ -66,10 +66,22 @@
 
   /* ══════════ 模式 A：看片流 ══════════ */
   .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 6px 0; }
-  .va-cardwrap {
+  .va-stack {
     position: relative; aspect-ratio: var(--arn, 1.5); width: auto;
     height: min(calc(100% - 116px), calc(min(92vw, 640px) / var(--arn, 1.5)));
   }
+  .va-stack.flat { aspect-ratio: auto; height: 200px; }
+  .va-cardwrap { position: absolute; inset: 0; z-index: 2; }
+  .va-under {
+    position: absolute; inset: 0; border-radius: 16px; overflow: hidden;
+    background: #14161d; border: 1px solid var(--line);
+    pointer-events: none; transition: transform .22s ease-out;
+    animation: vuIn .25s ease-out;
+  }
+  .va-under img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .85; }
+  .va-under.d1 { transform: translateY(12px) scale(.965); z-index: 1; }
+  .va-under.d2 { transform: translateY(24px) scale(.93); z-index: 0; opacity: .75; }
+  @keyframes vuIn { from { opacity: 0; } }
   .va-card {
     position: absolute; inset: 0; border-radius: var(--radius); overflow: hidden; background: var(--panel);
     border: 1px solid var(--line); box-shadow: var(--shadow);
@@ -357,6 +369,7 @@ function renderA() {
   app.querySelectorAll('.va-stage').forEach(n => n.remove());
   const stage = document.createElement('div'); stage.className = 'va-stage';
   const wrap = document.createElement('div'); wrap.className = 'va-cardwrap';
+  const stack = document.createElement('div'); stack.className = 'va-stack';
   const hint = document.createElement('div'); hint.className = 'va-hint';
   hint.textContent = '右滑 ⭐（顺势下压加星）· 左滑 🗑 · 双击/捏合 放大看细节';
   const meta = document.createElement('div'); meta.className = 'va-meta';
@@ -366,20 +379,31 @@ function renderA() {
 
   function draw() {
     stage.innerHTML = ''; wrap.innerHTML = ''; row.innerHTML = ''; meta.innerHTML = '';
+    let u1 = null, u2 = null;
+    stack.className = 'va-stack';
     const it = items[aCur];
     if (aCur >= items.length) {
       const c = counts();
-      wrap.style.height = '200px';
+      stack.classList.add('flat');
       wrap.innerHTML = `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--dim)">
         <div style="font-size:22px">看完了 🎉</div>
         <div style="font-size:13px;color:var(--faint)">⭐ ${c.s} · 🗑 ${c.t} · 未标 ${items.length - c.s - c.t}</div></div>`;
       const btn = document.createElement('button'); btn.textContent = '↻ 从头再看';
       btn.className = 'va-del'; btn.onclick = () => { aCur = 0; draw(); };
-      stage.append(wrap, btn);
+      stack.append(wrap);
+      stage.append(stack, btn);
       return;
     }
-    wrap.style.removeProperty('height');
-    wrap.style.setProperty('--arn', it.ar);
+    stack.style.setProperty('--arn', it.ar);
+    // 层叠预览：后两张露出边，滑动时顶走的是看得见的下一张
+    for (let d = 2; d >= 1; d--) {
+      const nx = items[aCur + d]; if (!nx) continue;
+      const u = document.createElement('div'); u.className = 'va-under d' + d;
+      u.innerHTML = `<img src="${photoURL(nx, 300)}" alt="">`;
+      if (d === 1) u1 = u; else u2 = u;
+      stack.appendChild(u);
+    }
+    stack.appendChild(wrap);
     const card = document.createElement('div'); card.className = 'va-card';
     const img = document.createElement('img'); img.src = photoURL(it, 1600); img.draggable = false;
     card.appendChild(img);
@@ -396,7 +420,7 @@ function renderA() {
     wrap.appendChild(card);
     const like = card.querySelector('.like'), nope = card.querySelector('.nope');
     meta.innerHTML = `<span>${String(aCur + 1).padStart(2, '0')} / ${items.length}</span><span>${it.cam}</span>`;
-    stage.append(wrap, row, hint);
+    stage.append(stack, row, hint);
 
     // 撤销回飞动画：卡片沿原方向滑回
     if (introDir) {
@@ -428,7 +452,12 @@ function renderA() {
     let drag = null; const pointers = new Map(); let pinchStart = null;
     let pendingStars = 1;
     const liveRow = n => { [...row.querySelectorAll('button')].forEach((b, i) => { if (i < 5) b.classList.toggle('on', i < n); }); };
-    const applyCard = (dx, rot) => { card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`; };
+    const applyCard = (dx, rot) => {
+      card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`;
+      const TH = Math.min(95, card.clientWidth * .22), p = Math.min(Math.abs(dx) / TH, 1);
+      if (u1) u1.style.transform = `translateY(${12 * (1 - p)}px) scale(${(.965 + .035 * p).toFixed(3)})`;
+      if (u2) u2.style.transform = `translateY(${12 * (2 - p)}px) scale(${(.965 + .035 * (1 + p)).toFixed(3)})`;
+    };
     const clampZoom = z => {
       if (!z || z.scale <= 1.001) return null;
       const cw = card.clientWidth, ch = card.clientHeight;
@@ -517,6 +546,9 @@ function renderA() {
       const it2 = items[aCur]; const stars = pendingStars;
       card.style.transition = 'transform .22s ease-out, opacity .22s'; card.style.opacity = 0;
       card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg)`;
+      // 后两张顶上来
+      if (u1) u1.style.transform = 'translateY(0px) scale(1)';
+      if (u2) u2.style.transform = 'translateY(12px) scale(.965)';
       setTimeout(() => {
         if (dir > 0) {
           if (it2.stars === 0) { pushUndo({ kind: 'stars', it: it2, prev: it2.stars, dir }); it2.stars = stars; flash(`右滑喜欢${stars}星：#${it2.id + 1} → ${'★'.repeat(stars)}`); }
