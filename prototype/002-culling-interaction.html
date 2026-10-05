@@ -89,6 +89,16 @@
     font-size: 11px; padding: 3px 8px; border-radius: 6px;
     background: rgba(8,9,12,.62); backdrop-filter: blur(6px); color: var(--dim); border: 1px solid rgba(255,255,255,.08);
   }
+  .va-card.zoomed .fbadge { display: none; }
+  .va-card img.anim { transition: transform .25s ease-out; }
+  .va-minimap {
+    position: absolute; right: 10px; bottom: 10px; z-index: 5; width: 88px; border-radius: 8px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,.2); box-shadow: 0 2px 12px rgba(0,0,0,.55); display: none; cursor: zoom-out;
+  }
+  .va-card.zoomed .va-minimap { display: block; }
+  .va-minimap img { width: 100%; display: block; opacity: .9; }
+  .va-minimap .rect { position: absolute; border: 1.5px solid var(--accent); background: rgba(122,176,255,.16); box-sizing: border-box; pointer-events: none; }
+  .va-minimap .z { position: absolute; left: 0; bottom: 0; font-size: 9px; font-variant-numeric: tabular-nums; background: rgba(8,9,12,.72); color: #cfd4de; padding: 1px 5px; border-radius: 0 6px 0 0; }
   .va-card .stamp {
     position: absolute; top: 16%; padding: 8px 22px; border-radius: 12px; font-size: 28px; font-weight: 800;
     letter-spacing: 2px; opacity: 0; pointer-events: none; backdrop-filter: blur(4px);
@@ -359,6 +369,12 @@ function renderA() {
     const card = document.createElement('div'); card.className = 'va-card';
     const img = document.createElement('img'); img.src = photoURL(it, 1600); img.draggable = false;
     card.appendChild(img);
+    const mm = document.createElement('div'); mm.className = 'va-minimap'; mm.title = '点按退出放大';
+    mm.innerHTML = `<img src="${photoURL(it, 180)}"><div class="rect"></div><span class="z"></span>`;
+    card.appendChild(mm);
+    const mmRect = mm.querySelector('.rect'), mmZ = mm.querySelector('.z');
+    mm.addEventListener('pointerdown', e => e.stopPropagation());
+    mm.addEventListener('click', e => { e.stopPropagation(); animZoom(() => { aZoom = null; }); });
     card.insertAdjacentHTML('beforeend',
       `<div class="chips"><span class="chip raw">RAW+JPEG</span><span class="chip">${it.cam}</span></div>` +
       `<div class="fbadge">${focusBadge(it)}</div>` +
@@ -383,17 +399,30 @@ function renderA() {
     let pendingStars = 1;
     const liveRow = n => { [...row.querySelectorAll('button')].forEach((b, i) => { if (i < 5) b.classList.toggle('on', i < n); }); };
     const applyCard = (dx, rot) => { card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`; };
+    const clampZoom = z => {
+      if (!z || z.scale <= 1.001) return null;
+      const cw = card.clientWidth, ch = card.clientHeight;
+      z.tx = Math.min(0, Math.max(cw * (1 - z.scale), z.tx));
+      z.ty = Math.min(0, Math.max(ch * (1 - z.scale), z.ty));
+      return z;
+    };
+    const animZoom = fn => { img.classList.add('anim'); fn(); setTimeout(() => img.classList.remove('anim'), 260); applyZoom(); };
     const applyZoom = () => {
+      aZoom = clampZoom(aZoom);
       if (!aZoom) { img.style.transform = ''; card.classList.remove('zoomed'); return; }
       card.classList.add('zoomed'); applyCard(0, 0);
       img.style.transform = `translate(${aZoom.tx}px,${aZoom.ty}px) scale(${aZoom.scale})`;
+      // 小地图：框出当前视口在全图的位置
+      const cw = card.clientWidth, ch = card.clientHeight, s = aZoom.scale;
+      mmRect.style.cssText = `left:${(-aZoom.tx / (cw * s)) * 100}%;top:${(-aZoom.ty / (ch * s)) * 100}%;width:${100 / s}%;height:${100 / s}%;`;
+      mmZ.textContent = Math.round(s * 100) + '%';
     };
     const zoomAt = (factor, px, py) => {
       const z = aZoom || { scale: 1, tx: 0, ty: 0 };
       const ns = Math.max(1, Math.min(6, z.scale * factor));
       const k = ns / z.scale;
-      aZoom = { scale: ns, tx: px - k * (px - z.tx), ty: py - k * (py - z.ty) };
-      if (ns <= 1.001) aZoom = null;
+      aZoom = clampZoom({ scale: ns, tx: px - k * (px - z.tx), ty: py - k * (py - z.ty) });
+      if (aZoom && aZoom.scale <= 1.001) aZoom = null;
       applyZoom();
     };
     card.addEventListener('pointerdown', e => {
@@ -445,9 +474,8 @@ function renderA() {
     card.addEventListener('pointercancel', endPointer);
     card.addEventListener('dblclick', e => {
       const r = card.getBoundingClientRect();
-      if (aZoom) aZoom = null;
-      else { aZoom = { scale: 2.5, tx: 0, ty: 0 }; zoomAt(1, e.clientX - r.left, e.clientY - r.top); }
-      applyZoom();
+      if (aZoom) animZoom(() => { aZoom = null; });
+      else animZoom(() => { aZoom = { scale: 2.5, tx: 0, ty: 0 }; zoomAt(1, e.clientX - r.left, e.clientY - r.top); });
     });
     card.addEventListener('wheel', e => {
       e.preventDefault();
