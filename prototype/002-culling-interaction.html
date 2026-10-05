@@ -270,7 +270,7 @@ function setMode(m) {
   try { history.replaceState(null, '', '#mode=' + m); } catch (e) {}
   render();
 }
-function render() { closeLightbox(false); renderGrid(); app.querySelector('.va-stage')?.remove(); if (mode === 'a') renderA(); }
+function render() { closeLightbox(false); app.querySelectorAll('.vc-wrap,.va-stage').forEach(n => n.remove()); if (mode === 'c') renderGrid(); else renderA(); }
 
 /* ══════════════ 模式 A：看片流（滑动 + 双击放大看细节） ══════════════ */
 let aZoom = null; // {scale, tx, ty}
