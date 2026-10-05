@@ -23,6 +23,7 @@
   "project": "/photos/2026-冰岛",   // 项目（被映射的目录）；省略 = 当前目录
   "where": {
     "kind":   "photo",              // photo | video
+    "by":     "ai",                 // 标注来源前缀：me | ai | link（由 marks.jsonl 推导，前缀匹配）
     "stars":  { "gte": 3 },         // gte / lte / eq，可组合（区间）
     "del":    false,                // 是否标了待删
     "marked": true,                 // 是否打过星（stars > 0）
@@ -55,6 +56,7 @@
 | `taken>=2026-03-05` / `taken<=2026-03-08` | `where.taken.after` / `.before` |
 | `project:<path>` | `project` |
 | `ids:a\|b\|c` | `ids`（用 `\|` 分隔，避免和词分隔符 `,` 冲突） |
+| `by:ai` / `by:me` / `by:link` | `where.by`（**前缀匹配**：`by:ai` 命中 `ai:gpt-4o`） |
 
 值里可能出现 `,` `|` `:`（目录名里什么都有），所以**词的取值部分按 URL 编码写**
 （`folder:%E5%86%B0%E5%B2%9B`），整个 `sel` 再作为查询参数编码一次（`URLSearchParams` 负责）。
@@ -76,6 +78,8 @@
 7. `camera` → `photo.camera` 包含该串（大小写不敏感；服务端输出的是别名，见 `devices.yaml` 的停放说明）。
 8. `taken.after` / `.before` → 拍摄日的**闭区间**；拍摄日 = `capturedAt` 的日期部分，
    缺 `capturedAt` 时回落 `mtime`（两者都是「墙上时间」，不做时区换算）。
+9. `by` → 该照片**最后一次标注变更的来源**，由 `marks.jsonl` 推导（XMP 只存最终状态，没有来源字段）。
+   前缀匹配（`by:ai` 命中 `ai:claude`）；**从未标注过的照片不匹配任何 `by` 词**。
 
 排序与分页不受选择集影响：仍是目录内稳定的自然顺序 + `cursor`。
 
@@ -83,4 +87,4 @@
 
 - 布尔表达式（AND/OR/NOT 组合）—— 见上文，代价是确认成本，不是实现难度。
 - 保存的命名筛选（saved search）：等有第二个人用再说（票 004/008）。
-- 按标注时间筛选、按「谁标的」筛选：等变更日志成形后（`/marks/history`）再评估。
+- 按标注**时间**筛选：等 `marks.jsonl` 真被人用起来再评估（`by` 已经做了，时间还没）。

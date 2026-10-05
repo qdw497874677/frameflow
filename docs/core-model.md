@@ -85,7 +85,7 @@ interface JobHandler<P> {
 |---|---|---|
 | **进程** | 只有后端碰磁盘；前端纯客户端 | ✅ 已有（`web/` + `server/`） |
 | **端口** | UI 只认 `PhotoSource`（即将拆成 `LibrarySource` + `JobSource`），mock / http 两个实现行为一致 | ✅ 已有，待拆 |
-| **能力** | 后端每个能力 = 一个 handler（`jobs/*.ts`），只依赖 `core/` 的接口，**handler 之间不互相 import**；通道同理（`channels/*.ts`） | ⬜ 待建 |
+| **能力** | 后端每个能力 = 一个 handler（`jobs/*.ts`），只依赖 `core/` 的接口，**handler 之间不互相 import**；通道同理（`channels/*.ts`）；模块由注册表装配并导出 manifest（kind、参数 schema、副作用等级），能力经 `GET /capabilities` 自描述 | ⬜ 待建（语言与装配方式已定：[ADR 0005](adr/0005-typescript-backend.md)） |
 
 ```
 server/
@@ -144,3 +144,60 @@ POST /selections                 可选：保存命名选择集（v1 只存不�
 2. **任务要不要持久化** → **最小持久化**（状态表 / JSONL），重启后历史可查；但**执行队列不持久化**，重启时把 `running` 标为 `interrupted` 让人重跑，别做断点续传。
 3. **外部批注者的身份** → **v1 不做账号体系**。一个任务签发一个**带权限范围的链接 token**（只读这一批 + 只能写标注），回填 `by: 'link:<别名>'`。
 4. **第一个落地的异步能力** → **导出**。它最安全（只写新位置，不碰原片）；飞书推送等 004（状态存哪 / 访问控制）与 005（技术栈）定了再做。
+
+## 11. AI 接入面：AI 是最挑剔的客户端，不是特殊通道
+
+用户把 AI 参与选片列为急需（m01899），并要求「提供 ai 可用的 api 来让 ai 介入选片工作流」。
+AI 有两条进入路径，**两者都落在已有概念上，不新增架构**：
+
+**A. AI 作为执行者（push）** —— 我们创建 `annotate` 任务，handler 去调模型：
+
+```jsonc
+POST /jobs { kind: 'annotate', selection: { where: { marked: false } }, params: {
+  executor: { kind: 'openai' | 'anthropic' | 'ark' | 'ollama', model, baseUrl? },
+  criteria: '按构图与表情挑出最好的 3 张，其余记 0 星',
+  apply: false          // false = 只出建议，不写标注
+}}
+```
+
+输入图像取自 `GET /photos/{id}/thumb?size=2048`（票 001 的分层预览管线正好是它的输入源），产出的标注记 `by: 'ai:<model>'`。
+
+**B. AI 作为客户端（pull）** —— 外部 agent（Claude / GPT / 本地脚本，甚至另一个 pi 会话）自己来取活干：
+**这是「AI 介入选片工作流」的默认形态** —— 我们的进程不存模型 key、不花钱、换模型只换客户端。
+
+```
+MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks / create_job / job_status
+或直接 HTTP：GET /photos?sel=… → 取 2048 缩略图 → PUT /marks（带 by: 'ai:claude'）
+```
+
+两种形态需要的机制**都已在不变量里**：幂等键（7）、`by/at/channel` provenance（5）、任务可被外部领取（见票 009）、`GET /capabilities` 自描述、三种凭据的认证面（ADR 0005）。
+
+**建议层还是直接落定**：AI 直接写标注，靠 `by` 区分来源；UI 按来源显示（「AI 建议 ★★★」），选择集加 `by:` 词即可一键过滤/清空。
+**不引入独立的「提案」实体** —— 省一张表；回滚依据是 `marks.jsonl`。
+
+**权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
+
+待拍板（[票 009](../wayfinder/tickets/009-ai-access.md)）：①先 pull 还是 push；②建议层 vs 直接落标；③MCP 是否必做；④AI token 是否限范围；⑤pull 要不要 claim/lease。
+
+## 12. 插件扩展面：内置能力与第三方模块同一套契约
+
+内置（`jobs/*.ts`、`channels/*.ts`，随代码发布）与第三方插件（从数据目录加载）**共用同一个 manifest 契约**，差别只在加载位置与生命周期。
+
+| 贡献点 | 契约 | 例子 | 进 v1？ |
+|---|---|---|---|
+| 任务能力 | `JobHandler` | 导出、处理、annotate | ✅ 内置 |
+| 通道 | `Channel` | 飞书、webhook、MCP | ✅ 内置（先只有 inapp） |
+| AI 执行者 | `Executor` | openai-compatible / ollama | 随 annotate |
+| **虚拟目录提供者** | `FolderProvider` | 应用内合集 / 节点层级（Alcedo 式项目路径） | 留缝 |
+| 选择集新词 | `SelectionTerm` | `collection:` | 留缝 |
+| 设置页片段 | 声明式表单 | 插件的配置项 | 留缝 |
+
+**规则**：模块**不能直接碰磁盘**，只能经 `core/` 提供的接口（读索引、写标注、建任务）；manifest 里声明**副作用等级**
+（只读 / 写标注 / 写库内状态 / 写新位置 / 写原片目录），宿主按等级拒绝越权 —— 不变量 1 与 3 因此对插件同样成立。
+
+**虚拟目录（Alcedo 式的项目节点路径）**：这是唯一与「文件夹即真相」有张力的能力，所以它被设计成**非破坏性覆盖层**：
+磁盘不动，应用内多一棵虚拟树（合集 / 精选 / 待打印），节点指向照片 id。因此 —— **默认关闭、可选启用**；
+其结构属于**不可重建**的那一类（与 XMP、事件日志同级），存应用数据目录的项目文件（照片目录可写时也可写 `.artworks/`）。
+把它做成插件而不是核心，是为了让「不来这套的人」完全看不到它。
+
+待拍板（[票 010](../wayfinder/tickets/010-plugins.md)）：内置与插件的分界、v1 该冻结哪些贡献点、权限等级怎么切、虚拟目录的结构存哪、加载与隔离方式。

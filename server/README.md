@@ -1,6 +1,7 @@
 # server（后端）
 
-**状态：未实现。** 语言与运行形态见 `wayfinder/tickets/005-stack-deployment.md`（待定票）。
+**状态：未实现。语言已定：TypeScript（Node 22 LTS+），见 [ADR 0005](../docs/adr/0005-typescript-backend.md)。**
+运行与部署形态（systemd / Docker / 反代）仍见 `wayfinder/tickets/005-stack-deployment.md`（待定）。
 本文件先固定**模块边界**与职责，避免前端/后端职责漂移。
 
 ## 职责边界
@@ -21,6 +22,10 @@
 | `roots` | 根目录列表与在线检测 | 多根（本地盘/挂载点）；`online=false` 表示当前不可访问，前端只灰显不报错（票 004） |
 | `auth` | 单用户认证与会话 | 家用 + Tailscale 场景下的最简方案（票 005） |
 | `httpapi` | HTTP 层：路由、序列化、错误码 | 严格实现 `contracts/openapi.yaml`；不含业务逻辑，只做编解码与调用 |
+| `annotate` | AI 参与选片（`jobs/annotate.ts`） | 两种形态：作为执行者（我们调模型，`executor: openai-compatible / anthropic / ark / ollama`）与作为客户端（外部 agent 自己来取活干）；产出标注记 `by: 'ai:<model>'`；输入图像取 `GET /photos/{id}/thumb?size=2048`（见 `docs/core-model.md` §11） |
+| `mcp` | 把同一批端点包成 MCP 工具（`list_photos` / `get_photo` / `set_marks` / `create_job` / `job_status`） | 薄适配器，不含业务语义；与 `httpapi` 共用 `core/` 的调用面；给 Claude Code 等 agent 直接用 |
+| `capabilities` | 能力自描述（`GET /capabilities`） | 注册表投影：job kinds + 参数 schema + 副作用等级 + 通道 + 执行者；前端与 AI 客户端都靠它发现能力（ADR 0005） |
+| `plugins` | 第三方模块的加载与校验 | 与内置同一 manifest 契约，从数据目录加载；**模块不能直接碰磁盘**，只能经 `core/`；副作用等级不符则拒绝（见 `docs/core-model.md` §12 / 票 010） |
 
 ## 前端已经依赖的接口
 
@@ -52,6 +57,24 @@ handler 只依赖 `core/`（扫描、配对、XMP、路径、选择集求值）�
 2. `POST /trash` 只是移入产品回收站（可还原）；`DELETE /trash?confirm=true` 是**唯一**删磁盘文件的入口，`ids` 为空 = 清空回收站。
 3. 应用不导入、不导出、不搬动照片：除了写星标与回收站操作，**不碰原文件**。
 4. `GET /photos?sel=` 的谓词求值语义见 `contracts/selection.md`（前端 `matchesSelection` 是参考实现）。
+
+## 模块注册与能力自描述（第一个模块落地时就这样写）
+
+```ts
+// server/src/jobs/<kind>.ts —— 每个能力一个文件
+export const manifest = {
+  kind: 'export',
+  label: '导出',
+  params: exportParamsSchema,            // zod / JSON Schema，供 /capabilities 与校验共用
+  sideEffect: 'newLocation' as const,    // readonly | mark | library | newLocation | originals
+  undoable: true,
+  needsNetwork: false,
+};
+export const handler: JobHandler<ExportParams> = { validate, plan, apply, undo };
+```
+
+`jobs/registry.ts` / `channels/registry.ts` 汇总所有模块；`GET /capabilities` 就是这张表去掉实现细节后的投影。
+**新增能力 = 新增一个文件 + 注册一行**；前端与 AI 客户端读 `/capabilities` 自适应，不需要改代码。
 
 ## 不变式
 

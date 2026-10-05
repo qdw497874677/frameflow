@@ -20,6 +20,34 @@ paths:
       responses:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
 
+  /capabilities:
+    get:
+      summary: 能力自描述（有哪些任务 kind / 通道 / 执行者，各自要什么参数、会碰什么）
+      description: |
+        前端与 AI 客户端都靠它发现能力（见 docs/core-model.md §12）。
+        新增能力 = 后端新增一个模块文件，前端零改动。
+      x-implemented: false
+      responses:
+        "200":
+          description: 注册表投影
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string }
+                        label: { type: string }
+                        params: { type: object, additionalProperties: true }
+                        sideEffect: { type: string, description: "readonly | mark | library | newLocation | originals" }
+                        undoable: { type: boolean }
+                  channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
+                  executors: { type: array, items: { type: object, properties: { kind: { type: string }, model: { type: string }, local: { type: boolean } } } }
+
   /session:
     post:
       summary: 单用户登录（换取会话 cookie）
@@ -77,7 +105,7 @@ paths:
         - { name: dir, in: query, required: true, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
-        - { name: sel, in: query, schema: { type: string }, description: "选择集（谓词）的紧凑字符串形式，如 `stars>=3,marked,kind:photo`。语法与求值语义见 contracts/selection.md" }
+        - { name: sel, in: query, schema: { type: string }, description: "选择集（谓词）的紧凑字符串形式，如 `stars>=3,marked,kind:photo,by:ai`。语法与求值语义见 contracts/selection.md" }
         - { name: filter, in: query, deprecated: true, schema: { type: string, enum: [all, starred, trash, unmarked], default: all }, description: "已弃用：等价于 sel 的四个常用简写（starred ⇔ marked；unmarked ⇔ marked:false）" }
       responses:
         "200":
@@ -283,6 +311,21 @@ paths:
         "200": { description: ok, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: "#/components/schemas/MarkResult" } } } } } } }
 
 components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: artworks_session
+      description: 浏览器会话（`POST /session` 换取）；前端默认用它
+    bearer:
+      type: http
+      scheme: bearer
+      description: 长期 API token —— AI agent / CLI / MCP 客户端用，等价于本人全权限（见 docs/core-model.md §11）
+    linkToken:
+      type: apiKey
+      in: query
+      name: t
+      description: "范围受限的批注链接 token（外部批注者）：只读这一批 + 只写标注，回流记 by: link:<别名>"
   responses:
     Error:
       description: 错误
