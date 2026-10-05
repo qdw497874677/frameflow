@@ -78,8 +78,8 @@
     pointer-events: none; transition: transform .22s ease-out;
     animation: vuIn .25s ease-out;
   }
-  .va-under img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .45; filter: brightness(.6) saturate(.9); }
-  .va-under::after { content: ''; position: absolute; inset: 0; background: rgba(8, 9, 12, .25); }
+  .va-under img { width: 100%; height: 100%; object-fit: cover; display: block; filter: brightness(.55) saturate(.95); }
+  .va-under::after { content: ''; position: absolute; inset: 0; background: rgba(8, 9, 12, .3); }
   .va-under.d1 { transform: translate(-50%, -50%) translateY(8px) translateZ(-45px); z-index: 1; }
   .va-under.d2 { transform: translate(-50%, -50%) translateY(15px) translateZ(-90px); z-index: 0; }
   @keyframes vuIn { from { opacity: 0; } }
@@ -105,6 +105,12 @@
   }
   .va-card.zoomed .fbadge { display: none; }
   .va-card img.anim { transition: transform .25s ease-out; }
+  /* 上位动画：新顶卡从「后排的暗」连续亮起来，信息淡入 */
+  .va-card .veil { position: absolute; inset: 0; background: rgba(8, 9, 12, .3); opacity: 0; pointer-events: none; transition: opacity .32s ease-out; }
+  .va-card .chips, .va-card .fbadge { transition: opacity .32s ease-out; }
+  .va-card.arrive { filter: brightness(.55) saturate(.95); transition: filter .32s ease-out; }
+  .va-card.arrive .veil { opacity: 1; }
+  .va-card.arrive .chips, .va-card.arrive .fbadge { opacity: 0; }
   .va-minimap {
     position: absolute; right: 10px; bottom: 10px; z-index: 5; width: 88px; border-radius: 8px; overflow: hidden;
     border: 1px solid rgba(255,255,255,.2); box-shadow: 0 2px 12px rgba(0,0,0,.55); display: none; cursor: zoom-out;
@@ -355,6 +361,7 @@ reset.onclick = () => { items.forEach(it => { it.stars = 0; it.del = false; }); 
 let mode = (location.hash.match(/mode=([ac])/i) || [, 'a'])[1].toLowerCase();
 let aCur = 0;
 let introDir = 0; // 撤销时卡片回飞的方向（1=从右回，-1=从左回，0=淡入）
+let arriving = false; // 下一张卡上位时只做「从暗到亮」的连续动画，不硬切
 const pills = [...document.querySelectorAll('.segmented button')];
 pills.forEach(p => p.onclick = () => setMode(p.dataset.mode));
 function setMode(m) {
@@ -430,6 +437,19 @@ function renderA() {
       `<div class="fbadge">${focusBadge(it)}</div>` +
       `<div class="stamp like">LIKE</div><div class="stamp nope">NOPE</div>`);
     wrap.appendChild(card);
+    if (arriving) {
+      arriving = false;
+      card.insertAdjacentHTML('beforeend', '<div class="veil"></div>');
+      card.classList.add('arrive');
+      wrap.style.transition = 'none';
+      wrap.style.transform = 'translate(-50%, -50%) scale(.965)';
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        card.classList.remove('arrive');
+        wrap.style.transition = 'transform .32s ease-out';
+        wrap.style.transform = 'translate(-50%, -50%) scale(1)';
+        setTimeout(() => { wrap.style.transition = ''; }, 360);
+      }));
+    }
     const like = card.querySelector('.like'), nope = card.querySelector('.nope');
     meta.innerHTML = `<span>${String(aCur + 1).padStart(2, '0')} / ${items.length}</span><span>${it.cam}</span>`;
 
@@ -455,7 +475,7 @@ function renderA() {
       row.appendChild(b);
     }
     const db = document.createElement('button'); db.className = 'va-del' + (it.del ? ' on' : ''); db.innerHTML = SVG_TRASH + `<span>${it.del ? '待删中' : '待删'}</span>`;
-    db.onclick = () => { toggleDel(it, 'A 模式'); if (it.del) { aCur = Math.min(items.length, aCur + 1); setTimeout(draw, 120); } else draw(); };
+    db.onclick = () => { toggleDel(it, 'A 模式'); if (it.del) { arriving = true; aCur = Math.min(items.length, aCur + 1); setTimeout(draw, 120); } else draw(); };
     row.appendChild(db);
 
     /* 手势：滑动 / 上抬加星 / 缩放平移 */
@@ -570,6 +590,7 @@ function renderA() {
           flash(`左滑待删：#${it2.id + 1} 🗑`);
         } else pushUndo({ kind: 'skip', it: it2, dir });
         refreshStats();
+        arriving = true;
         aCur = Math.min(items.length, aCur + 1); draw();
       }, 260);
     }
@@ -680,11 +701,11 @@ document.addEventListener('keydown', e => {
   if (e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { setMode(mode === 'a' ? 'c' : 'a'); return; }
   if (mode === 'a') {
     const it = items[aCur];
-    if (e.key === ' ') { e.preventDefault(); if (it) pushUndo({ kind: 'skip', it, dir: 0 }); aCur = Math.min(items.length, aCur + 1); renderA(); }
-    else if (e.key.toLowerCase() === 'f') { if (it) { if (it.stars === 0) { pushUndo({ kind: 'stars', it, prev: 0, dir: 1 }); it.stars = 1; flash(`键盘喜欢：#${it.id + 1} → ★`); refreshStats(); } else pushUndo({ kind: 'skip', it, dir: 1 }); aCur = Math.min(items.length, aCur + 1); renderA(); } }
-    else if (e.key.toLowerCase() === 'x') { if (it) { if (!it.del) { pushUndo({ kind: 'del', it, prev: it.del, dir: -1 }); it.del = true; it.stars = 0; flash(`键盘待删：#${it.id + 1} 🗑`); refreshStats(); } else pushUndo({ kind: 'skip', it, dir: -1 }); aCur = Math.min(items.length, aCur + 1); renderA(); } }
-    else if (e.key === 'ArrowRight') { aCur = Math.min(items.length, aCur + 1); renderA(); }
-    else if (e.key === 'ArrowLeft') { aCur = Math.max(0, aCur - 1); renderA(); }
+    if (e.key === ' ') { e.preventDefault(); if (it) pushUndo({ kind: 'skip', it, dir: 0 }); arriving = true; aCur = Math.min(items.length, aCur + 1); renderA(); }
+    else if (e.key.toLowerCase() === 'f') { if (it) { if (it.stars === 0) { pushUndo({ kind: 'stars', it, prev: 0, dir: 1 }); it.stars = 1; flash(`键盘喜欢：#${it.id + 1} → ★`); refreshStats(); } else pushUndo({ kind: 'skip', it, dir: 1 }); arriving = true; aCur = Math.min(items.length, aCur + 1); renderA(); } }
+    else if (e.key.toLowerCase() === 'x') { if (it) { if (!it.del) { pushUndo({ kind: 'del', it, prev: it.del, dir: -1 }); it.del = true; it.stars = 0; flash(`键盘待删：#${it.id + 1} 🗑`); refreshStats(); } else pushUndo({ kind: 'skip', it, dir: -1 }); arriving = true; aCur = Math.min(items.length, aCur + 1); renderA(); } }
+    else if (e.key === 'ArrowRight') { arriving = true; aCur = Math.min(items.length, aCur + 1); renderA(); }
+    else if (e.key === 'ArrowLeft') { arriving = true; aCur = Math.max(0, aCur - 1); renderA(); }
     else if (e.key >= '1' && e.key <= '5') { if (it) { setStars(it, +e.key, '键盘'); renderA(); } }
   }
 });
