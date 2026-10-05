@@ -66,15 +66,12 @@
 
   /* ══════════ 模式 A：看片流 ══════════ */
   .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 6px 0; }
-  @property --arn { syntax: '<number>'; inherits: true; initial-value: 1.5; }
   .va-stack {
-    position: relative; aspect-ratio: var(--arn, 1.5); width: auto;
-    height: min(calc(100% - 116px), calc(min(92vw, 640px) / var(--arn, 1.5)));
-    transition: --arn .25s ease-out;
+    position: relative; width: min(92vw, 640px); height: calc(100% - 116px);
     perspective: 1100px; transform-style: preserve-3d;
   }
-  .va-stack.flat { aspect-ratio: auto; height: 200px; }
-  .va-cardwrap { position: absolute; inset: 0; z-index: 2; }
+  .va-stack.flat { height: 200px; }
+  .va-cardwrap { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); }
   .va-under {
     position: absolute; inset: 0; border-radius: 16px; overflow: hidden;
     background: #14161d; border: 1px solid var(--line);
@@ -82,8 +79,8 @@
     animation: vuIn .25s ease-out;
   }
   .va-under img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .85; }
-  .va-under.d1 { transform: translateY(10px) translateZ(-60px); z-index: 1; }
-  .va-under.d2 { transform: translateY(20px) translateZ(-120px); z-index: 0; opacity: .75; }
+  .va-under.d1 { transform: translate(-50%, -50%) translateY(10px) translateZ(-60px); z-index: 1; }
+  .va-under.d2 { transform: translate(-50%, -50%) translateY(20px) translateZ(-120px); z-index: 0; opacity: .75; }
   @keyframes vuIn { from { opacity: 0; } }
   .va-card {
     position: absolute; inset: 0; border-radius: var(--radius); overflow: hidden; background: var(--panel);
@@ -388,6 +385,8 @@ function renderA() {
     if (aCur >= items.length) {
       const c = counts();
       stack.classList.add('flat');
+      wrap.style.width = 'min(92vw, 340px)'; wrap.style.height = '180px';
+      wrap.style.transform = 'translate(-50%, -50%)';
       wrap.innerHTML = `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--dim)">
         <div style="font-size:22px">看完了 🎉</div>
         <div style="font-size:13px;color:var(--faint)">⭐ ${c.s} · 🗑 ${c.t} · 未标 ${items.length - c.s - c.t}</div></div>`;
@@ -397,15 +396,22 @@ function renderA() {
       stage.append(stack, btn);
       return;
     }
-    stack.style.setProperty('--arn', it.ar);
-    // 层叠预览：后两张露出边，滑动时顶走的是看得见的下一张
+    // 各卡各自保持横竖比，在框内居中重叠（不同方向的照片直接按自己的比例叠着）
+    stage.append(stack, row, hint);
+    const W = stack.clientWidth, H = stack.clientHeight;
+    const fit = ar => { const w = Math.min(W, H * ar); return [w, w / ar]; };
     for (let d = 2; d >= 1; d--) {
       const nx = items[aCur + d]; if (!nx) continue;
       const u = document.createElement('div'); u.className = 'va-under d' + d;
+      const [uw, uh] = fit(nx.ar);
+      u.style.width = uw + 'px'; u.style.height = uh + 'px';
       u.innerHTML = `<img src="${photoURL(nx, 300)}" alt="">`;
       if (d === 1) u1 = u; else u2 = u;
       stack.appendChild(u);
     }
+    const [tw, th] = fit(it.ar);
+    wrap.style.width = tw + 'px'; wrap.style.height = th + 'px';
+    wrap.style.transform = 'translate(-50%, -50%)';
     stack.appendChild(wrap);
     const card = document.createElement('div'); card.className = 'va-card';
     const img = document.createElement('img'); img.src = photoURL(it, 1600); img.draggable = false;
@@ -423,7 +429,6 @@ function renderA() {
     wrap.appendChild(card);
     const like = card.querySelector('.like'), nope = card.querySelector('.nope');
     meta.innerHTML = `<span>${String(aCur + 1).padStart(2, '0')} / ${items.length}</span><span>${it.cam}</span>`;
-    stage.append(stack, row, hint);
 
     // 撤销回飞动画：卡片沿原方向滑回
     if (introDir) {
@@ -459,8 +464,8 @@ function renderA() {
       const tilt = Math.max(-16, Math.min(16, dx * .05));
       card.style.transform = `translateX(${dx}px) rotate(${rot}deg) rotateY(${tilt}deg)`;
       const TH = Math.min(95, card.clientWidth * .22), p = Math.min(Math.abs(dx) / TH, 1);
-      if (u1) u1.style.transform = `translateY(${10 * (1 - p)}px) translateZ(${(-60 * (1 - p)).toFixed(1)}px)`;
-      if (u2) u2.style.transform = `translateY(${20 - 10 * p}px) translateZ(${-120 + 60 * p}px)`;
+      if (u1) u1.style.transform = `translate(-50%, -50%) translateY(${10 * (1 - p)}px) translateZ(${(-60 * (1 - p)).toFixed(1)}px)`;
+      if (u2) u2.style.transform = `translate(-50%, -50%) translateY(${20 - 10 * p}px) translateZ(${-120 + 60 * p}px)`;
     };
     const clampZoom = z => {
       if (!z || z.scale <= 1.001) return null;
@@ -551,8 +556,8 @@ function renderA() {
       card.style.transition = 'transform .22s ease-out, opacity .22s'; card.style.opacity = 0;
       card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg) rotateY(${dir * -22}deg) translateZ(70px)`;
       // 后两张顶上来
-      if (u1) u1.style.transform = 'translateZ(0px) translateY(0px)';
-      if (u2) u2.style.transform = 'translateZ(-60px) translateY(10px)';
+      if (u1) u1.style.transform = 'translate(-50%, -50%) translateZ(0px) translateY(0px)';
+      if (u2) u2.style.transform = 'translate(-50%, -50%) translateZ(-60px) translateY(10px)';
       setTimeout(() => {
         if (dir > 0) {
           if (it2.stars === 0) { pushUndo({ kind: 'stars', it: it2, prev: it2.stars, dir }); it2.stars = stars; flash(`右滑喜欢${stars}星：#${it2.id + 1} → ${'★'.repeat(stars)}`); }
