@@ -71,6 +71,7 @@
     position: relative; aspect-ratio: var(--arn, 1.5); width: auto;
     height: min(calc(100% - 116px), calc(min(92vw, 640px) / var(--arn, 1.5)));
     transition: --arn .25s ease-out;
+    perspective: 1100px; transform-style: preserve-3d;
   }
   .va-stack.flat { aspect-ratio: auto; height: 200px; }
   .va-cardwrap { position: absolute; inset: 0; z-index: 2; }
@@ -81,8 +82,8 @@
     animation: vuIn .25s ease-out;
   }
   .va-under img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .85; }
-  .va-under.d1 { transform: translateY(12px) scale(.965); z-index: 1; }
-  .va-under.d2 { transform: translateY(24px) scale(.93); z-index: 0; opacity: .75; }
+  .va-under.d1 { transform: translateY(10px) translateZ(-60px); z-index: 1; }
+  .va-under.d2 { transform: translateY(20px) translateZ(-120px); z-index: 0; opacity: .75; }
   @keyframes vuIn { from { opacity: 0; } }
   .va-card {
     position: absolute; inset: 0; border-radius: var(--radius); overflow: hidden; background: var(--panel);
@@ -455,10 +456,11 @@ function renderA() {
     let pendingStars = 1;
     const liveRow = n => { [...row.querySelectorAll('button')].forEach((b, i) => { if (i < 5) b.classList.toggle('on', i < n); }); };
     const applyCard = (dx, rot) => {
-      card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`;
+      const tilt = Math.max(-16, Math.min(16, dx * .05));
+      card.style.transform = `translateX(${dx}px) rotate(${rot}deg) rotateY(${tilt}deg)`;
       const TH = Math.min(95, card.clientWidth * .22), p = Math.min(Math.abs(dx) / TH, 1);
-      if (u1) u1.style.transform = `translateY(${12 * (1 - p)}px) scale(${(.965 + .035 * p).toFixed(3)})`;
-      if (u2) u2.style.transform = `translateY(${12 * (2 - p)}px) scale(${(.965 + .035 * (1 + p)).toFixed(3)})`;
+      if (u1) u1.style.transform = `translateY(${10 * (1 - p)}px) translateZ(${(-60 * (1 - p)).toFixed(1)}px)`;
+      if (u2) u2.style.transform = `translateY(${20 - 10 * p}px) translateZ(${-120 + 60 * p}px)`;
     };
     const clampZoom = z => {
       if (!z || z.scale <= 1.001) return null;
@@ -547,10 +549,10 @@ function renderA() {
     function swipe(dir) {
       const it2 = items[aCur]; const stars = pendingStars;
       card.style.transition = 'transform .22s ease-out, opacity .22s'; card.style.opacity = 0;
-      card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg)`;
+      card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg) rotateY(${dir * -22}deg) translateZ(70px)`;
       // 后两张顶上来
-      if (u1) u1.style.transform = 'translateY(0px) scale(1)';
-      if (u2) u2.style.transform = 'translateY(12px) scale(.965)';
+      if (u1) u1.style.transform = 'translateZ(0px) translateY(0px)';
+      if (u2) u2.style.transform = 'translateZ(-60px) translateY(10px)';
       setTimeout(() => {
         if (dir > 0) {
           if (it2.stars === 0) { pushUndo({ kind: 'stars', it: it2, prev: it2.stars, dir }); it2.stars = stars; flash(`右滑喜欢${stars}星：#${it2.id + 1} → ${'★'.repeat(stars)}`); }
