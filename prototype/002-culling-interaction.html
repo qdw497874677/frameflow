@@ -279,7 +279,7 @@ function renderA() {
   const stage = document.createElement('div'); stage.className = 'va-stage';
   const wrap = document.createElement('div'); wrap.className = 'va-cardwrap';
   const hint = document.createElement('div'); hint.className = 'va-hint';
-  hint.innerHTML = '右滑 ⭐喜欢 · 左滑 🗑待删 · 双击/捏合 放大看细节 · 空格跳过 · F 喜欢 · X 待删';
+  hint.innerHTML = '右滑 ⭐（向上抬加星）· 左滑 🗑 · 双击/捏合放大 · 空格跳过 · F 喜欢 · X 待删';
   const count = document.createElement('div'); count.className = 'va-count';
   const row = document.createElement('div'); row.className = 'va-stars';
   const stage2 = stage;
@@ -329,6 +329,8 @@ function renderA() {
     /* 拖拽滑动 + 缩放平移 */
     aZoom = null;
     let drag = null; const pointers = new Map(); let pinchStart = null;
+    let pendingStars = 1; // 右滑中向上抬升=加星
+    const liveRow = n => { [...row.children].forEach((b, i) => { if (b.classList.contains('on') || b.dataset.live) { b.classList.toggle('on', i < n); b.dataset.live = '1'; } }); };
     const applyCard = (dx, rot) => { card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`; };
     const applyZoom = () => {
       if (!aZoom) { img.style.transform = ''; card.classList.remove('zoomed'); return; }
@@ -367,8 +369,15 @@ function renderA() {
       if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true;
       if (aZoom) { aZoom.tx += e.clientX - (drag.px ?? drag.x0); aZoom.ty += e.clientY - (drag.py ?? drag.y0); drag.px = e.clientX; drag.py = e.clientY; applyZoom(); return; }
       applyCard(dx, dx * .08);
-      like.style.opacity = dx > 40 ? Math.min(1, dx / 120) : 0;
-      nope.style.opacity = dx < -40 ? Math.min(1, -dx / 120) : 0;
+      if (dx > 40) {
+        pendingStars = Math.max(1, Math.min(5, 1 + Math.round(-dy / 70)));
+        like.textContent = 'LIKE ' + '⭐'.repeat(pendingStars);
+        liveRow(pendingStars);
+        like.style.opacity = Math.min(1, dx / 120);
+        nope.style.opacity = 0;
+      } else if (dx < -40) {
+        like.style.opacity = 0; nope.style.opacity = Math.min(1, -dx / 120);
+      } else { like.style.opacity = nope.style.opacity = 0; }
     });
     const endPointer = e => {
       pointers.delete(e.pointerId);
@@ -379,7 +388,8 @@ function renderA() {
       drag = null;
       if (wasZoom || moved === false) { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; return; }
       const TH = Math.min(95, card.clientWidth * .22);
-      if (dx > TH) swipe(1); else if (dx < -TH) swipe(-1); else { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; }
+      if (dx > TH) swipe(1); else if (dx < -TH) swipe(-1); else { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; draw(); }
+      like.textContent = 'LIKE';
     };
     card.addEventListener('pointerup', endPointer);
     card.addEventListener('pointercancel', endPointer);
@@ -397,10 +407,11 @@ function renderA() {
 
     function swipe(dir) {
       const it2 = items[aCur];
+      const stars = pendingStars;
       card.style.transition = 'transform .22s ease-out, opacity .22s'; card.style.opacity = 0;
       card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg)`;
       setTimeout(() => {
-        if (dir > 0 && it2.stars === 0) setStars(it2, 1, '右滑喜欢');
+        if (dir > 0 && it2.stars === 0) setStars(it2, stars, `右滑喜欢${stars}星`);
         else if (dir < 0 && !it2.del) toggleDel(it2, '左滑待删');
         aCur = Math.min(items.length, aCur + 1); draw();
       }, 200);
