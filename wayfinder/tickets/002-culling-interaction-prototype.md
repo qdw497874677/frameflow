@@ -3,7 +3,7 @@ id: "002"
 title: 挑选交互原型（星级+滑动）
 labels: [wayfinder:prototype]
 status: open
-assignee: ""
+assignee: "qdw"
 blocked-by: []
 ---
 

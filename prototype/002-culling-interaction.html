@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE（抛砖，非产品代码）· wayfinder 票 002「挑选交互原型（星级+滑动）」
+  问题：星级+待删的挑选交互长什么样——三个结构上不同的变体，底部浮条切换（或 Shift+←/→）。
+  单文件、无依赖、无网络：双击打开即玩；假照片由 canvas 现场生成（60 个 RAW+JPEG 对）。
+  三个变体的打标状态全局共享——可以在 A 里滑几张、切到 B/C 看标记是否还在（真实工作流是混用的）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>挑选交互原型 · 002</title>
+<style>
+  :root {
+    --bg: #101014; --panel: #1a1a21; --line: #2a2a33; --fg: #e8e8ee; --dim: #8a8a99;
+    --star: #ffc94d; --trash: #ff5d5d; --keep: #5dd97c; --accent: #6c8cff;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; overflow: hidden; }
+
+  /* ── 顶部状态条：surface the state ───────────────────────── */
+  #statebar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
+    font-size: 13px; position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+  }
+  #statebar .title { font-weight: 600; }
+  #statebar .title small { color: var(--dim); font-weight: 400; }
+  .pill { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+  .pill.star { color: var(--star); border-color: color-mix(in srgb, var(--star) 40%, transparent); }
+  .pill.trash { color: var(--trash); border-color: color-mix(in srgb, var(--trash) 40%, transparent); }
+  .pill.dim { color: var(--dim); }
+  #log { color: var(--dim); flex: 1; min-width: 120px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.btn { background: #26262f; color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
+  button.btn:active { transform: scale(.96); }
+
+  /* ── 底部变体切换浮条 ─────────────────────────────────────── */
+  #switcher {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 60;
+    display: flex; align-items: center; gap: 10px;
+    background: #000; color: #fff; padding: 8px 14px; border-radius: 999px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.55); border: 1px solid #3a3a44; font-size: 13px;
+  }
+  #switcher button { background: none; border: none; color: #fff; font-size: 16px; cursor: pointer; padding: 2px 8px; }
+  #switcher .vlabel { min-width: 200px; text-align: center; }
+  #switcher .vlabel b { color: var(--accent); }
+  #switcher .hint { color: #999; font-size: 11px; }
+
+  #app { position: fixed; inset: 44px 0 64px 0; overflow: hidden; }
+  .chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: #33333f; color: #bdbdcb; vertical-align: 1px; }
+  .chip.raw { background: #2b3a63; color: #a8bcff; }
+
+  /* ── 变体 A：Tinder 卡片 ─────────────────────────────────── */
+  .va-root { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 10px; }
+  .va-stage { position: relative; width: min(92vw, 520px); aspect-ratio: 3/2; perspective: 900px; }
+  .va-card {
+    position: absolute; inset: 0; border-radius: 16px; overflow: hidden;
+    background: #222; box-shadow: 0 10px 40px rgba(0,0,0,.5); touch-action: none; cursor: grab;
+    user-select: none; -webkit-user-drag: none;
+  }
+  .va-card img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+  .va-card .meta { position: absolute; left: 0; right: 0; bottom: 0; padding: 20px 12px 8px;
+    background: linear-gradient(transparent, rgba(0,0,0,.78)); font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+  .va-card .stamp { position: absolute; top: 18px; font-size: 64px; font-weight: 800; opacity: 0;
+    padding: 2px 14px; border: 5px solid; border-radius: 14px; transform: rotate(-14deg); pointer-events: none; }
+  .va-card .stamp.keep { left: 16px; color: var(--keep); border-color: var(--keep); }
+  .va-card .stamp.trash { right: 16px; color: var(--trash); border-color: var(--trash); transform: rotate(14deg); }
+  .va-card .badges { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; }
+  .badge { font-size: 12px; background: rgba(0,0,0,.62); border-radius: 999px; padding: 2px 9px; }
+  .badge.on-star { color: var(--star); }
+  .badge.on-trash { color: var(--trash); }
+  .va-stars { display: flex; gap: 4px; font-size: 30px; line-height: 1; }
+  .va-stars span { cursor: pointer; color: #3c3c48; transition: transform .08s; }
+  .va-stars span.on { color: var(--star); }
+  .va-stars span:active { transform: scale(1.25); }
+  .va-row { display: flex; gap: 10px; align-items: center; }
+  .va-hint { color: var(--dim); font-size: 12px; text-align: center; }
+  .va-count { color: var(--dim); font-size: 12px; }
+
+  /* ── 变体 B：大图 + 胶片条 ───────────────────────────────── */
+  .vb-root { height: 100%; display: flex; flex-direction: column; }
+  .vb-main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; position: relative; background: #0a0a0d; }
+  .vb-main img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .vb-overlay { position: absolute; top: 10px; left: 12px; font-size: 13px; display: flex; gap: 8px; align-items: center;
+    background: rgba(0,0,0,.55); padding: 4px 10px; border-radius: 8px; }
+  .vb-legend { position: absolute; top: 10px; right: 12px; font-size: 12px; color: var(--dim);
+    background: rgba(0,0,0,.55); padding: 4px 10px; border-radius: 8px; text-align: right; }
+  .vb-bottom { background: var(--panel); border-top: 1px solid var(--line); padding: 8px 10px 6px; }
+  .vb-stars { display: flex; justify-content: center; gap: 6px; font-size: 26px; margin-bottom: 6px; }
+  .vb-stars span { cursor: pointer; color: #3c3c48; }
+  .vb-stars span.on { color: var(--star); }
+  .vb-film { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+  .vb-thumb { position: relative; flex: 0 0 auto; width: 92px; height: 62px; border-radius: 6px; overflow: hidden;
+    border: 2px solid transparent; cursor: pointer; opacity: .75; }
+  .vb-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .vb-thumb.cur { border-color: var(--accent); opacity: 1; }
+  .vb-thumb .m { position: absolute; right: 3px; bottom: 2px; font-size: 11px; }
+  .vb-thumb .s { color: var(--star); } .vb-thumb .d { color: var(--trash); }
+  .vb-thumb.is-trash img { filter: grayscale(1) brightness(.55); }
+
+  /* ── 变体 C：网格扫射 ────────────────────────────────────── */
+  .vc-root { height: 100%; overflow-y: auto; padding: 12px; }
+  .vc-tip { color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+  .vc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .vc-tile { position: relative; aspect-ratio: 3/2; border-radius: 10px; overflow: hidden; cursor: pointer;
+    border: 2px solid transparent; background: #222; }
+  .vc-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .vc-tile.starred { border-color: var(--star); }
+  .vc-tile.is-trash { border-color: var(--trash); }
+  .vc-tile.is-trash img { filter: grayscale(1) brightness(.5); }
+  .vc-tile .m { position: absolute; top: 4px; left: 6px; font-size: 14px; text-shadow: 0 1px 3px #000; }
+  .vc-tile .del { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(0,0,0,.6); color: var(--trash); border: none; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  .vc-tile .nm { position: absolute; bottom: 0; left: 0; right: 0; font-size: 10px; color: #ccc;
+    background: linear-gradient(transparent, rgba(0,0,0,.7)); padding: 10px 4px 2px; }
+</style>
+</head>
+<body>
+
+<div id="statebar">
+  <span class="title">挑选原型 <small>002</small></span>
+  <span class="pill star">⭐ 有星 <b id="st-star">0</b></span>
+  <span class="pill trash">🗑 待删 <b id="st-trash">0</b></span>
+  <span class="pill dim">未标 <b id="st-none">0</b></span>
+  <button class="btn" id="undo">撤销</button>
+  <button class="btn" id="reset">重置</button>
+  <span id="log"></span>
+</div>
+
+<div id="app"></div>
+
+<div id="switcher">
+  <button id="prev" title="上一个变体">◀</button>
+  <span class="vlabel" id="vlabel"></span>
+  <button id="next" title="下一个变体">▶</button>
+  <span class="hint">Shift+←/→ 切换<br>打标状态跨变体共享</span>
+</div>
+
+<script>
+/* ══════════════ 假数据：60 个 RAW+JPEG 对，canvas 生成 ══════════════ */
+const N = 60;
+const CAMERAS = ['Sony α7C II', 'Fujifilm X-T5', 'iPhone 15 Pro'];
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; } }
+
+const items = [];
+for (let i = 0; i < N; i++) {
+  const rnd = mulberry32(1000 + i * 77);
+  const grad = [];
+  for (let c = 0; c < 3; c++) grad.push(Math.floor(rnd()*360));
+  items.push({
+    i, name: 'IMG_' + String(2043 + i).padStart(4, '0'),
+    camera: CAMERAS[Math.floor(rnd()*3)],
+    stars: 0, del: false, grad,
+    url: null, // 懒生成
+  });
+}
+function photoURL(it, w = 760, h = 507) {
+  if (it.url) return it.url;
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d');
+  const [h1, h2, h3] = it.grad;
+  const lg = g.createLinearGradient(0, 0, w, h);
+  lg.addColorStop(0, `hsl(${h1},55%,38%)`); lg.addColorStop(1, `hsl(${h2},60%,22%)`);
+  g.fillStyle = lg; g.fillRect(0, 0, w, h);
+  // 几何点缀，让每张“照片”有辨识度
+  const rnd = mulberry32(2000 + it.i * 13);
+  for (let k = 0; k < 3; k++) {
+    g.beginPath();
+    g.arc(rnd()*w, rnd()*h, 24 + rnd()*110, 0, 7);
+    g.fillStyle = `hsla(${h3 + k*20},70%,${45+k*8}%,.30)`; g.fill();
+  }
+  g.strokeStyle = `hsla(${h1},80%,80%,.35)`; g.lineWidth = 2;
+  for (let k = 0; k < 4; k++) {
+    g.beginPath(); g.moveTo(rnd()*w, 0); g.lineTo(rnd()*w, h); g.stroke();
+  }
+  it.url = cv.toDataURL('image/jpeg', 0.82);
+  return it.url;
+}
+
+/* ══════════════ 全局状态 + 动作（三个变体共享） ══════════════ */
+const app = document.getElementById('app'), vlabel = document.getElementById('vlabel'),
+      logEl = document.getElementById('log'),
+      stStar = document.getElementById('st-star'), stTrash = document.getElementById('st-trash'),
+      stNone = document.getElementById('st-none'),
+      prev = document.getElementById('prev'), next = document.getElementById('next'),
+      undo = document.getElementById('undo'), reset = document.getElementById('reset');
+const undoStack = [];
+function pushUndo(it, why) {
+  undoStack.push({ i: it.i, stars: it.stars, del: it.del, why });
+  if (undoStack.length > 100) undoStack.shift();
+}
+function doUndo() {
+  const u = undoStack.pop(); if (!u) return flash('没有可撤销的动作');
+  const it = items[u.i]; it.stars = u.stars; it.del = u.del;
+  flash(`撤销「${u.why}」→ ${it.name}`); refresh();
+}
+function setStars(it, n, why) {
+  if (it.stars === n) return;
+  pushUndo(it, why); it.stars = n;
+  if (n > 0 && it.del) { it.del = false; } // 打星自动取消待删
+  flash(`${it.name} → ${'★'.repeat(n)}${why ? '（'+why+'）' : ''}`); refresh();
+}
+function toggleDel(it) {
+  pushUndo(it, '待删切换'); it.del = !it.del;
+  if (it.del) it.stars = 0; // 待删清星（二选一）
+  flash(`${it.name} ${it.del ? '→ 🗑 待删' : '← 取消待删'}`); refresh();
+}
+function counts() {
+  let s = 0, d = 0; items.forEach(it => { if (it.del) d++; else if (it.stars > 0) s++; });
+  return { s, d, n: N - s - d };
+}
+function refresh() {
+  const c = counts();
+  stStar.textContent = c.s; stTrash.textContent = c.d; stNone.textContent = c.n;
+  render(current);
+}
+let logT;
+function flash(msg) { logEl.textContent = msg; clearTimeout(logT); logT = setTimeout(() => logEl.textContent = '', 4000); }
+
+/* ══════════════ 变体切换 ══════════════ */
+const VARIANTS = [
+  { key: 'A', name: 'Tinder 卡片流', desc: '滑动二分：右滑喜欢 / 左滑待删' },
+  { key: 'B', name: '键盘大图', desc: '数字键 1–5 精确星级，X 待删' },
+  { key: 'C', name: '网格扫射', desc: '俯瞰全项目，点按批量粗筛' },
+];
+let current = 0;
+function setVariant(idx) {
+  current = (idx + VARIANTS.length) % VARIANTS.length;
+  const v = VARIANTS[current];
+  vlabel.innerHTML = `<b>${v.key}</b> · ${v.name} — ${v.desc}`;
+  try { history.replaceState(null, '', '#variant=' + v.key.toLowerCase()); } catch (e) {}
+  render(current);
+  document.removeEventListener('keydown', keyHandler);
+  document.addEventListener('keydown', keyHandler);
+}
+function render(v) {
+  app.innerHTML = '';
+  if (v === 0) renderA(); else if (v === 1) renderB(); else renderC();
+}
+
+/* ══════════════ 变体 A：Tinder 卡片流 ══════════════ */
+let aCur = 0;
+function renderA() {
+  const root = document.createElement('div'); root.className = 'va-root';
+  const stage = document.createElement('div'); stage.className = 'va-stage';
+  const stars = document.createElement('div'); stars.className = 'va-stars';
+  const row = document.createElement('div'); row.className = 'va-row';
+  const hint = document.createElement('div'); hint.className = 'va-hint';
+  hint.innerHTML = '🖱 拖动卡片：→ 喜欢 ⭐ ／ ← 待删 🗑 · 触屏直接滑 · 空格=跳过 · ⭐条点按=精确星级（打星自动取消待删）';
+  root.append(stage, stars, row, hint);
+
+  function draw() {
+    stage.innerHTML = ''; app.appendChild(root);
+    if (aCur >= N) {
+      stage.innerHTML = '<div style="text-align:center;color:var(--dim);padding:40px 0">全部看完了 —— 切到 B / C 复查，或点重置</div>';
+      stars.innerHTML = ''; row.innerHTML = `<button class="btn" onclick="aCur=0;renderA()">回到第一张</button>`;
+      return;
+    }
+    // 叠 3 张卡
+    for (let d = 2; d >= 0; d--) {
+      const idx = aCur + d; if (idx >= N) continue;
+      const it = items[idx];
+      const card = document.createElement('div'); card.className = 'va-card';
+      card.style.zIndex = 10 - d;
+      if (d > 0) { card.style.transform = `translateY(${d*10}px) scale(${1-d*0.04})`; card.style.opacity = 0.85; }
+      card.innerHTML = `
+        <img src="${photoURL(it)}" draggable="false">
+        <div class="badges">
+          <span class="chip raw">RAW+JPEG</span>
+          ${it.stars ? `<span class="badge on-star">★${it.stars}</span>` : ''}
+          ${it.del ? `<span class="badge on-trash">🗑</span>` : ''}
+        </div>
+        <div class="stamp keep">LIKE</div><div class="stamp trash">NOPE</div>
+        <div class="meta"><span>${it.name} · ${it.camera}</span><span style="color:var(--dim)">${aCur+1} / ${N}</span></div>`;
+      if (d === 0) wireSwipe(card, it);
+      stage.appendChild(card);
+    }
+    stars.innerHTML = '';
+    const it = items[aCur];
+    for (let s = 1; s <= 5; s++) {
+      const sp = document.createElement('span');
+      sp.textContent = s <= it.stars ? '★' : '☆';
+      if (s <= it.stars) sp.className = 'on';
+      sp.onclick = () => setStars(it, it.stars === s ? 0 : s, '点按星级');
+      stars.appendChild(sp);
+    }
+    row.innerHTML = '';
+    const bPrev = document.createElement('button'); bPrev.className = 'btn'; bPrev.textContent = '← 上一张';
+    const bDel = document.createElement('button'); bDel.className = 'btn'; bDel.textContent = '🗑 待删';
+    const bKeep = document.createElement('button'); bKeep.className = 'btn'; bKeep.textContent = '⭐ 喜欢';
+    const bNext = document.createElement('button'); bNext.className = 'btn'; bNext.textContent = '跳过 →';
+    bPrev.onclick = () => { aCur = Math.max(0, aCur - 1); draw(); };
+    bDel.onclick = () => { if (!items[aCur].del) toggleDel(items[aCur]); aCur++; draw(); };
+    bKeep.onclick = () => { const t = items[aCur]; if (t.stars === 0) setStars(t, 1, '喜欢'); aCur++; draw(); };
+    bNext.onclick = () => { aCur++; draw(); };
+    row.append(bPrev, bDel, bKeep, bNext);
+  }
+  function wireSwipe(card, it) {
+    let sx = 0, sy = 0, dx = 0, dy = 0, dragging = false;
+    const keepStamp = card.querySelector('.stamp.keep'), trashStamp = card.querySelector('.stamp.trash');
+    card.addEventListener('pointerdown', e => {
+      if (e.target.closest('.va-stars')) return;
+      dragging = true; sx = e.clientX; sy = e.clientY; card.setPointerCapture(e.pointerId);
+      card.style.transition = 'none';
+    });
+    card.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      dx = e.clientX - sx; dy = e.clientY - sy;
+      card.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx * 0.05}deg)`;
+      const k = Math.min(1, Math.max(0, dx / 90)), t = Math.min(1, Math.max(0, -dx / 90));
+      keepStamp.style.opacity = k; trashStamp.style.opacity = t;
+    });
+    card.addEventListener('pointerup', () => {
+      if (!dragging) return; dragging = false;
+      card.style.transition = 'transform .25s ease, opacity .25s ease';
+      if (dx > 95) {
+        card.style.transform = `translate(${innerWidth}px, ${dy}px) rotate(28deg)`; card.style.opacity = 0;
+        setTimeout(() => { if (it.stars === 0) setStars(it, 1, '右滑喜欢'); aCur++; draw(); }, 220);
+      } else if (dx < -95) {
+        card.style.transform = `translate(${-innerWidth}px, ${dy}px) rotate(-28deg)`; card.style.opacity = 0;
+        setTimeout(() => { if (!it.del) toggleDel(it); aCur++; draw(); }, 220);
+      } else {
+        card.style.transform = ''; keepStamp.style.opacity = 0; trashStamp.style.opacity = 0;
+      }
+    });
+  }
+  draw();
+}
+
+/* ══════════════ 变体 B：键盘大图 + 胶片条 ══════════════ */
+let bCur = 0;
+function renderB() {
+  const root = document.createElement('div'); root.className = 'vb-root';
+  const main = document.createElement('div'); main.className = 'vb-main';
+  const bottom = document.createElement('div'); bottom.className = 'vb-bottom';
+  const film = document.createElement('div'); film.className = 'vb-film';
+  root.append(main, bottom); bottom.append(film); app.appendChild(root);
+
+  function draw() {
+    const it = items[bCur];
+    main.innerHTML = `
+      <img src="${photoURL(it, 1280, 853)}">
+      <div class="vb-overlay"><span class="chip raw">RAW+JPEG</span> ${it.name} · ${it.camera}
+        ${it.stars ? `&nbsp;<span style="color:var(--star)">★${it.stars}</span>` : ''}
+        ${it.del ? `&nbsp;<span style="color:var(--trash)">🗑 待删</span>` : ''}</div>
+      <div class="vb-legend">1–5 星级 · 0 清星 · X 待删<br>←/→ 翻张 · U 撤销</div>`;
+    const stars = document.createElement('div'); stars.className = 'vb-stars';
+    for (let s = 1; s <= 5; s++) {
+      const sp = document.createElement('span');
+      sp.textContent = s <= it.stars ? '★' : '☆'; if (s <= it.stars) sp.className = 'on';
+      sp.onclick = () => setStars(it, it.stars === s ? 0 : s, '点按星级');
+      stars.appendChild(sp);
+    }
+    film.innerHTML = '';
+    items.forEach((t, idx) => {
+      const th = document.createElement('div');
+      th.className = 'vb-thumb' + (idx === bCur ? ' cur' : '') + (t.del ? ' is-trash' : '');
+      th.innerHTML = `<img src="${photoURL(t, 200, 133)}" loading="lazy">
+        <span class="m">${t.del ? '<span class="d">🗑</span>' : t.stars ? `<span class="s">★${t.stars}</span>` : ''}</span>`;
+      th.onclick = () => { bCur = idx; drawB(); };
+      film.appendChild(th);
+    });
+    bottom.innerHTML = ''; bottom.append(stars, film);
+    const cur = film.children[bCur]; if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }
+  function drawB() { draw(); }
+  window._bKey = e => {
+    const it = items[bCur]; if (!it) return;
+    if (e.key >= '1' && e.key <= '5') setStars(it, +e.key, '数字键');
+    else if (e.key === '0') setStars(it, 0, '清星');
+    else if (e.key.toLowerCase() === 'x') toggleDel(it);
+    else if (e.key === 'ArrowLeft' && !e.shiftKey) { bCur = Math.max(0, bCur - 1); draw(); }
+    else if (e.key === 'ArrowRight' && !e.shiftKey) { bCur = Math.min(N - 1, bCur + 1); draw(); }
+    else return;
+  };
+  draw();
+}
+
+/* ══════════════ 变体 C：网格扫射 ══════════════ */
+function renderC() {
+  const root = document.createElement('div'); root.className = 'vc-root';
+  const tip = document.createElement('div'); tip.className = 'vc-tip';
+  tip.innerHTML = '🖱 点缩略图：星级 +1（0→1→2→…→5→0 循环）· 右上 ✕ = 待删/恢复 · 适合第一遍粗筛，再切 B 精筛';
+  const grid = document.createElement('div'); grid.className = 'vc-grid';
+  root.append(tip, grid); app.appendChild(root);
+
+  items.forEach(it => {
+    const tile = document.createElement('div');
+    tile.className = 'vc-tile' + (it.del ? ' is-trash' : it.stars ? ' starred' : '');
+    tile.innerHTML = `
+      <img src="${photoURL(it, 320, 213)}" loading="lazy">
+      <span class="m">${it.del ? '🗑' : it.stars ? '★'.repeat(it.stars) : ''}</span>
+      <button class="del">${it.del ? '↩' : '✕'}</button>
+      <span class="nm">${it.name} <span class="chip raw">RAW+JPEG</span></span>`;
+    tile.addEventListener('click', e => {
+      if (e.target.closest('.del')) { toggleDel(it); return; }
+      setStars(it, (it.stars + 1) % 6, '网格点按');
+    });
+    grid.appendChild(tile);
+  });
+}
+
+/* ══════════════ 全局键盘 + 启动 ══════════════ */
+function keyHandler(e) {
+  if (e.shiftKey && e.key === 'ArrowLeft') { setVariant(current - 1); return; }
+  if (e.shiftKey && e.key === 'ArrowRight') { setVariant(current + 1); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { doUndo(); return; }
+  if (current === 0) {
+    if (e.key === ' ') { e.preventDefault(); aCur++; renderA(); }
+    else if (e.key.toLowerCase() === 'x') { const it = items[aCur]; if (it && !it.del) toggleDel(it); aCur = Math.min(N, aCur + 1); renderA(); }
+    else if (e.key.toLowerCase() === 'f') { const it = items[aCur]; if (it && it.stars === 0) setStars(it, 1, 'F=喜欢'); aCur = Math.min(N, aCur + 1); renderA(); }
+  } else if (current === 1 && window._bKey) {
+    window._bKey(e);
+  }
+}
+prev.onclick = () => setVariant(current - 1);
+next.onclick = () => setVariant(current + 1);
+undo.onclick = doUndo;
+reset.onclick = () => { items.forEach(it => { it.stars = 0; it.del = false; }); undoStack.length = 0; aCur = 0; bCur = 0; flash('已重置全部标记'); refresh(); };
+
+const m = location.hash.match(/variant=([abc])/i);
+setVariant(m ? 'abc'.indexOf(m[1].toLowerCase()) : 0);
+refresh();
+</script>
+</body>
+</html>
