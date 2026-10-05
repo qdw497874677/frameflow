@@ -3,7 +3,7 @@ id: "003"
 title: 归档规则 DSL
 labels: [wayfinder:grilling]
 status: open
-assignee: ""
+assignee: "qdw"
 blocked-by: []
 ---
 

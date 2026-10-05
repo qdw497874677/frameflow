@@ -2,7 +2,7 @@
 id: "002"
 title: 挑选交互原型（星级+滑动）
 labels: [wayfinder:prototype]
-status: open
+status: closed
 assignee: "qdw"
 blocked-by: []
 ---
@@ -17,3 +17,21 @@ blocked-by: []
 - 触屏手机上的等价操作（Tailscale 访问场景）
 
 用假数据 JPEG 做可点的高保真原型（prototype 技能），让用户亲手滑过之后再定交互骨架。原型作为资产链接回本票。
+
+## Resolution
+
+原型（[prototype/002-culling-interaction.html](../../prototype/002-culling-interaction.html)）已被用户亲手滑过，并**直接演化为正式前端**（`web/`，见 [web/DESIGN.md](../../web/DESIGN.md) 的交互契约表）。定下的交互骨架：
+
+**一份数据、两种焦距**：卡片流与网格不是两个页面，是同一舞台的两个焦距（共享数据/标记/当前张/撤销栈），切换时那张照片从大卡连续飞进/飞出网格（手写飞行元素，0.38s，`translate+scale`，不动布局）。键盘 `Shift + ←/→` 或底栏切换。
+
+**打标手势**：右滑 = 加星（默认 1 星，同时下压可连加到 5 星，每 95px 一颗，盖章显示 `LIKE ★★`）；左滑 = 待删；**星级与待删互斥**（待删清星、打星取消待删）。桌面键盘流：`1–5` 打星、`0` 清星、`→/F` 下一张、`←/X` 待删并下一张、`空格` 跳过、`Ctrl/⌘+Z` 撤销（卡片从离开方向飞回）。
+
+**看细节**：双击（或右下角按钮）放大 2.5×，滚轮/捏合/拖动，右下角小地图显示视口，再双击复位。
+
+**节奏**：网格里点格 = 变焦到那张；网格格子自带「放大看 / 加星循环 / 待删」三个按钮，可整屏扫射不离开网格。
+
+**成对**：RAW+JPEG 是一个实体（卡片上标 `RAW+JPEG`），打星/待删/归档/回收站全部成对——由 store 的 `write()` 强制，任何 UI 入口绕不过。
+
+**叠卡的物理模型**（在票 006 结论下自研）：拖动进度连续耦合后排（上浮/放大跟着手指）、松手用带速度的弹簧积分、顶卡飞出与后排顶上曲线连续（`progress = hypot(dx, dy*0.65)/threshold`）。
+
+**资产**：`prototype/002-culling-interaction.html`（一次性原型，含三变体与假照片生成器，结论已移植）；正式实现 `web/src/features/cull/*`、`web/src/app/Stage.tsx`、`web/src/app/FlightOverlay.tsx`。
