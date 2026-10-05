@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { cn } from 'cn';
-import { Maximize2, Minimize2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { source } from '@/api';
 import type { Photo } from '@/core/types';
 
 /**
- * 卡片面：照片 + 必要信息 + 放大查看。
+ * 卡片面：**只有照片**，不放任何文字与按钮 —— 压在画面上的信息会挡住观察。
+ * 信息与控件由外层（Deck 的信息栏 / 看片台的头部）渲染，卡片把它们的状态往上报。
  *
  * 放大不改变布局（卡片框不动），只改变照片在框内的变换，
  * 所以「看的还是这张卡，只是凑近了看」。支持双击、滚轮、双指捏合，
@@ -20,6 +19,16 @@ export interface ZoomApi {
   pan: (dx: number, dy: number) => void;
   /** 本次拖动结束，平移锚点复位 */
   endPan: () => void;
+  /** 复位到 1× */
+  reset: () => void;
+  /** 以卡片中心为锚点放大（默认双击倍数） */
+  zoomIn: (scale?: number) => void;
+}
+
+export interface ZoomView {
+  s: number;
+  tx: number;
+  ty: number;
 }
 
 interface View {
@@ -40,15 +49,15 @@ interface PhotoCardProps {
   photo: Photo;
   width: number;
   height: number;
-  index: number;
-  total: number;
   zoomApi?: RefObject<ZoomApi | null>;
+  /** 缩放状态上报给外层（信息栏要在卡片外显示倍数与复位） */
+  onZoom?: (view: ZoomView) => void;
   /** 交互层：叠在后排的卡只作视觉，不接手势 */
   bare?: boolean;
   className?: string;
 }
 
-export function PhotoCard({ photo, width, height, index, total, zoomApi, bare = false, className }: PhotoCardProps) {
+export function PhotoCard({ photo, width, height, zoomApi, onZoom, bare = false, className }: PhotoCardProps) {
   const [view, setView] = useState<View>({ s: 1, tx: 0, ty: 0 });
   const [smooth, setSmooth] = useState(true);
   const viewRef = useRef(view);
@@ -107,11 +116,18 @@ export function PhotoCard({ photo, width, height, index, total, zoomApi, bare = 
       endPan: () => {
         panAnchor.current = null;
       },
+      reset: () => reset(),
+      zoomIn: (scale = DBL_SCALE) => zoomAt(scale, 0, 0, true),
     };
     return () => {
       zoomApi.current = null;
     };
-  }, [apply, zoomApi]);
+  }, [apply, reset, zoomApi, zoomAt]);
+
+  /* ── 缩放状态上报（外层信息栏显示倍数/复位） ── */
+  useEffect(() => {
+    onZoom?.(view);
+  }, [onZoom, view]);
 
   /* ── 滚轮（要 preventDefault，必须非被动监听） ── */
   useEffect(() => {
@@ -197,12 +213,6 @@ export function PhotoCard({ photo, width, height, index, total, zoomApi, bare = 
     [bare, reset, zoomAt],
   );
 
-  const zoomed = view.s > 1.01;
-  const focus = photo.focusHint && photo.focusHint !== 'sharp' ? photo.focusHint : null;
-  const winPct = 100 / view.s;
-  const rectLeft = 50 - winPct / 2 - (view.tx * 100) / (view.s * Math.max(1, width));
-  const rectTop = 50 - winPct / 2 - (view.ty * 100) / (view.s * Math.max(1, height));
-
   return (
     <Card
       className={cn('relative size-full overflow-hidden rounded-none border-0 bg-card p-0 ring-1 ring-white/10', className)}
@@ -225,70 +235,6 @@ export function PhotoCard({ photo, width, height, index, total, zoomApi, bare = 
         />
       </div>
 
-      {!bare && (
-        <>
-          {/* 信息 chips：只留最必要的三条，其余交给看片台 */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {photo.hasRaw && photo.hasJpeg && (
-                <Badge className="bg-black/55 text-[11px] text-foreground/90 backdrop-blur-sm">RAW+JPEG</Badge>
-              )}
-              {photo.camera && (
-                <Badge className="bg-black/55 text-[11px] text-foreground/90 backdrop-blur-sm">
-                  {photo.camera}
-                  {photo.lens ? ` · ${photo.lens}` : ''}
-                </Badge>
-              )}
-            </div>
-            <Badge className="bg-black/55 text-[11px] tabular-nums text-foreground/90 backdrop-blur-sm">
-              {String(index + 1).padStart(2, '0')}/{total}
-            </Badge>
-          </div>
-
-          {focus && (
-            <Badge className="absolute bottom-2.5 left-2.5 gap-1 bg-danger/90 text-[11px] font-medium text-white">
-              {FOCUS_LABEL[focus] ?? focus}
-            </Badge>
-          )}
-
-          {zoomed ? (
-            <button
-              type="button"
-              onClick={reset}
-              aria-label={`退出放大（${Math.round(view.s * 100)}%）`}
-              className="absolute right-2.5 bottom-2.5 size-[74px] overflow-hidden rounded-none ring-1 ring-white/15"
-            >
-              <img
-                src={source.thumbUrl(photo.id, 512)}
-                alt=""
-                className="size-full object-cover opacity-75"
-                draggable={false}
-              />
-              <span
-                className="absolute border border-gold bg-gold/15"
-                style={{ left: `${rectLeft}%`, top: `${rectTop}%`, width: `${winPct}%`, height: `${winPct}%` }}
-              />
-              <span className="absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] tabular-nums text-foreground/90">
-                {Math.round(view.s * 100)}%
-              </span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => zoomAt(DBL_SCALE, 0, 0, true)}
-              aria-label="放大看细节"
-              className="absolute right-2.5 bottom-2.5 grid size-9 place-items-center rounded-full bg-black/50 text-foreground/85 backdrop-blur-sm transition-colors hover:bg-black/70"
-            >
-              <Maximize2 className="size-4" />
-            </button>
-          )}
-          {zoomed && (
-            <span className="pointer-events-none absolute top-2.5 left-1/2 hidden -translate-x-1/2 items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[11px] text-foreground/85 backdrop-blur-sm sm:flex">
-              <Minimize2 className="size-3" />双指/滚轮缩放 · 拖动平移
-            </span>
-          )}
-        </>
-      )}
     </Card>
   );
 }

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, useTransform, type MotionValue } from 'framer-motion';
-import { Star, Trash2 } from 'lucide-react';
+import { Maximize2, Minimize2, Star, Trash2 } from 'lucide-react';
 import { store, useAppState } from '@/core/store';
 import type { Photo } from '@/core/types';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { PhotoCard, type ZoomApi } from './PhotoCard';
+import { FOCUS_LABEL, PhotoCard, type ZoomApi, type ZoomView } from './PhotoCard';
 import { useDeckPhysics } from './useDeckPhysics';
 import { StarRow } from './StarRow';
 
@@ -57,7 +57,7 @@ function UnderCard({
         zIndex: 10 - depth,
       }}
     >
-      <PhotoCard photo={photo} width={frame.width} height={frame.height} index={0} total={0} bare />
+      <PhotoCard photo={photo} width={frame.width} height={frame.height} bare />
       <div className="pointer-events-none absolute inset-0 rounded-none bg-background/25" />
     </motion.div>
   );
@@ -69,6 +69,10 @@ export function Deck() {
   const cardRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState({ w: 0, h: 0 });
   const zoomApi = useRef<ZoomApi | null>(null);
+  const [zoomView, setZoomView] = useState<ZoomView>({ s: 1, tx: 0, ty: 0 });
+  const handleZoom = useCallback((v: ZoomView) => {
+    setZoomView((prev) => (prev.s === v.s && prev.tx === v.tx && prev.ty === v.ty ? prev : v));
+  }, []);
 
   // 用 callback ref 而不是 useRef + []：加载中这一块是不渲染的（空态），
   // 一次性的 effect 会在那时拿到 null 就再也不量了 —— 舞台尺寸会永远停在 0。
@@ -172,6 +176,9 @@ export function Deck() {
     );
   }
 
+  const zoomed = zoomView.s > 1.01;
+  const focus = top.focusHint && top.focusHint !== 'sharp' ? top.focusHint : null;
+
   return (
     <div className="flex h-full flex-col">
       <div ref={setStageEl} className="relative min-h-0 flex-1">
@@ -200,9 +207,8 @@ export function Deck() {
                   photo={top}
                   width={topFrame.width}
                   height={topFrame.height}
-                  index={cursor}
-                  total={items.length}
                   zoomApi={zoomApi}
+                  onZoom={handleZoom}
                 />
               </motion.div>
 
@@ -225,21 +231,61 @@ export function Deck() {
         </div>
 
         {/* 拖动中：让人知道松手会打成几星 */}
-        {physics.dragging && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-            {stars > 1 ? (
-              <span className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1 text-sm text-gold backdrop-blur-sm">
-                <Star className="size-4 fill-gold" />
+      </div>
+
+      {/*
+        信息栏：会挡住照片的一切（型号、RAW+JPEG、跑焦角标、张数、放大键）
+        都放在卡外这一行 —— 画面里只留照片本身。
+      */}
+      <div className="flex h-8 shrink-0 items-center justify-center px-2 text-[11px] text-muted-foreground">
+        <div className="flex w-full items-center justify-between gap-2" style={{ maxWidth: topFrame.width }}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {focus && (
+            <span className="shrink-0 rounded-sm bg-danger/15 px-1.5 py-0.5 font-medium text-danger">
+              {FOCUS_LABEL[focus] ?? focus}
+            </span>
+          )}
+          {top.hasRaw && top.hasJpeg && (
+            <span className="shrink-0 rounded-sm bg-secondary px-1.5 py-0.5 text-foreground/70">RAW+JPEG</span>
+          )}
+          <span className="truncate">
+            {top.camera}
+            {top.lens ? ` · ${top.lens}` : ''}
+          </span>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {physics.dragging ? (
+            stars > 1 ? (
+              <span className="flex items-center gap-1 text-gold">
+                <Star className="size-3.5 fill-gold" />
                 {stars} 星
               </span>
             ) : (
-              <span className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-muted-foreground backdrop-blur-sm">
+              <span className="flex items-center gap-1">
                 <Trash2 className="size-3.5" />
                 左滑待删
               </span>
-            )}
-          </div>
-        )}
+            )
+          ) : (
+            <>
+              {zoomed && <span className="tabular-nums text-foreground/70">{Math.round(zoomView.s * 100)}%</span>}
+              <span className="tabular-nums">
+                {String(cursor + 1).padStart(2, '0')}/{items.length}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-full"
+                aria-label={zoomed ? '退出放大' : '放大看细节'}
+                onClick={() => (zoomed ? zoomApi.current?.reset() : zoomApi.current?.zoomIn())}
+              >
+                {zoomed ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+              </Button>
+            </>
+          )}
+        </div>
+        </div>
       </div>
 
       <StarRow
