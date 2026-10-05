@@ -3,151 +3,208 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
-<title>002 · 挑选交互原型 v2 — A 看片流 / C 网格扫射</title>
+<title>002 · 挑选交互原型 v3 — A 看片流 / C 网格扫射</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe.css">
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/umd/photoswipe.umd.min.js"></script>
 <style>
   :root {
-    --bg: #0e0f13; --panel: #16181f; --panel2: #1d2029; --line: #2a2e3a;
-    --text: #e8eaf0; --dim: #8a8fa0; --accent: #6ea8fe; --gold: #ffce4d; --trash: #ff6b81;
+    --bg: #0b0c10; --panel: #14161c; --panel2: #1d2027; --panel3: #262a33; --line: #2b303b;
+    --text: #eef0f5; --dim: #9aa1b2; --faint: #6b7280;
+    --accent: #7ab0ff; --gold: #ffcc4d; --trash: #ff7085;
+    --radius: 14px; --shadow: 0 8px 32px rgba(0,0,0,.5);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "PingFang SC", "Noto Sans SC", sans-serif; }
+  body {
+    background: radial-gradient(120% 90% at 50% 0%, #12141b 0%, var(--bg) 60%);
+    color: var(--text); font: 14px/1.45 -apple-system, "Segoe UI", system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--panel3); border-radius: 4px; }
+  button { font-family: inherit; }
 
   /* ── 顶部状态条 ── */
   #statebar {
-    position: fixed; inset: 0 0 auto 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-    padding: 6px 10px; background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(8px);
+    position: fixed; inset: 0 0 auto 0; z-index: 30; display: flex; align-items: center; gap: 6px;
+    height: 48px; padding: 0 12px;
+    background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--line);
   }
-  #statebar .stat { font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 999px; background: var(--panel2); }
-  #statebar .stat b { font-size: 13px; }
-  .st-s { color: var(--gold); } .st-t { color: var(--trash); }
+  .stat {
+    display: inline-flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums;
+    padding: 3px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+    font-size: 12px; color: var(--dim);
+  }
+  .stat b { font-size: 14px; color: var(--text); font-weight: 650; }
+  .stat.s b { color: var(--gold); } .stat.t b { color: var(--trash); }
   #statebar .spacer { flex: 1; }
-  #statebar button {
-    background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
-    padding: 4px 10px; cursor: pointer; font-size: 13px;
+  .ghost {
+    background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 9px;
+    padding: 5px 12px; cursor: pointer; font-size: 13px; transition: all .15s;
   }
-  #statebar button:hover { border-color: var(--accent); }
-  #log { color: var(--dim); font-size: 12px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ghost:hover { color: var(--text); background: var(--panel2); }
+  #log { color: var(--faint); font-size: 12px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  #app { position: fixed; inset: 46px 0 58px 0; }
+  #app { position: fixed; inset: 48px 0 64px 0; }
 
-  /* ── 底部模式切换 ── */
+  /* ── 底部模式切换（分段控件） ── */
   #switcher {
-    position: fixed; inset: auto 0 0 0; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 10px;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--panel) 88%, transparent);
-    backdrop-filter: blur(8px); border-top: 1px solid var(--line);
+    position: fixed; inset: auto 0 0 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    height: 64px; padding: 0 12px calc(6px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px);
+    border-top: 1px solid var(--line);
   }
-  #switcher .pill {
-    background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 999px;
-    padding: 8px 18px; cursor: pointer; font-size: 15px;
+  .segmented { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px; gap: 4px; }
+  .segmented button {
+    display: inline-flex; align-items: center; gap: 7px; border: none; border-radius: 999px;
+    background: transparent; color: var(--dim); padding: 8px 20px; cursor: pointer; font-size: 14px; font-weight: 550;
+    transition: all .18s;
   }
-  #switcher .pill.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--panel2)); }
-  #switcher .hint { position: absolute; left: 12px; color: var(--dim); font-size: 11px; max-width: 30vw; }
-  #switcher .hint2 { position: absolute; right: 12px; color: var(--dim); font-size: 11px; }
+  .segmented button.active { background: color-mix(in srgb, var(--accent) 18%, var(--panel3)); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+  #switcher .hint { position: absolute; left: 14px; color: var(--faint); font-size: 11px; }
+  #switcher .hint2 { position: absolute; right: 14px; color: var(--faint); font-size: 11px; }
 
-  /* ══════════ 模式 A：看片流（卡片） ══════════ */
-  .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  /* ══════════ 模式 A：看片流 ══════════ */
+  .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 8px 0; }
   .va-cardwrap {
     position: relative; aspect-ratio: var(--arn, 1.5); width: auto;
-    height: min(calc(100% - 150px), calc(min(92vw, 620px) / var(--arn, 1.5)));
+    height: min(calc(100% - 168px), calc(min(92vw, 640px) / var(--arn, 1.5)));
   }
   .va-card {
-    position: absolute; inset: 0; border-radius: 16px; overflow: hidden; background: var(--panel);
-    border: 1px solid var(--line); touch-action: none; cursor: grab; will-change: transform;
+    position: absolute; inset: 0; border-radius: var(--radius); overflow: hidden; background: var(--panel);
+    border: 1px solid var(--line); box-shadow: var(--shadow);
+    touch-action: none; cursor: grab; will-change: transform;
   }
+  .va-card:active { cursor: grabbing; }
   .va-card.zoomed { cursor: move; }
   .va-card img { width: 100%; height: 100%; object-fit: cover; display: block; transform-origin: 0 0; pointer-events: none; }
-  .va-card .chips { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; pointer-events: none; }
-  .chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; }
-  .chip.raw { color: #9fd0ff; } .chip.jpg { color: #ffd88f; }
+  .va-card .chips { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 6px; pointer-events: none; }
+  .chip {
+    font-size: 10.5px; font-weight: 600; letter-spacing: .4px; padding: 3px 8px; border-radius: 6px;
+    background: rgba(8,9,12,.62); backdrop-filter: blur(6px); color: #dfe3ec; border: 1px solid rgba(255,255,255,.08);
+  }
+  .chip.raw { color: #9fd0ff; }
+  .va-card .fbadge {
+    position: absolute; bottom: 10px; right: 10px; pointer-events: none;
+    font-size: 11px; padding: 3px 8px; border-radius: 6px;
+    background: rgba(8,9,12,.62); backdrop-filter: blur(6px); color: var(--dim); border: 1px solid rgba(255,255,255,.08);
+  }
   .va-card .stamp {
-    position: absolute; top: 18%; padding: 6px 18px; border-radius: 10px; font-size: 26px; font-weight: 800;
-    opacity: 0; pointer-events: none; transform: rotate(-10deg);
+    position: absolute; top: 16%; padding: 8px 22px; border-radius: 12px; font-size: 28px; font-weight: 800;
+    letter-spacing: 2px; opacity: 0; pointer-events: none; backdrop-filter: blur(4px);
   }
-  .stamp.like { left: 20px; color: var(--gold); border: 4px solid var(--gold); }
-  .stamp.nope { right: 20px; color: var(--trash); border: 4px solid var(--trash); transform: rotate(10deg); }
-  .va-stars { display: flex; gap: 6px; }
+  .stamp.like { left: 22px; color: var(--gold); border: 3px solid var(--gold); background: rgba(255,204,77,.08); transform: rotate(-9deg); }
+  .stamp.nope { right: 22px; color: var(--trash); border: 3px solid var(--trash); background: rgba(255,112,133,.08); transform: rotate(9deg); }
+
+  .va-stars { display: flex; gap: 7px; align-items: center; }
   .va-stars button {
-    font-size: 24px; line-height: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--dim);
-    border-radius: 10px; padding: 6px 10px; cursor: pointer;
+    font-size: 21px; line-height: 1; background: var(--panel); border: 1px solid var(--line); color: #3a3f4c;
+    border-radius: 11px; padding: 8px 11px; cursor: pointer; transition: all .12s;
   }
-  .va-stars button.on { color: var(--gold); border-color: var(--gold); }
-  .va-hint { color: var(--dim); font-size: 12px; text-align: center; }
-  .va-count { font-variant-numeric: tabular-nums; color: var(--dim); }
-  .va-done { color: var(--dim); font-size: 16px; }
+  .va-stars button:hover { transform: translateY(-1px); }
+  .va-stars button.on { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 55%, transparent); background: color-mix(in srgb, var(--gold) 10%, var(--panel)); text-shadow: 0 0 14px rgba(255,204,77,.45); }
+  .va-del {
+    font-size: 14px; font-weight: 550; padding: 9px 16px; border-radius: 11px; cursor: pointer; transition: all .12s;
+    background: var(--panel); border: 1px solid var(--line); color: var(--dim);
+  }
+  .va-del.on { color: var(--trash); border-color: color-mix(in srgb, var(--trash) 55%, transparent); background: color-mix(in srgb, var(--trash) 10%, var(--panel)); }
+  .va-meta { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .va-hint { color: var(--faint); font-size: 11.5px; text-align: center; }
 
-  /* ══════════ 模式 C：网格 + 看片台 ══════════ */
-  .vc-wrap { position: absolute; inset: 0; overflow-y: auto; padding: 12px; }
-  .vc-grid { columns: 160px; column-gap: 8px; }
-  .vc-tile { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel); border: 2px solid var(--line); cursor: pointer; margin-bottom: 8px; break-inside: avoid; }
-  .vc-tile.starred { border-color: var(--gold); }
-  .vc-tile.is-trash { border-color: var(--trash); }
-  .vc-tile.is-trash img { filter: grayscale(1) brightness(.5); }
+  /* ══════════ 模式 C：网格（瀑布流） ══════════ */
+  .vc-wrap { position: absolute; inset: 0; overflow-y: auto; padding: 14px 14px 20px; }
+  .vc-grid { columns: 170px; column-gap: 10px; }
+  .vc-tile {
+    position: relative; border-radius: 12px; overflow: hidden; background: var(--panel); margin-bottom: 10px;
+    border: 2px solid transparent; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    transition: transform .15s, border-color .15s;
+  }
+  .vc-tile:hover { transform: translateY(-2px); }
+  .vc-tile.starred { border-color: color-mix(in srgb, var(--gold) 70%, transparent); }
+  .vc-tile.is-trash { border-color: color-mix(in srgb, var(--trash) 70%, transparent); }
+  .vc-tile.is-trash img { filter: grayscale(1) brightness(.45); }
   .vc-tile img { width: 100%; height: auto; display: block; }
-  .vc-tile .stars-mini { position: absolute; left: 6px; bottom: 4px; font-size: 13px; letter-spacing: 1px; color: var(--gold); text-shadow: 0 1px 2px #000; pointer-events: none; }
-  .vc-tile .del-mini { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: none;
-    background: color-mix(in srgb, var(--trash) 80%, #000); color: #fff; font-size: 13px; cursor: pointer; }
-  .vc-tile .zoom-badge { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--dim); background: rgba(0,0,0,.5); border-radius: 4px; padding: 0 4px; }
+  .vc-tile .stars-mini { position: absolute; left: 8px; bottom: 6px; font-size: 12px; letter-spacing: 2px; color: var(--gold); text-shadow: 0 1px 4px #000; pointer-events: none; }
+  .vc-tile .fbadge2 { position: absolute; right: 7px; bottom: 6px; font-size: 10px; color: var(--dim); background: rgba(8,9,12,.55); border-radius: 5px; padding: 1px 6px; pointer-events: none; backdrop-filter: blur(4px); }
+  .vc-tile .del-mini {
+    position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: none;
+    background: rgba(8,9,12,.62); backdrop-filter: blur(6px); color: #cfd4de; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.1);
+  }
+  .vc-tile .del-mini.on { color: var(--trash); border-color: color-mix(in srgb, var(--trash) 60%, transparent); }
 
-  /* 看片台 lightbox */
-  #lightbox { position: fixed; inset: 0; z-index: 40; background: rgba(5,6,9,.94); display: none; flex-direction: column; }
-  #lightbox.open { display: flex; }
-  .lb-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
-  .lb-top .name { color: var(--dim); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lb-top button { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
-  .lb-top button.danger { color: var(--trash); border-color: var(--trash); }
-  .lb-stars { display: flex; gap: 4px; }
-  .lb-stars button { font-size: 18px; padding: 2px 6px; }
-  .lb-stars button.on { color: var(--gold); border-color: var(--gold); }
-  .lb-view { flex: 1; position: relative; overflow: hidden; touch-action: none; }
-  .lb-view img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; cursor: grab; }
-  .lb-view img.zoomed { cursor: move; }
-  .lb-view .lb-hint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); color: var(--dim); font-size: 11px; background: rgba(0,0,0,.5); padding: 2px 10px; border-radius: 999px; pointer-events: none; }
-  .lb-film { display: flex; gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); overflow-x: auto; background: rgba(10,11,15,.8); }
-  .lb-thumb { flex: 0 0 auto; width: 64px; border-radius: 6px; overflow: hidden; border: 2px solid transparent; cursor: pointer; position: relative; background: var(--panel); }
-  .lb-thumb img { width: 100%; height: auto; object-fit: cover; display: block; }
+  /* ══════════ 看片台（PhotoSwipe 挂载的定制 chrome） ══════════ */
+  .cull-top {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 12;
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    background: linear-gradient(rgba(6,7,10,.82), rgba(6,7,10,0)); backdrop-filter: blur(10px);
+  }
+  .cull-top .name { color: var(--dim); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cull-top .lb-stars { display: flex; gap: 4px; }
+  .cull-top .lb-stars button {
+    font-size: 17px; line-height: 1; background: rgba(20,22,28,.7); border: 1px solid var(--line); color: #3a3f4c;
+    border-radius: 9px; padding: 5px 7px; cursor: pointer;
+  }
+  .cull-top .lb-stars button.on { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 55%, transparent); }
+  .cull-top .btn {
+    background: rgba(20,22,28,.7); border: 1px solid var(--line); color: var(--text); border-radius: 9px;
+    padding: 6px 13px; cursor: pointer; font-size: 13px; font-weight: 550;
+  }
+  .cull-top .btn.danger { color: var(--trash); }
+  .cull-film {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 12;
+    display: flex; gap: 6px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+    overflow-x: auto; background: linear-gradient(rgba(6,7,10,0), rgba(6,7,10,.9) 45%);
+  }
+  .lb-thumb {
+    flex: 0 0 auto; width: 62px; border-radius: 8px; overflow: hidden; border: 2px solid rgba(255,255,255,.14);
+    cursor: pointer; position: relative; background: var(--panel); transition: border-color .15s, transform .15s;
+  }
+  .lb-thumb:hover { transform: translateY(-2px); }
   .lb-thumb.cur { border-color: var(--accent); }
-  .lb-thumb.is-trash img { filter: grayscale(1) brightness(.5); }
-  .lb-thumb .mk { position: absolute; right: 3px; bottom: 2px; font-size: 11px; color: var(--gold); text-shadow: 0 1px 2px #000; }
+  .lb-thumb.is-trash img { filter: grayscale(1) brightness(.45); }
+  .lb-thumb img { width: 100%; height: auto; display: block; }
+  .lb-thumb .mk { position: absolute; right: 3px; bottom: 2px; font-size: 10px; color: var(--gold); text-shadow: 0 1px 3px #000; }
+  .pswp { --pswp-bg: #06070a; }
 </style>
 </head>
 <body>
 
 <div id="statebar">
-  <span class="stat st-s">⭐ <b id="st-star">0</b></span>
-  <span class="stat st-t">🗑 <b id="st-trash">0</b></span>
+  <span class="stat s">⭐ <b id="st-star">0</b></span>
+  <span class="stat t">🗑 <b id="st-trash">0</b></span>
   <span class="stat">未标 <b id="st-none">60</b></span>
   <span class="spacer"></span>
   <span id="log">开始挑选吧</span>
-  <button id="undo" title="Ctrl+Z">撤销</button>
-  <button id="reset">重置</button>
+  <button class="ghost" id="undo" title="Ctrl+Z">↩ 撤销</button>
+  <button class="ghost" id="reset">重置</button>
 </div>
 
 <div id="app"></div>
 
-<div id="lightbox">
-  <div class="lb-top">
-    <span class="name" id="lb-name"></span>
-    <div class="lb-stars" id="lb-stars"></div>
-    <button class="danger" id="lb-del">🗑 待删</button>
-    <button id="lb-close">✕ 关闭</button>
-  </div>
-  <div class="lb-view" id="lb-view"><img id="lb-img" alt=""><div class="lb-hint">双击/滚轮/捏合放大 · 拖动平移 · ←→ 切换 · 1-5 打星 · X 待删 · ESC 关闭</div></div>
-  <div class="lb-film" id="lb-film"></div>
-</div>
-
 <div id="switcher">
   <span class="hint">Shift+←→ 切模式</span>
-  <button class="pill" data-mode="a">A · 一个个看</button>
-  <button class="pill" data-mode="c">C · 批量扫</button>
-  <span class="hint2">RAW+JPEG 成对处理</span>
+  <div class="segmented">
+    <button data-mode="a">🃏 <span>一个个看</span></button>
+    <button data-mode="c">▦ <span>批量扫</span></button>
+  </div>
+  <span class="hint2">RAW+JPEG 成对</span>
+</div>
+
+<!-- 看片台 chrome（由 PhotoSwipe 挂载） -->
+<div id="lb-chrome">
+  <div class="cull-top" id="cull-top">
+    <span class="name" id="lb-name"></span>
+    <div class="lb-stars" id="lb-stars"></div>
+    <button class="btn danger" id="lb-del">🗑</button>
+    <button class="btn" id="lb-close">关闭 ✕</button>
+  </div>
+  <div class="cull-film" id="lb-film"></div>
 </div>
 
 <script>
 'use strict';
-/* ══════════════ 假照片生成（带“假对焦”：部分照片局部跑焦，放大才能看出） ══════════════ */
-const SEEDS = 20260905;
+/* ══════════════ 假照片生成（假对焦 + 混合横竖比） ══════════════ */
 function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const palettes = [
   ['#1a2b4a', '#3d5a80', '#98c1d9'], ['#2d1b2e', '#6b2737', '#e8a87c'],
@@ -155,17 +212,14 @@ const palettes = [
   ['#0b2545', '#13315c', '#8da9c4'], ['#2f1b0e', '#a44a3f', '#f4c095'],
 ];
 const CAMS = ['Sony A7M4 · 24-70', 'Fuji X-T5 · 35 1.4', 'Ricoh GR3', 'iPhone 15 Pro'];
-
 const items = [];
 (function genItems() {
-  const rnd = mulberry(SEEDS);
+  const rnd = mulberry(20260905);
   for (let i = 0; i < 60; i++) {
     items.push({
       id: i, seed: 1000 + i, pal: palettes[i % palettes.length], cam: CAMS[i % CAMS.length],
-      // 横竖比别：60% 横 3:2、30% 竖 2:3、10% 方 1:1
-      ar: (r2 => r2 < .6 ? 1.5 : r2 < .9 ? 2 / 3 : 1)(rnd()),
-      // 对焦状态：sharp=全清晰(45%)，soft=整体偏软(15%)，miss=局部跑焦(40%)
-      focus: (r => r < .45 ? 'sharp' : r < .6 ? 'soft' : 'miss')(rnd()),
+      ar: (r2 => r2 < .6 ? 1.5 : r2 < .9 ? 2 / 3 : 1)(rnd()),          // 横 3:2 / 竖 2:3 / 方 1:1
+      focus: (r => r < .45 ? 'sharp' : r < .6 ? 'soft' : 'miss')(rnd()), // 全清晰/整体软/局部跑焦
       stars: 0, del: false,
     });
   }
@@ -180,12 +234,9 @@ function photoURL(it, w) {
   const x = c.getContext('2d');
   const rnd = mulberry(it.seed);
   const [sky, mid, lit] = it.pal;
-  // 天空渐变
   const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, sky); g.addColorStop(.62, mid); g.addColorStop(.63, lit); g.addColorStop(1, '#0a0a0f');
   x.fillStyle = g; x.fillRect(0, 0, w, h);
-  // 太阳
   x.fillStyle = 'rgba(255,240,200,.9)'; x.beginPath(); x.arc(w * (.3 + rnd() * .4), h * .2 + rnd() * .15, w * .018 + 4, 0, 7); x.fill();
-  // 山（多层）
   for (let L = 0; L < 3; L++) {
     x.fillStyle = `rgba(${20 + L * 14},${24 + L * 14},${34 + L * 16},${.9 - L * .18})`;
     x.beginPath(); x.moveTo(0, h * .63);
@@ -193,14 +244,12 @@ function photoURL(it, w) {
     for (let px = 0; px <= w; px += w / 14) { y += (rnd() - .5) * h * .09; y = Math.max(h * .4, Math.min(h * .66, y)); x.lineTo(px, y); }
     x.lineTo(w, h); x.lineTo(0, h); x.fill();
   }
-  // 地面前景：细密草叶（高频细节，放大看清晰度的关键）
   x.strokeStyle = `rgba(${180 + rnd() * 40},${170 + rnd() * 30},${120},.8)`;
   for (let b = 0; b < w * (h / 400) * 2.2; b++) {
     const gx = rnd() * w, gy = h * .68 + rnd() * h * .32, len = (4 + rnd() * 14) * (w / 800);
     x.lineWidth = .8 * (w / 800);
     x.beginPath(); x.moveTo(gx, gy); x.lineTo(gx + (rnd() - .5) * len * 2, gy - len); x.stroke();
   }
-  // 树枝剪影（另一组细节）
   x.strokeStyle = 'rgba(8,8,12,.92)';
   const tx = w * (.08 + rnd() * .84);
   for (let b = 0; b < 7; b++) {
@@ -210,11 +259,9 @@ function photoURL(it, w) {
     for (let s = 0; s < 6; s++) { bx += Math.cos(ang) * len * 2; by += Math.sin(ang) * len * 2; x.lineTo(bx, by); ang += (rnd() - .5) * .8; }
     x.stroke();
   }
-  // 颗粒
   x.globalAlpha = .05;
   for (let n = 0; n < w * h / 900; n++) { x.fillStyle = rnd() > .5 ? '#fff' : '#000'; x.fillRect(rnd() * w, rnd() * h, 1, 1); }
   x.globalAlpha = 1;
-  // 假对焦：soft=整体轻糊；miss=随机圆形区域糊（好照片/废片放大才见分晓）
   const applyBlur = (cx, cy, r, px) => { x.save(); x.beginPath(); x.arc(cx, cy, r, 0, 7); x.clip(); x.filter = `blur(${px}px)`; x.drawImage(c, 0, 0); x.restore(); x.filter = 'none'; };
   if (it.focus === 'soft') applyBlur(w / 2, h / 2, Math.max(w, h), 2.2 * (w / 800));
   if (it.focus === 'miss') { const r = .16 + rnd() * .14; applyBlur(w * (.25 + rnd() * .5), h * (.45 + rnd() * .3), Math.min(w, h) * r, 3.4 * (w / 800)); }
@@ -222,16 +269,14 @@ function photoURL(it, w) {
   urlCache.set(key, u);
   return u;
 }
-function focusBadge(it) { return it.focus === 'sharp' ? '' : it.focus === 'soft' ? '📉 全图偏软' : '📉 疑似跑焦'; }
+function focusBadge(it) { return it.focus === 'sharp' ? '' : it.focus === 'soft' ? '📉 偏软' : '📉 疑跑焦'; }
 
-/* ══════════════ 全局状态 + 动作（两模式共享） ══════════════ */
-const app = document.getElementById('app'), vlabel = document.getElementById('log'),
-      logEl = document.getElementById('log'),
+/* ══════════════ 全局状态 + 动作 ══════════════ */
+const app = document.getElementById('app'), logEl = document.getElementById('log'),
       stStar = document.getElementById('st-star'), stTrash = document.getElementById('st-trash'),
       stNone = document.getElementById('st-none'),
       undo = document.getElementById('undo'), reset = document.getElementById('reset');
 const undoStack = [];
-
 function counts() { return { s: items.filter(i => i.stars > 0).length, t: items.filter(i => i.del).length }; }
 function refreshStats() { const c = counts(); stStar.textContent = c.s; stTrash.textContent = c.t; stNone.textContent = items.length - c.s - c.t; }
 function flash(msg) { logEl.textContent = msg; }
@@ -241,7 +286,7 @@ function doUndo() {
   if (!u) return flash('没有可撤销的操作');
   if (u.kind === 'stars') { u.it.stars = u.prev; flash(`撤销：#${u.it.id + 1} 星级 → ${u.prev || '无'}`); }
   else { u.it.del = u.prev; flash(`撤销：#${u.it.id + 1} 待删 → ${u.prev ? '是' : '否'}`); }
-  refreshStats(); render();
+  refreshStats(); render(); syncPswpChrome();
 }
 function setStars(it, n, why) {
   pushUndo({ kind: 'stars', it, prev: it.stars });
@@ -255,14 +300,12 @@ function toggleDel(it, why) {
   flash(`${why}：#${it.id + 1} ${it.del ? '🗑 待删' : '恢复'}`); refreshStats();
 }
 undo.onclick = doUndo;
-reset.onclick = () => { items.forEach(it => { it.stars = 0; it.del = false; }); undoStack.length = 0; aCur = 0; flash('已重置全部标记'); refreshStats(); render(); };
+reset.onclick = () => { items.forEach(it => { it.stars = 0; it.del = false; }); undoStack.length = 0; aCur = 0; closePswp(); flash('已重置全部标记'); refreshStats(); render(); };
 
 /* ══════════════ 模式切换 ══════════════ */
 let mode = (location.hash.match(/mode=([ac])/i) || [, 'a'])[1].toLowerCase();
-let aCur = 0;            // A 模式当前位置
-let lbIdx = -1;          // C 模式看片台当前索引
-const MODES = { a: { name: 'A · 一个个看' }, c: { name: 'C · 批量扫' } };
-const pills = [...document.querySelectorAll('#switcher .pill')];
+let aCur = 0;
+const pills = [...document.querySelectorAll('.segmented button')];
 pills.forEach(p => p.onclick = () => setMode(p.dataset.mode));
 function setMode(m) {
   mode = m;
@@ -270,74 +313,69 @@ function setMode(m) {
   try { history.replaceState(null, '', '#mode=' + m); } catch (e) {}
   render();
 }
-function render() { closeLightbox(false); app.querySelectorAll('.vc-wrap,.va-stage').forEach(n => n.remove()); if (mode === 'c') renderGrid(); else renderA(); }
+function render() { app.querySelectorAll('.vc-wrap,.va-stage').forEach(n => n.remove()); if (mode === 'c') renderGrid(); else renderA(); }
 
-/* ══════════════ 模式 A：看片流（滑动 + 双击放大看细节） ══════════════ */
-let aZoom = null; // {scale, tx, ty}
+/* ══════════════ 模式 A：看片流（右滑⭐+上抬加星 · 左滑🗑 · 双击/捏合放大） ══════════════ */
 function renderA() {
   app.querySelectorAll('.va-stage').forEach(n => n.remove());
   const stage = document.createElement('div'); stage.className = 'va-stage';
   const wrap = document.createElement('div'); wrap.className = 'va-cardwrap';
   const hint = document.createElement('div'); hint.className = 'va-hint';
-  hint.innerHTML = '右滑 ⭐（向上抬加星）· 左滑 🗑 · 双击/捏合放大 · 空格跳过 · F 喜欢 · X 待删';
-  const count = document.createElement('div'); count.className = 'va-count';
+  hint.textContent = '右滑 ⭐（顺势上抬加星）· 左滑 🗑 · 双击/捏合 放大看细节';
+  const meta = document.createElement('div'); meta.className = 'va-meta';
   const row = document.createElement('div'); row.className = 'va-stars';
-  const stage2 = stage;
-  app.appendChild(stage2);
+  app.appendChild(stage);
   draw();
 
   function draw() {
-    stage2.innerHTML = ''; wrap.innerHTML = ''; row.innerHTML = '';
+    stage.innerHTML = ''; wrap.innerHTML = ''; row.innerHTML = ''; meta.innerHTML = '';
     const it = items[aCur];
     if (aCur >= items.length) {
       const c = counts();
-      wrap.innerHTML = `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim)">看完了 · ⭐${c.s} 🗑${c.t} 未标${items.length - c.s - c.t}</div>`;
-      count.textContent = `${items.length}/${items.length}`;
-      stage2.append(wrap);
-      const btn = document.createElement('button'); btn.textContent = '从头再看'; btn.className = 'pill';
-      btn.style.cssText = 'padding:8px 18px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--text);cursor:pointer';
-      btn.onclick = () => { aCur = 0; draw(); };
-      if (!stage2.contains(btn)) stage2.append(btn);
+      wrap.style.height = '200px';
+      wrap.innerHTML = `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--dim)">
+        <div style="font-size:22px">看完了 🎉</div>
+        <div style="font-size:13px;color:var(--faint)">⭐ ${c.s} · 🗑 ${c.t} · 未标 ${items.length - c.s - c.t}</div></div>`;
+      const btn = document.createElement('button'); btn.textContent = '↻ 从头再看';
+      btn.className = 'va-del'; btn.onclick = () => { aCur = 0; draw(); };
+      stage.append(wrap, btn);
       return;
     }
-    count.textContent = `${aCur + 1}/${items.length}`;
+    wrap.style.removeProperty('height');
     wrap.style.setProperty('--arn', it.ar);
     const card = document.createElement('div'); card.className = 'va-card';
     const img = document.createElement('img'); img.src = photoURL(it, 1600); img.draggable = false;
     card.appendChild(img);
-    const chips = document.createElement('div'); chips.className = 'chips';
-    chips.innerHTML = `<span class="chip raw">RAW+JPEG</span><span class="chip">${it.cam}</span>`;
-    card.appendChild(chips);
-    const like = document.createElement('div'); like.className = 'stamp like'; like.textContent = 'LIKE';
-    const nope = document.createElement('div'); nope.className = 'stamp nope'; nope.textContent = 'NOPE';
-    card.append(like, nope);
+    card.insertAdjacentHTML('beforeend',
+      `<div class="chips"><span class="chip raw">RAW+JPEG</span><span class="chip">${it.cam}</span></div>` +
+      `<div class="fbadge">${focusBadge(it)}</div>` +
+      `<div class="stamp like">LIKE</div><div class="stamp nope">NOPE</div>`);
     wrap.appendChild(card);
-    stage2.append(wrap, row, count, hint);
+    const like = card.querySelector('.like'), nope = card.querySelector('.nope');
+    meta.innerHTML = `<span>${String(aCur + 1).padStart(2, '0')} / ${items.length}</span><span>${it.cam}</span>`;
+    stage.append(wrap, row, meta, hint);
 
-    // 星条
     for (let n = 1; n <= 5; n++) {
       const b = document.createElement('button'); b.textContent = '⭐'; b.classList.toggle('on', n <= it.stars);
       b.onclick = () => { setStars(it, it.stars === n ? 0 : n, '打星'); draw(); };
       row.appendChild(b);
     }
-    // 待删按钮
-    const db = document.createElement('button'); db.textContent = it.del ? '↩ 已待删' : '🗑 待删';
-    db.style.cssText = 'font-size:15px;padding:6px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);color:' + (it.del ? 'var(--trash)' : 'var(--text)');
-    db.onclick = () => { toggleDel(it, 'A 模式'); draw(); if (!it.del) {} else { aCur = Math.min(items.length, aCur + 1); setTimeout(draw, 120); } };
+    const db = document.createElement('button'); db.className = 'va-del' + (it.del ? ' on' : ''); db.textContent = it.del ? '↩ 待删中' : '🗑 待删';
+    db.onclick = () => { toggleDel(it, 'A 模式'); if (it.del) { aCur = Math.min(items.length, aCur + 1); setTimeout(draw, 120); } else draw(); };
     row.appendChild(db);
 
-    /* 拖拽滑动 + 缩放平移 */
+    /* 手势：滑动 / 上抬加星 / 缩放平移 */
     aZoom = null;
     let drag = null; const pointers = new Map(); let pinchStart = null;
-    let pendingStars = 1; // 右滑中向上抬升=加星
-    const liveRow = n => { [...row.children].forEach((b, i) => { if (b.classList.contains('on') || b.dataset.live) { b.classList.toggle('on', i < n); b.dataset.live = '1'; } }); };
+    let pendingStars = 1;
+    const liveRow = n => { [...row.querySelectorAll('button')].forEach((b, i) => { if (i < 5) b.classList.toggle('on', i < n); }); };
     const applyCard = (dx, rot) => { card.style.transform = `translateX(${dx}px) rotate(${rot}deg)`; };
     const applyZoom = () => {
       if (!aZoom) { img.style.transform = ''; card.classList.remove('zoomed'); return; }
       card.classList.add('zoomed'); applyCard(0, 0);
       img.style.transform = `translate(${aZoom.tx}px,${aZoom.ty}px) scale(${aZoom.scale})`;
     };
-    const zoomAt = (factor, px, py) => { // 以卡片内 (px,py) 为中心缩放
+    const zoomAt = (factor, px, py) => {
       const z = aZoom || { scale: 1, tx: 0, ty: 0 };
       const ns = Math.max(1, Math.min(6, z.scale * factor));
       const k = ns / z.scale;
@@ -361,7 +399,7 @@ function renderA() {
         const [p1, p2] = [...pointers.values()];
         const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
         const r = card.getBoundingClientRect();
-        zoomAt(d / pinchStart.d * pinchStart.s / aZoom.scale, ((p1.x + p2.x) / 2 - r.left), ((p1.y + p2.y) / 2 - r.top));
+        zoomAt(d / pinchStart.d * pinchStart.s / aZoom.scale, (p1.x + p2.x) / 2 - r.left, (p1.y + p2.y) / 2 - r.top);
         return;
       }
       if (!drag) return;
@@ -373,11 +411,9 @@ function renderA() {
         pendingStars = Math.max(1, Math.min(5, 1 + Math.round(-dy / 70)));
         like.textContent = 'LIKE ' + '⭐'.repeat(pendingStars);
         liveRow(pendingStars);
-        like.style.opacity = Math.min(1, dx / 120);
-        nope.style.opacity = 0;
-      } else if (dx < -40) {
-        like.style.opacity = 0; nope.style.opacity = Math.min(1, -dx / 120);
-      } else { like.style.opacity = nope.style.opacity = 0; }
+        like.style.opacity = Math.min(1, dx / 120); nope.style.opacity = 0;
+      } else if (dx < -40) { like.style.opacity = 0; nope.style.opacity = Math.min(1, -dx / 120); }
+      else { like.style.opacity = nope.style.opacity = 0; }
     });
     const endPointer = e => {
       pointers.delete(e.pointerId);
@@ -386,9 +422,10 @@ function renderA() {
       const dx = e.clientX - drag.x0;
       const wasZoom = !!aZoom, moved = drag.moved;
       drag = null;
-      if (wasZoom || moved === false) { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; return; }
+      if (wasZoom || !moved) { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; return; }
       const TH = Math.min(95, card.clientWidth * .22);
-      if (dx > TH) swipe(1); else if (dx < -TH) swipe(-1); else { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; draw(); }
+      if (dx > TH) swipe(1); else if (dx < -TH) swipe(-1);
+      else { applyCard(0, 0); like.style.opacity = nope.style.opacity = 0; draw(); }
       like.textContent = 'LIKE';
     };
     card.addEventListener('pointerup', endPointer);
@@ -406,8 +443,7 @@ function renderA() {
     }, { passive: false });
 
     function swipe(dir) {
-      const it2 = items[aCur];
-      const stars = pendingStars;
+      const it2 = items[aCur]; const stars = pendingStars;
       card.style.transition = 'transform .22s ease-out, opacity .22s'; card.style.opacity = 0;
       card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg)`;
       setTimeout(() => {
@@ -418,15 +454,9 @@ function renderA() {
     }
   }
 }
+let aZoom = null;
 
-/* ══════════════ 模式 C：网格 + 看片台 ══════════════ */
-const lightbox = document.getElementById('lightbox'), lbImg = document.getElementById('lb-img'),
-      lbFilm = document.getElementById('lb-film'), lbName = document.getElementById('lb-name'),
-      lbStars = document.getElementById('lb-stars'), lbView = document.getElementById('lb-view'),
-      lbDel = document.getElementById('lb-del'), lbClose = document.getElementById('lb-close');
-lbClose.onclick = () => closeLightbox();
-lbDel.onclick = () => { if (lbIdx < 0) return; toggleDel(items[lbIdx], '看片台'); lbStep(1, true); };
-
+/* ══════════════ 模式 C：网格 + PhotoSwipe 看片台 ══════════════ */
 function renderGrid() {
   app.querySelectorAll('.vc-wrap').forEach(n => n.remove());
   const wrap = document.createElement('div'); wrap.className = 'vc-wrap';
@@ -437,14 +467,14 @@ function renderGrid() {
     tile.innerHTML = `
       <img src="${photoURL(it, 360)}" loading="lazy">
       <span class="stars-mini">${'⭐'.repeat(it.stars)}</span>
-      <span class="zoom-badge">${focusBadge(it)}</span>`;
-    const del = document.createElement('button'); del.className = 'del-mini'; del.textContent = it.del ? '↩' : '✕';
+      ${focusBadge(it) ? `<span class="fbadge2">${focusBadge(it)}</span>` : ''}`;
+    const del = document.createElement('button'); del.className = 'del-mini' + (it.del ? ' on' : ''); del.textContent = it.del ? '↩' : '✕';
     del.onclick = e => { e.stopPropagation(); toggleDel(it, '网格'); renderGrid(); };
     tile.appendChild(del);
     let lastTap = 0;
     tile.onclick = () => {
       const now = Date.now();
-      if (now - lastTap < 320) { lastTap = 0; openLightbox(idx); return; } // 双击/双触 → 看细节
+      if (now - lastTap < 320) { lastTap = 0; openPswp(idx); return; }
       lastTap = now;
       setTimeout(() => { if (lastTap && Date.now() - lastTap >= 300) { lastTap = 0; setStars(it, (it.stars + 1) % 6, '网格点按'); renderGrid(); } }, 310);
     };
@@ -453,124 +483,88 @@ function renderGrid() {
   wrap.appendChild(grid); app.appendChild(wrap);
 }
 
-let lbZoom = null;
-function openLightbox(idx) {
-  lbIdx = idx;
-  lightbox.classList.add('open');
-  lbImg.src = photoURL(items[idx], 1600);
-  lbName.textContent = `#${idx + 1}/${items.length} · ${items[idx].cam} · RAW+JPEG ${focusBadge(items[idx])}`;
-  drawLbMarks(); drawFilm(); applyLbZoom(); lbFilm.querySelector('.cur')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+/* ── PhotoSwipe 看片台 ── */
+let pswp = null;
+const lbTop = document.getElementById('cull-top'), lbFilm = document.getElementById('lb-film'),
+      lbName = document.getElementById('lb-name'), lbStars = document.getElementById('lb-stars'),
+      lbDel = document.getElementById('lb-del'), lbClose = document.getElementById('lb-close'),
+      lbChrome = document.getElementById('lb-chrome');
+function dataSource() {
+  return items.map(it => ({ src: '', width: 1600, height: Math.round(1600 / it.ar) }));
 }
-function closeLightbox(rerender = true) { lightbox.classList.remove('open'); lbIdx = -1; lbZoom = null; if (rerender && mode === 'c') renderGrid(); }
-function drawLbMarks() {
-  if (lbIdx < 0) return;
-  const it = items[lbIdx];
+function openPswp(idx) {
+  if (!window.PhotoSwipe) { alert('PhotoSwipe 加载失败（需要联网）'); return; }
+  pswp = new PhotoSwipe({
+    dataSource: dataSource(), index: idx,
+    wheelToZoom: true, pinchToClose: false, closeOnVerticalDrag: false,
+    bgOpacity: 1, showHideAnimationType: 'none', zoom: true,
+  });
+  pswp.on('uiRegister', () => {
+    pswp.ui.registerElement({ name: 'cull-top', order: 9, isButton: false, onInit: el => { el.className = 'cull-top'; el.appendChild(lbTop); } });
+    pswp.ui.registerElement({ name: 'cull-film', order: 10, isButton: false, onInit: el => { el.className = 'cull-film'; el.appendChild(lbFilm); } });
+  });
+  pswp.on('gettingData', (e) => { e.data.src = photoURL(items[e.index], 1600); }); // 懒生成大图，避免一次60张
+  pswp.on('change', () => syncPswpChrome());
+  pswp.on('destroy', () => { pswp = null; lbChrome.append(lbTop, lbFilm); renderGrid(); });
+  pswp.init();
+  syncPswpChrome();
+}
+function closePswp() { if (pswp) pswp.close(); }
+lbClose.onclick = closePswp;
+lbDel.onclick = () => {
+  if (!pswp) return;
+  const it = items[pswp.currIndex];
+  toggleDel(it, '看片台');
+  pswpAdvance(1, true);
+};
+function pswpAdvance(d, skipDel) {
+  if (!pswp) return;
+  let i = pswp.currIndex + d;
+  while (skipDel && i >= 0 && i < items.length && items[i].del) i += d;
+  if (i < 0 || i >= items.length) { closePswp(); return; }
+  pswp.goto(i);
+}
+function syncPswpChrome() {
+  if (!pswp) return;
+  const idx = pswp.currIndex, it = items[idx];
+  lbName.textContent = `#${idx + 1} / ${items.length} · ${it.cam} · RAW+JPEG ${focusBadge(it)}`;
   lbStars.innerHTML = '';
   for (let n = 1; n <= 5; n++) {
     const b = document.createElement('button'); b.textContent = '⭐'; b.className = n <= it.stars ? 'on' : '';
-    b.onclick = () => { setStars(it, it.stars === n ? 0 : n, '看片台'); drawLbMarks(); drawFilm(); };
+    b.onclick = () => { setStars(it, it.stars === n ? 0 : n, '看片台'); syncPswpChrome(); };
     lbStars.appendChild(b);
   }
   lbDel.textContent = it.del ? '↩ 取消待删' : '🗑 待删';
-}
-function drawFilm() {
   lbFilm.innerHTML = '';
-  items.forEach((it, i) => {
-    const t = document.createElement('div');
-    t.className = 'lb-thumb' + (i === lbIdx ? ' cur' : '') + (it.del ? ' is-trash' : '');
-    t.innerHTML = `<img src="${photoURL(it, 160)}" loading="lazy"><span class="mk">${it.stars ? '⭐'.repeat(Math.min(it.stars, 3)) : it.del ? '🗑' : ''}</span>`;
-    t.onclick = () => openLightbox(i);
-    lbFilm.appendChild(t);
+  items.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'lb-thumb' + (i === idx ? ' cur' : '') + (t.del ? ' is-trash' : '');
+    el.innerHTML = `<img src="${photoURL(t, 160)}" loading="lazy"><span class="mk">${t.stars ? '⭐'.repeat(Math.min(t.stars, 3)) : t.del ? '🗑' : ''}</span>`;
+    el.onclick = () => pswp.goto(i);
+    lbFilm.appendChild(el);
   });
+  lbFilm.querySelector('.cur')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
-function lbStep(d, skipDel = false) {
-  if (lbIdx < 0) return;
-  let i = lbIdx + d;
-  while (skipDel && i >= 0 && i < items.length && items[i].del) i += d; // 待删自动跳过（打删后流畅前进）
-  if (i < 0 || i >= items.length) { closeLightbox(); return; }
-  openLightbox(i);
-}
-function applyLbZoom() {
-  if (!lbZoom) { lbImg.style.transform = ''; lbImg.classList.remove('zoomed'); return; }
-  lbImg.classList.add('zoomed');
-  lbImg.style.transform = `translate(${lbZoom.tx}px,${lbZoom.ty}px) scale(${lbZoom.scale})`;
-}
-function lbZoomAt(factor, px, py) {
-  const z = lbZoom || { scale: 1, tx: 0, ty: 0 };
-  const ns = Math.max(1, Math.min(8, z.scale * factor));
-  const k = ns / z.scale;
-  lbZoom = { scale: ns, tx: px - k * (px - z.tx), ty: py - k * (py - z.ty) };
-  if (ns <= 1.001) lbZoom = null;
-  applyLbZoom();
-}
-(function lbGestures() {
-  let drag = null; const pointers = new Map(); let pinchStart = null;
-  lbView.addEventListener('pointerdown', e => {
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    lbView.setPointerCapture(e.pointerId);
-    if (pointers.size === 1) drag = { x0: e.clientX, y0: e.clientY, px: e.clientX, py: e.clientY };
-    if (pointers.size === 2 && lbZoom) {
-      const [p1, p2] = [...pointers.values()];
-      pinchStart = { d: Math.hypot(p1.x - p2.x, p1.y - p2.y), s: lbZoom.scale };
-    }
-  });
-  lbView.addEventListener('pointermove', e => {
-    if (!pointers.has(e.pointerId)) return;
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 2 && lbZoom && pinchStart) {
-      const [p1, p2] = [...pointers.values()];
-      const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-      const r = lbView.getBoundingClientRect();
-      lbZoomAt(d / pinchStart.d * pinchStart.s / lbZoom.scale, (p1.x + p2.x) / 2 - r.left, (p1.y + p2.y) / 2 - r.top);
-      return;
-    }
-    if (!drag || !lbZoom) return;
-    lbZoom.tx += e.clientX - drag.px; lbZoom.ty += e.clientY - drag.py;
-    drag.px = e.clientX; drag.py = e.clientY;
-    applyLbZoom();
-  });
-  const end = e => {
-    pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinchStart = null;
-    if (pointers.size === 0) drag = null;
-  };
-  lbView.addEventListener('pointerup', end); lbView.addEventListener('pointercancel', end);
-  lbView.addEventListener('dblclick', e => {
-    const r = lbView.getBoundingClientRect();
-    if (lbZoom) lbZoom = null;
-    else { lbZoom = { scale: 2.5, tx: 0, ty: 0 }; lbZoomAt(1, e.clientX - r.left, e.clientY - r.top); }
-    applyLbZoom();
-  });
-  lbView.addEventListener('wheel', e => {
-    e.preventDefault();
-    const r = lbView.getBoundingClientRect();
-    lbZoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
-  }, { passive: false });
-})();
 
 /* ══════════════ 键盘 ══════════════ */
 document.addEventListener('keydown', e => {
-  if (e.key === 'Shift') return;
   if (e.ctrlKey || e.metaKey) { if (e.key.toLowerCase() === 'z') { e.preventDefault(); doUndo(); } return; }
-  if (lightbox.classList.contains('open')) {
-    const it = items[lbIdx];
-    if (e.key >= '1' && e.key <= '5') { setStars(it, +e.key, '键盘'); drawLbMarks(); drawFilm(); }
-    else if (e.key === '0') { setStars(it, 0, '键盘'); drawLbMarks(); drawFilm(); }
-    else if (e.key.toLowerCase() === 'x') { toggleDel(it, '键盘'); lbStep(1, true); }
-    else if (e.key === 'ArrowRight') lbStep(1);
-    else if (e.key === 'ArrowLeft') lbStep(-1);
-    else if (e.key === 'Escape') closeLightbox();
-    return;
+  if (pswp) {
+    const it = items[pswp.currIndex];
+    if (e.key >= '1' && e.key <= '5') { setStars(it, +e.key, '键盘'); syncPswpChrome(); }
+    else if (e.key === '0') { setStars(it, 0, '键盘'); syncPswpChrome(); }
+    else if (e.key.toLowerCase() === 'x') { toggleDel(it, '键盘'); pswpAdvance(1, true); }
+    return; // ←→/ESC 由 PhotoSwipe 处理
   }
   if (e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { setMode(mode === 'a' ? 'c' : 'a'); return; }
   if (mode === 'a') {
     const it = items[aCur];
-    if (e.key === ' ') { e.preventDefault(); aCur = Math.min(items.length, aCur + 1); app.querySelector('.va-stage') && renderA(); }
-    else if (e.key.toLowerCase() === 'f') { setStars(it, Math.max(1, it.stars), '键盘喜欢'); aCur = Math.min(items.length, aCur + 1); renderA(); }
-    else if (e.key.toLowerCase() === 'x') { toggleDel(it, '键盘'); aCur = Math.min(items.length, aCur + 1); renderA(); }
+    if (e.key === ' ') { e.preventDefault(); aCur = Math.min(items.length, aCur + 1); renderA(); }
+    else if (e.key.toLowerCase() === 'f') { if (it) { setStars(it, Math.max(1, it.stars), '键盘喜欢'); aCur = Math.min(items.length, aCur + 1); renderA(); } }
+    else if (e.key.toLowerCase() === 'x') { if (it) { toggleDel(it, '键盘'); aCur = Math.min(items.length, aCur + 1); renderA(); } }
     else if (e.key === 'ArrowRight') { aCur = Math.min(items.length, aCur + 1); renderA(); }
     else if (e.key === 'ArrowLeft') { aCur = Math.max(0, aCur - 1); renderA(); }
-    else if (e.key >= '1' && e.key <= '5') { setStars(it, +e.key, '键盘'); renderA(); }
+    else if (e.key >= '1' && e.key <= '5') { if (it) { setStars(it, +e.key, '键盘'); renderA(); } }
   }
 });
 
