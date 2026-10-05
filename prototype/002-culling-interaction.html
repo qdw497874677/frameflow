@@ -48,7 +48,10 @@
 
   /* ══════════ 模式 A：看片流（卡片） ══════════ */
   .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
-  .va-cardwrap { position: relative; width: min(92vw, 620px); aspect-ratio: 3/2; }
+  .va-cardwrap {
+    position: relative; aspect-ratio: var(--arn, 1.5); width: auto;
+    height: min(calc(100% - 150px), calc(min(92vw, 620px) / var(--arn, 1.5)));
+  }
   .va-card {
     position: absolute; inset: 0; border-radius: 16px; overflow: hidden; background: var(--panel);
     border: 1px solid var(--line); touch-action: none; cursor: grab; will-change: transform;
@@ -76,12 +79,12 @@
 
   /* ══════════ 模式 C：网格 + 看片台 ══════════ */
   .vc-wrap { position: absolute; inset: 0; overflow-y: auto; padding: 12px; }
-  .vc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-  .vc-tile { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel); border: 2px solid var(--line); cursor: pointer; }
+  .vc-grid { columns: 160px; column-gap: 8px; }
+  .vc-tile { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel); border: 2px solid var(--line); cursor: pointer; margin-bottom: 8px; break-inside: avoid; }
   .vc-tile.starred { border-color: var(--gold); }
   .vc-tile.is-trash { border-color: var(--trash); }
   .vc-tile.is-trash img { filter: grayscale(1) brightness(.5); }
-  .vc-tile img { width: 100%; aspect-ratio: 3/2; object-fit: cover; display: block; }
+  .vc-tile img { width: 100%; height: auto; display: block; }
   .vc-tile .stars-mini { position: absolute; left: 6px; bottom: 4px; font-size: 13px; letter-spacing: 1px; color: var(--gold); text-shadow: 0 1px 2px #000; pointer-events: none; }
   .vc-tile .del-mini { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: none;
     background: color-mix(in srgb, var(--trash) 80%, #000); color: #fff; font-size: 13px; cursor: pointer; }
@@ -102,8 +105,8 @@
   .lb-view img.zoomed { cursor: move; }
   .lb-view .lb-hint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); color: var(--dim); font-size: 11px; background: rgba(0,0,0,.5); padding: 2px 10px; border-radius: 999px; pointer-events: none; }
   .lb-film { display: flex; gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); overflow-x: auto; background: rgba(10,11,15,.8); }
-  .lb-thumb { flex: 0 0 auto; width: 74px; aspect-ratio: 3/2; border-radius: 6px; overflow: hidden; border: 2px solid transparent; cursor: pointer; position: relative; background: var(--panel); }
-  .lb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .lb-thumb { flex: 0 0 auto; width: 64px; border-radius: 6px; overflow: hidden; border: 2px solid transparent; cursor: pointer; position: relative; background: var(--panel); }
+  .lb-thumb img { width: 100%; height: auto; object-fit: cover; display: block; }
   .lb-thumb.cur { border-color: var(--accent); }
   .lb-thumb.is-trash img { filter: grayscale(1) brightness(.5); }
   .lb-thumb .mk { position: absolute; right: 3px; bottom: 2px; font-size: 11px; color: var(--gold); text-shadow: 0 1px 2px #000; }
@@ -159,6 +162,8 @@ const items = [];
   for (let i = 0; i < 60; i++) {
     items.push({
       id: i, seed: 1000 + i, pal: palettes[i % palettes.length], cam: CAMS[i % CAMS.length],
+      // 横竖比别：60% 横 3:2、30% 竖 2:3、10% 方 1:1
+      ar: (r2 => r2 < .6 ? 1.5 : r2 < .9 ? 2 / 3 : 1)(rnd()),
       // 对焦状态：sharp=全清晰(45%)，soft=整体偏软(15%)，miss=局部跑焦(40%)
       focus: (r => r < .45 ? 'sharp' : r < .6 ? 'soft' : 'miss')(rnd()),
       stars: 0, del: false,
@@ -170,7 +175,7 @@ const urlCache = new Map();
 function photoURL(it, w) {
   const key = it.id + ':' + w;
   if (urlCache.has(key)) return urlCache.get(key);
-  const h = Math.round(w * 2 / 3);
+  const h = Math.round(w / it.ar);
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d');
   const rnd = mulberry(it.seed);
@@ -296,6 +301,7 @@ function renderA() {
       return;
     }
     count.textContent = `${aCur + 1}/${items.length}`;
+    wrap.style.setProperty('--arn', it.ar);
     const card = document.createElement('div'); card.className = 'va-card';
     const img = document.createElement('img'); img.src = photoURL(it, 1600); img.draggable = false;
     card.appendChild(img);
