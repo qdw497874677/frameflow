@@ -26,7 +26,7 @@
   /* ── 顶部状态条 ── */
   #statebar {
     position: fixed; inset: 0 0 auto 0; z-index: 30; display: flex; align-items: center; gap: 6px;
-    height: 48px; padding: 0 12px;
+    height: 44px; padding: 0 12px;
     background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--line);
   }
@@ -45,12 +45,12 @@
   .ghost:hover { color: var(--text); background: var(--panel2); }
   #log { color: var(--faint); font-size: 12px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  #app { position: fixed; inset: 48px 0 64px 0; }
+  #app { position: fixed; inset: 44px 0 56px 0; }
 
   /* ── 底部模式切换（分段控件） ── */
   #switcher {
     position: fixed; inset: auto 0 0 0; z-index: 30; display: flex; align-items: center; justify-content: center;
-    height: 64px; padding: 0 12px calc(6px + env(safe-area-inset-bottom));
+    height: 56px; padding: 0 12px calc(4px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px);
     border-top: 1px solid var(--line);
   }
@@ -65,10 +65,10 @@
   #switcher .hint2 { position: absolute; right: 14px; color: var(--faint); font-size: 11px; }
 
   /* ══════════ 模式 A：看片流 ══════════ */
-  .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 8px 0; }
+  .va-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 6px 0; }
   .va-cardwrap {
     position: relative; aspect-ratio: var(--arn, 1.5); width: auto;
-    height: min(calc(100% - 168px), calc(min(92vw, 640px) / var(--arn, 1.5)));
+    height: min(calc(100% - 116px), calc(min(92vw, 640px) / var(--arn, 1.5)));
   }
   .va-card {
     position: absolute; inset: 0; border-radius: var(--radius); overflow: hidden; background: var(--panel);
@@ -78,7 +78,8 @@
   .va-card:active { cursor: grabbing; }
   .va-card.zoomed { cursor: move; }
   .va-card img { width: 100%; height: 100%; object-fit: cover; display: block; transform-origin: 0 0; pointer-events: none; }
-  .va-card .chips { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 6px; pointer-events: none; }
+  .chips { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 6px; pointer-events: none; }
+  .chips .count { margin-left: auto; }
   .chip {
     font-size: 10.5px; font-weight: 600; letter-spacing: .4px; padding: 3px 8px; border-radius: 6px;
     background: rgba(8,9,12,.62); backdrop-filter: blur(6px); color: #dfe3ec; border: 1px solid rgba(255,255,255,.08);
@@ -106,22 +107,23 @@
   .stamp.like { left: 22px; color: var(--gold); border: 3px solid var(--gold); background: rgba(255,204,77,.08); transform: rotate(-9deg); }
   .stamp.nope { right: 22px; color: var(--trash); border: 3px solid var(--trash); background: rgba(255,112,133,.08); transform: rotate(9deg); }
 
-  .va-stars { display: flex; gap: 7px; align-items: center; }
+  .va-stars { display: flex; gap: 5px; align-items: center; }
   .va-stars button {
-    background: var(--panel); border: 1px solid var(--line); color: #4a5060;
-    border-radius: 11px; padding: 9px; cursor: pointer; transition: all .12s; display: flex;
+    background: transparent; border: 1px solid transparent; color: #4a5060;
+    border-radius: 9px; padding: 5px; cursor: pointer; transition: all .12s; display: flex;
   }
-  .va-stars button svg { width: 21px; height: 21px; display: block; fill: currentColor; }
+  .va-stars button svg { width: 17px; height: 17px; display: block; fill: currentColor; }
   .va-stars button:hover { transform: translateY(-1px); }
-  .va-stars button.on { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 55%, transparent); background: color-mix(in srgb, var(--gold) 10%, var(--panel)); filter: drop-shadow(0 0 8px rgba(255,204,77,.35)); }
+  .va-stars button.on { color: var(--gold); filter: drop-shadow(0 0 6px rgba(255,204,77,.4)); }
   .va-del {
-    display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 550; padding: 9px 15px; border-radius: 11px; cursor: pointer; transition: all .12s;
-    background: var(--panel); border: 1px solid var(--line); color: var(--dim);
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 550; padding: 6px 12px; border-radius: 9px; cursor: pointer; transition: all .12s;
+    background: transparent; border: 1px solid var(--line); color: var(--dim);
   }
-  .va-del svg { width: 15px; height: 15px; fill: currentColor; }
-  .va-del.on { color: var(--trash); border-color: color-mix(in srgb, var(--trash) 55%, transparent); background: color-mix(in srgb, var(--trash) 10%, var(--panel)); }
-  .va-meta { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .va-hint { color: var(--faint); font-size: 11.5px; text-align: center; }
+  .va-del svg { width: 13px; height: 13px; fill: currentColor; }
+  .va-del.on { color: var(--trash); border-color: color-mix(in srgb, var(--trash) 55%, transparent); background: color-mix(in srgb, var(--trash) 10%, transparent); }
+  .va-meta { display: none; }
+  .va-hint { display: none; color: var(--faint); font-size: 10.5px; }
+  @media (min-width: 561px) { .va-hint { display: block; } }
 
   /* ══════════ 模式 C：网格（瀑布流） ══════════ */
   .vc-wrap { position: absolute; inset: 0; overflow-y: auto; padding: 14px 14px 20px; }
@@ -376,13 +378,13 @@ function renderA() {
     mm.addEventListener('pointerdown', e => e.stopPropagation());
     mm.addEventListener('click', e => { e.stopPropagation(); animZoom(() => { aZoom = null; }); });
     card.insertAdjacentHTML('beforeend',
-      `<div class="chips"><span class="chip raw">RAW+JPEG</span><span class="chip">${it.cam}</span></div>` +
+      `<div class="chips"><span class="chip raw">RAW+JPEG</span><span class="chip">${it.cam}</span><span class="chip count">${String(aCur + 1).padStart(2, '0')}/${items.length}</span></div>` +
       `<div class="fbadge">${focusBadge(it)}</div>` +
       `<div class="stamp like">LIKE</div><div class="stamp nope">NOPE</div>`);
     wrap.appendChild(card);
     const like = card.querySelector('.like'), nope = card.querySelector('.nope');
     meta.innerHTML = `<span>${String(aCur + 1).padStart(2, '0')} / ${items.length}</span><span>${it.cam}</span>`;
-    stage.append(wrap, row, meta, hint);
+    stage.append(wrap, row, hint);
 
     for (let n = 1; n <= 5; n++) {
       const b = document.createElement('button'); b.innerHTML = SVG_STAR; b.classList.toggle('on', n <= it.stars);
