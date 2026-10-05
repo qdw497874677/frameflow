@@ -21,3 +21,11 @@ blocked-by: []
 5. **外部领取机制**：pull 形态要不要 claim/lease（AI 领走一批照片、超时释放、避免两个 AI 撞车），还是无状态（AI 自己算好一批、直接批量写回）？
 
 产出：AI 接入面的第一版决定（其余细节随实现推进）。
+
+## 进展
+
+- 2026-09：用户 m01948「**ai先做让agent调用**」→ **第 1 问已定：先做 pull（AI 作为客户端），push（annotate 任务）后置。** 由此带出的实现要点（写进契约与 core-model §11）：
+  1. **认证**：`POST /api-tokens` 签发长期 Bearer token（可撤销、记 `lastUsedAt`、`scope` 可限范围）；浏览器仍用会话 cookie。
+  2. **缩略图 URL 必须自认证**（`?t=<链接 token 或短期签名>`）—— agent 是把图片 URL 交给**自己的**图像加载器/模型去取，带不上自定义 header；这是 pull 路线唯一一处「与 push 不同」的接口要求。
+  3. **挑片循环无状态**（倾向上「不要 claim/lease」）：`GET /photos?sel=marked:false&limit=50` → 逐张取 2048 缩略图 → 判断 → `PUT /marks`（`by: 'ai:<model>'`）；`?sel=by:ai` 可复核/清空 AI 的标注。两个 AI 撞车只会在同一张上写两次，日志留痕，没有租约也能收敛。
+  4. 待定（本票余下）：第 2 问（直接落标 vs 建议层，草案倾向前者）、第 3 问（MCP 是否 v1 —— 倾向先给 REST + Bearer + `/capabilities` + 一份 agent 接入说明，MCP 作薄包装后补）、第 4 问（token 是否限范围 —— 倾向 v1 全权限，限范围随链接 token 一起做）、第 5 问（claim/lease —— 倾向上不做）。

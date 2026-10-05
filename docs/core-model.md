@@ -175,6 +175,11 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 **建议层还是直接落定**：AI 直接写标注，靠 `by` 区分来源；UI 按来源显示（「AI 建议 ★★★」），选择集加 `by:` 词即可一键过滤/清空。
 **不引入独立的「提案」实体** —— 省一张表；回滚依据是 `marks.jsonl`。
 
+**pull 形态的两个实现要点**（用户 m01948 定「先做让 agent 调用」）：
+
+1. **签发长期 Bearer token**：`POST /api-tokens`（列出 / 签发 / 撤销），明文只在签发响应里出现一次，服务端存哈希 + `label/lastUsedAt/scope`；agent 用 `Authorization: Bearer …` 调 API。
+2. **缩略图 URL 必须自认证**：`GET /photos/{id}/thumb?size=2048&t=<链接 token 或短期签名>`。原因很实在 —— agent 是把 URL 交给自己的图像加载器（甚至模型服务商）去取的，**带不上自定义 header**；URL 里必须自带凭据，签名短时效、可撤销、范围就是那一张照片。
+
 **权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
 
 待拍板（[票 009](../wayfinder/tickets/009-ai-access.md)）：①先 pull 还是 push；②建议层 vs 直接落标；③MCP 是否必做；④AI token 是否限范围；⑤pull 要不要 claim/lease。

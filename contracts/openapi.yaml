@@ -128,6 +128,7 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
         - { name: size, in: query, schema: { type: integer, enum: [512, 2048], default: 512 } }
+        - { name: t, in: query, schema: { type: string }, description: "自认证的链接 token / 短期签名：agent 把图片 URL 交给自己的图像加载器时带不上自定义 header（见 docs/core-model.md §11）" }
       responses:
         "200": { description: JPEG 字节, content: { image/jpeg: { schema: { type: string, format: binary } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -221,6 +222,40 @@ paths:
           content:
             application/json:
               schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/MarkChange" } } } }
+
+  /api-tokens:
+    get:
+      summary: 列出已签发的 API token（AI agent / CLI / MCP 用）
+      x-implemented: false
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [tokens], properties: { tokens: { type: array, items: { $ref: "#/components/schemas/ApiToken" } } } }
+
+    post:
+      summary: 签发一个 API token（明文只在响应里出现一次）
+      x-implemented: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [label], properties: { label: { type: string }, scope: { type: string, default: full } } }
+      responses:
+        "201":
+          description: 已签发
+          content:
+            application/json:
+              schema: { type: object, required: [id, label, token], properties: { id: { type: string }, label: { type: string }, token: { type: string } } }
+
+    delete:
+      summary: 撤销一个 API token
+      x-implemented: false
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: 已撤销 }
 
   # ── 以下为**预留**端点：契约先定形状，后端实现见 docs/core-model.md ──────────
 
@@ -392,6 +427,17 @@ components:
         channel: { type: string }
         at: { type: string, format: date-time }
         jobId: { type: string, nullable: true, description: 由某个任务引起时填上 }
+
+    ApiToken:
+      type: object
+      description: 长期 API token 的元信息（AI agent / CLI / MCP；明文只在签发响应里出现一次）
+      required: [id, label, createdAt]
+      properties:
+        id: { type: string }
+        label: { type: string, description: "给谁用的，如 `claude-code@笔记本`" }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, nullable: true, format: date-time }
+        scope: { type: string, description: "v1 只有 full；预留 marks / project:<name> 等受限范围" }
 
     MarkResult:
       type: object
