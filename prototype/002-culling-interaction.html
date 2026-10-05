@@ -321,7 +321,7 @@ function renderA() {
   const stage = document.createElement('div'); stage.className = 'va-stage';
   const wrap = document.createElement('div'); wrap.className = 'va-cardwrap';
   const hint = document.createElement('div'); hint.className = 'va-hint';
-  hint.textContent = '右滑 ⭐（顺势上抬加星）· 左滑 🗑 · 双击/捏合 放大看细节';
+  hint.textContent = '右滑 ⭐（顺势下压加星）· 左滑 🗑 · 双击/捏合 放大看细节';
   const meta = document.createElement('div'); meta.className = 'va-meta';
   const row = document.createElement('div'); row.className = 'va-stars';
   app.appendChild(stage);
@@ -408,7 +408,7 @@ function renderA() {
       if (aZoom) { aZoom.tx += e.clientX - (drag.px ?? drag.x0); aZoom.ty += e.clientY - (drag.py ?? drag.y0); drag.px = e.clientX; drag.py = e.clientY; applyZoom(); return; }
       applyCard(dx, dx * .08);
       if (dx > 40) {
-        pendingStars = Math.max(1, Math.min(5, 1 + Math.round(-dy / 70)));
+        pendingStars = Math.max(1, Math.min(5, 1 + Math.round(dy / 70)));
         like.textContent = 'LIKE ' + '⭐'.repeat(pendingStars);
         liveRow(pendingStars);
         like.style.opacity = Math.min(1, dx / 120); nope.style.opacity = 0;
