@@ -505,7 +505,7 @@ function renderA() {
     card.addEventListener('dblclick', e => {
       const r = card.getBoundingClientRect();
       if (aZoom) animZoom(() => { aZoom = null; });
-      else animZoom(() => { aZoom = { scale: 2.5, tx: 0, ty: 0 }; zoomAt(1, e.clientX - r.left, e.clientY - r.top); });
+      else animZoom(() => { aZoom = null; zoomAt(2.5, e.clientX - r.left, e.clientY - r.top); });
     });
     card.addEventListener('wheel', e => {
       e.preventDefault();
