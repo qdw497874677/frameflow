@@ -1,0 +1,11 @@
+{
+  "packages": [
+    {
+      "source": "npm:pi-hermes-memory",
+      "autoload": false,
+      "extensions": [
+        "-src/index.ts"
+      ]
+    }
+  ]
+}
