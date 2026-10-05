@@ -115,26 +115,38 @@ export interface TrashEntry {
   sizeBytes?: number;
 }
 
-/** 规则匹配条件：不填 = 不限 */
+/** 星级条件：写数字 = ≥n；写对象是区间 */
+export type RuleStars = number | { gte?: number; lte?: number; eq?: number };
+
+/** 规则匹配条件：不填 = 不限。不同条件是 AND；同一条件写数组是 OR */
 export interface RuleMatch {
-  kind?: 'any' | PhotoKind;
-  /** 至少几星 */
-  minStars?: number;
-  /** 只看待删 */
-  del?: boolean;
-  camera?: string | null;
+  kind?: 'any' | PhotoKind | Array<'any' | PhotoKind>;
+  stars?: RuleStars;
+  /** 是否打过星（含 1–5 星） */
+  marked?: boolean;
+  camera?: string | string[];
+  lens?: string | string[];
+  taken?: { after?: string; before?: string; lastDays?: number };
+  /** 当前目录的 glob */
+  folder?: string;
 }
 
-/** 归档规则：先把「匹配什么」和「放到哪」说清楚，规则编辑 UI 之后再做 */
+/** 规则命中后干什么。v1 只有移动与跳过（没有 copy） */
+export type RuleAction = 'move' | 'skip';
+
+/** 归档规则：先把「匹配什么」和「放到哪」说清楚，规则编辑 UI 见 wayfinder 票 007 */
 export interface Rule {
   id: string;
   name: string;
   enabled: boolean;
+  /** 只处理匹配这些 glob 的目录 */
+  onlyFrom?: string[];
   match: RuleMatch;
-  /** 目标模板，变量：{root} {project} {device} {kind} {variant} {date} */
+  action: RuleAction;
+  /** 目标模板，变量见 contracts/rules.md：{root} {project} {device} {kind} {variant} {date:FORMAT} {folder:N} … */
   dest: string;
   onConflict: 'rename' | 'skip';
-  /** true = RAW+JPEG 整对一起搬 */
+  /** true = 主文件与影子文件（.xmp/.aae…）成组原子地一起搬 */
   pair: boolean;
 }
 

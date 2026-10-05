@@ -106,12 +106,17 @@ export interface RuleDto {
   id: string;
   name: string;
   enabled?: boolean;
+  onlyFrom?: string[];
   match?: {
-    kind?: 'any' | 'photo' | 'video';
-    minStars?: number;
-    del?: boolean;
-    camera?: string | null;
+    kind?: 'any' | 'photo' | 'video' | Array<'any' | 'photo' | 'video'>;
+    stars?: number | { gte?: number; lte?: number; eq?: number };
+    marked?: boolean;
+    camera?: string | string[];
+    lens?: string | string[];
+    taken?: { after?: string; before?: string; lastDays?: number };
+    folder?: string;
   };
+  action?: 'move' | 'skip';
   dest: string;
   onConflict?: 'rename' | 'skip';
   pair?: boolean;

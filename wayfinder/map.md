@@ -26,13 +26,14 @@ status: open
 - [RAW 预览与 RAW+JPEG 配对方案](tickets/001-raw-preview-pairing.md)：服务端分层预览管线（外部 JPEG 优先→内嵌提取→LibRaw 兑底）；同目录同名配对；pair 为一等实体，打星/待删/归档成对原子处理，星级写 XMP。详见 [研究报告](research/001-raw-preview-pairing.md)
 - [挑选交互原型（星级+滑动）](tickets/002-culling-interaction-prototype.md)：一份数据两种焦距（卡片流 ⇄ 网格，变焦飞行切换）；右滑加星·下压连加·左滑待删，星与待删互斥；键盘 1–5/0/←→/X/空格/Ctrl+Z；双击放大 2.5× 带小地图；RAW+JPEG 始终成对。已演化为正式前端 `web/`
 - [叠卡与滑动手势的可借鉴开源实现](tickets/006-swipe-stack-libs.md)：不整体换库，按 Swing 的物理参数模型升级手写叠卡（拖动耦合后排 + 速度参与的弹簧松手 + 交接曲线连续）；Swiper `effect:'cards'` 作为 B 计划。详见 [研究报告](research/006-swipe-stack-options.md)
+- [归档规则 DSL](tickets/003-archive-rules-dsl.md)：YAML + `{token}` 模板（`{root}/{project}/{device}/{kind}/{variant}`、`{date:YYYY-MM}`）；规则有序·**首条命中即停**；同规则内 AND、同字段数组 OR；动作只有 move/skip；冲突追序号·**永不覆盖**；移动最小单位是「组」（主文件 + 影子文件）且组内原子；`{project}` 整批解析一次（手动指定优先并记住，否则用拍摄日跨度）；日期 EXIF→文件名→mtime、当地时间不换算；EXIF 型号用别名表翻译。规范见 [contracts/rules.md](contracts/rules.md)，理由见 [ADR 0002](docs/adr/0002-archive-rule-semantics.md)
 
 ## Not yet specified
 
-- 规则 UI 编辑器的形态（等归档规则 DSL 钉死后立原型票）
 - 手机端布局与触控细节（等交互原型拿到反馈）
 - 视频预览边界：浏览器原生能播的格式够不够、要不要服务端转码/抽帧缩略图
 - 性能指标量化（单项目千张级？万张库的首屏与滚动）
+- 「偏软 / 跑焦」角标的值从哪来（现在前端拿的是假数据）：靠 EXIF、靠服务端图像分析，还是干脆删掉这个概念
 - 开源发布配套：License 选择（注意 AGPL 项目如 Immich/PhotoPrism 的代码传染性）、README、一键部署
 
 ## Out of scope

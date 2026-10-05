@@ -11,6 +11,7 @@ import type {
   Photo,
   Root,
   Rule,
+  RuleMatch,
   TrashEntry,
 } from '../core/types';
 
@@ -126,7 +127,8 @@ const DEMO_RULES: Rule[] = [
     id: 'rule-starred',
     name: '喜欢的（≥3 星）→ 修改后',
     enabled: true,
-    match: { kind: 'any', minStars: 3, del: false, camera: null },
+    match: { stars: { gte: 3 }, marked: true },
+    action: 'move',
     dest: '{root}/{project}/{device}/照片/修改后',
     onConflict: 'rename',
     pair: true,
@@ -135,7 +137,8 @@ const DEMO_RULES: Rule[] = [
     id: 'rule-raw',
     name: '其余原图 → 原始',
     enabled: true,
-    match: { kind: 'photo', minStars: 0, del: false, camera: null },
+    match: { kind: 'photo' },
+    action: 'move',
     dest: '{root}/{project}/{device}/照片/原始',
     onConflict: 'rename',
     pair: true,
@@ -144,21 +147,77 @@ const DEMO_RULES: Rule[] = [
     id: 'rule-video',
     name: '视频 → 视频目录',
     enabled: false,
-    match: { kind: 'video', minStars: 0, del: false, camera: null },
+    match: { kind: 'video' },
+    action: 'move',
     dest: '{root}/{project}/{device}/视频',
     onConflict: 'rename',
     pair: false,
   },
 ];
 
+function asArray<T>(v: T | T[] | undefined): T[] | undefined {
+  if (v === undefined) return undefined;
+  return Array.isArray(v) ? v : [v];
+}
+
+/** 包含匹配（大小写不敏感）；`=xxx` 表示精确相等 */
+function textOk(cond: string | string[] | undefined, value: string | undefined): boolean {
+  const list = asArray(cond);
+  if (!list) return true;
+  if (!value) return false;
+  const hay = value.toLowerCase();
+  return list.some((raw) => {
+    const s = raw.trim().toLowerCase();
+    return s.startsWith('=') ? hay === s.slice(1) : hay.includes(s);
+  });
+}
+
+function kindOk(cond: RuleMatch['kind'], kind: 'photo' | 'video'): boolean {
+  const list = asArray(cond)?.filter((k) => k !== 'any');
+  if (!list || list.length === 0) return true;
+  return list.includes(kind);
+}
+
+function starsOk(cond: RuleMatch['stars'], stars: number): boolean {
+  if (cond === undefined) return true;
+  if (typeof cond === 'number') return stars >= cond;
+  if (cond.eq !== undefined) return stars === cond.eq;
+  if (cond.gte !== undefined && stars < cond.gte) return false;
+  if (cond.lte !== undefined && stars > cond.lte) return false;
+  return true;
+}
+
+function takenOk(cond: RuleMatch['taken'], mtime: string): boolean {
+  if (!cond) return true;
+  const at = new Date(mtime).getTime();
+  if (Number.isNaN(at)) return false;
+  if (cond.after && at < new Date(cond.after).getTime()) return false;
+  if (cond.before && at > new Date(cond.before).getTime()) return false;
+  if (cond.lastDays !== undefined && Date.now() - at > cond.lastDays * 86_400_000) return false;
+  return true;
+}
+
+/** 从 glob 里剥掉要匹配的目录前缀（mock 只需支持「某个目录之下」这种写法） */
+function folderOk(cond: string | undefined, dir: string): boolean {
+  if (!cond) return true;
+  const prefix = cond.replace(/\*+.*$/, '').replace(/\/?$/, '');
+  return prefix === '' ? true : dir.toLowerCase().startsWith(prefix.toLowerCase());
+}
+
+/** 票 003 的命中语义：不同条件 AND、同字段数组 OR、待删永不参与归档 */
 function matches(rule: Rule, rec: MockRecord & { stars: number; del: boolean }): boolean {
   const m = rule.match;
   if (!rule.enabled) return false;
-  if (m.kind && m.kind !== 'any' && m.kind !== rec.kind) return false;
-  if ((m.minStars ?? 0) > 0 && rec.stars < (m.minStars ?? 0)) return false;
-  // 待删的照片不进归档（它们该进回收站）；规则要专门归档待删时才反过来
-  if (m.del ? !rec.del : rec.del) return false;
-  if (m.camera && m.camera !== rec.camera) return false;
+  if (rec.del) return false;
+  if (rule.onlyFrom?.length && !rule.onlyFrom.some((g) => folderOk(g, rec.dir))) return false;
+  if (!kindOk(m.kind, rec.kind)) return false;
+  if (!starsOk(m.stars, rec.stars)) return false;
+  if (m.marked !== undefined && m.marked !== (rec.stars > 0)) return false;
+  // mock 里镜头写在机身的同一个字符串里，两个条件都按它匹配
+  if (!textOk(m.camera, rec.camera)) return false;
+  if (!textOk(m.lens, rec.camera)) return false;
+  if (!takenOk(m.taken, rec.mtime)) return false;
+  if (!folderOk(m.folder, rec.dir)) return false;
   return true;
 }
 
