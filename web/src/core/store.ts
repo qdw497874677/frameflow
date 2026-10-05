@@ -1,6 +1,18 @@
 import { useSyncExternalStore } from 'react';
 import { source } from '../api';
-import { NO_MARK, type FolderListing, type Mark, type Photo, type ViewMode } from './types';
+import {
+  NO_MARK,
+  type ArchivePlan,
+  type ArchiveResult,
+  type FolderListing,
+  type Mark,
+  type Photo,
+  type Root,
+  type Rule,
+  type TrashEntry,
+  type View,
+  type ViewMode,
+} from './types';
 
 /**
  * 挑片会话状态（前端唯一可写状态源）。
@@ -49,6 +61,20 @@ export interface AppState {
   /** 模式 A 的当前卡片下标 */
   cursor: number;
   mode: ViewMode;
+  /** 当前在哪个页面（侧边栏的一项） */
+  view: View;
+  /** 可管理的根目录 */
+  roots: Root[];
+  /** 侧边栏目录树：path → 它的子目录（懒加载） */
+  tree: Record<string, FolderListing>;
+  /** 哪些节点是展开的 */
+  expanded: Record<string, boolean>;
+  trash: TrashEntry[];
+  rules: Rule[];
+  plan: ArchivePlan | null;
+  archiveResult: ArchiveResult | null;
+  /** 非挑片页的通用忙标志（载入回收站/规则/预演） */
+  busy: boolean;
   loading: boolean;
   error: string | null;
   /** 底部提示（最近一次动作；供人确认「刚才发生了什么」） */
@@ -70,6 +96,15 @@ const INITIAL: AppState = {
   items: [],
   cursor: 0,
   mode: 'a',
+  view: 'cull',
+  roots: [],
+  tree: {},
+  expanded: { '/photos': true },
+  trash: [],
+  rules: [],
+  plan: null,
+  archiveResult: null,
+  busy: false,
   loading: false,
   error: null,
   notice: '',
@@ -120,6 +155,140 @@ class AppStore {
   setMode(mode: ViewMode) {
     if (mode === this.state.mode) return;
     this.patch({ mode });
+  }
+
+  /* ── 页面与侧边栏 ─────────────────────────────────── */
+
+  setView(view: View) {
+    if (view === this.state.view) return;
+    this.patch({ view });
+    if (view === 'trash') void this.loadTrash();
+    if (view === 'rules') void this.loadRules();
+    if (view === 'archive') void this.loadRules();
+  }
+
+  /** 载入根目录，并把第一个能用的根的子目录填进树里 */
+  async loadRoots() {
+    try {
+      const roots = await source.listRoots();
+      this.patch({ roots });
+      const first = roots.find((r) => r.online);
+      if (first) await this.loadTree(first.path);
+    } catch (err) {
+      this.patch({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async loadTree(path: string) {
+    try {
+      const listing = await source.listFolders(path);
+      this.patch({ tree: { ...this.state.tree, [path]: listing } });
+    } catch (err) {
+      this.flash(`目录读取失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** 侧边栏展开/收起一个节点（第一次展开时懒加载） */
+  toggleFolder(path: string) {
+    const expanded = { ...this.state.expanded, [path]: !this.state.expanded[path] };
+    this.patch({ expanded });
+    if (expanded[path] && !this.state.tree[path]) void this.loadTree(path);
+  }
+
+  /** 打开一个目录：切到挑片页并载入 */
+  async openFolder(path: string) {
+    this.patch({ view: 'cull' });
+    await this.open(path);
+  }
+
+  /* ── 回收站 ─────────────────────────────────────────── */
+
+  async loadTrash() {
+    this.patch({ busy: true });
+    try {
+      const trash = await source.listTrash();
+      this.patch({ trash, busy: false });
+    } catch (err) {
+      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /** 把当前标记为「待删」的整批移到回收站 */
+  async commitTrash() {
+    const ids = this.state.items.filter((it) => it.mark.del).map((it) => it.id);
+    if (!ids.length) {
+      this.flash('没有标为待删的照片');
+      return;
+    }
+    const res = await source.moveToTrash(ids);
+    this.patch({ items: this.state.items.filter((it) => !it.mark.del), cursor: 0 });
+    await this.loadTrash();
+    this.flash(`已移入回收站 ${res.ok} 张（可整批还原）`);
+  }
+
+  async restoreFromTrash(ids: string[]) {
+    const res = await source.restore(ids);
+    await this.loadTrash();
+    this.flash(`已还原 ${res.ok} 张`);
+  }
+
+  async emptyTrash(ids?: string[]) {
+    const res = await source.emptyTrash(ids);
+    await this.loadTrash();
+    this.flash(`已真删 ${res.ok} 张（不可恢复）`);
+  }
+
+  /* ── 规则与归档 ─────────────────────────────────────── */
+
+  async loadRules() {
+    this.patch({ busy: true });
+    try {
+      const rules = await source.listRules();
+      this.patch({ rules, busy: false });
+    } catch (err) {
+      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  async saveRules(rules: Rule[]) {
+    const saved = await source.saveRules(rules);
+    this.patch({ rules: saved });
+    this.flash('规则已保存');
+  }
+
+  async toggleRule(id: string) {
+    const rules = this.state.rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
+    await this.saveRules(rules);
+  }
+
+  /** 预演：先看清楚会搬什么、搬到哪 */
+  async planArchive(opts: { ruleIds?: string[]; onlyStarred?: boolean } = {}) {
+    this.patch({ busy: true, archiveResult: null });
+    try {
+      const plan = await source.planArchive({ dir: this.state.dir, ...opts });
+      this.patch({ plan, busy: false });
+    } catch (err) {
+      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  async applyPlan() {
+    const plan = this.state.plan;
+    if (!plan) return;
+    this.patch({ busy: true });
+    try {
+      const result = await source.applyArchive(plan.id);
+      this.patch({ archiveResult: result, plan: null, busy: false });
+      this.flash(`归档完成：搬了 ${result.moved} 张`);
+      await this.open(this.state.dir);
+      await this.loadTree(this.state.dir);
+    } catch (err) {
+      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  clearPlan() {
+    this.patch({ plan: null, archiveResult: null });
   }
 
   /**

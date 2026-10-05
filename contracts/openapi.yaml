@@ -34,6 +34,13 @@ paths:
       responses:
         "204": { description: 已注销 }
 
+  /roots:
+    get:
+      summary: 可浏览的根目录
+      description: 用户在设置里配置的一个或多个根（本地盘、挂载点）。`online=false` 表示当前不可访问（例如移动硬盘没插）。
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, required: [roots], properties: { roots: { type: array, items: { $ref: "#/components/schemas/Root" } } } } } } }
+
   /folders:
     get:
       summary: 列出一个目录（下钻/上翻），并返回该目录可见照片数
@@ -149,9 +156,12 @@ paths:
       responses:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/OpResult" } } } }
     delete:
-      summary: 清空回收站（**唯一真正删除磁盘文件的入口**，需显式确认）
+      summary: 清空或部分真删回收站（**唯一真正删除磁盘文件的入口**，需显式确认）
+      description: 必须带 `?confirm=true`；`ids` 为空数组表示清空整个回收站。
+      parameters:
+        - { name: confirm, in: query, required: true, schema: { type: boolean, const: true } }
       requestBody:
-        content: { application/json: { schema: { type: object, properties: { ids: { type: array, items: { type: string } }, confirm: { type: boolean, const: true } } } } }
+        content: { application/json: { schema: { type: object, properties: { ids: { type: array, items: { type: string } } } } } }
       responses:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/OpResult" } } } }
 
@@ -177,10 +187,8 @@ paths:
               required: [dir]
               properties:
                 dir: { type: string, description: 待归档目录 }
-                ruleId: { type: string }
-                ruleYaml: { type: string, description: 临时规则（未保存），与 ruleId 二选一 }
-                ids: { type: array, items: { type: string }, description: 省略 = 该目录全部标记照片 }
-                moveFlaggedOnly: { type: boolean, default: true, description: true = 只移动已打星/未待删者 }
+                ruleIds: { type: array, items: { type: string }, description: 省略 = 该目录下当前启用的所有规则 }
+                onlyStarred: { type: boolean, default: false, description: true = 只处理打过星的照片 }
       responses:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ArchivePlan" } } } }
         "422": { $ref: "#/components/responses/Error", description: 规则非法 }
@@ -199,14 +207,14 @@ paths:
     get:
       summary: 列出归档规则
       responses:
-        "200": { description: ok, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/Rule" } } } } } } }
+        "200": { description: ok, content: { application/json: { schema: { type: object, required: [rules], properties: { rules: { type: array, items: { $ref: "#/components/schemas/Rule" } } } } } } }
     put:
-      summary: 保存归档规则（校验后落盘）
+      summary: 保存归档规则（整份替换，校验后落盘为 YAML）
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/Rule" } } }
+        content: { application/json: { schema: { type: object, required: [rules], properties: { rules: { type: array, items: { $ref: "#/components/schemas/Rule" } } } } } }
       responses:
-        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Rule" } } } }
+        "200": { description: ok, content: { application/json: { schema: { type: object, required: [rules], properties: { rules: { type: array, items: { $ref: "#/components/schemas/Rule" } } } } } } }
         "422": { $ref: "#/components/responses/Error" }
 
 components:
@@ -288,38 +296,80 @@ components:
 
     ArchivePlan:
       type: object
-      required: [id, moves, expiresAt]
+      description: 归档预演结果（只计算不移动）。前端按 `to` 分组展示，`skipped` 说明为什么某张不动。
+      required: [id, dir, createdAt, moves]
       properties:
-        id: { type: string }
-        expiresAt: { type: string, format: date-time }
+        id: { type: string, description: 计划 id，交给 /archive/apply }
+        dir: { type: string }
+        createdAt: { type: string, format: date-time }
+        totalBytes: { type: integer, description: 将搬运的总体积 }
         moves:
+          type: array
+          items: { $ref: "#/components/schemas/ArchiveMove" }
+        skipped:
           type: array
           items:
             type: object
-            required: [photoId, from, to]
+            required: [photoId, displayName, reason]
             properties:
               photoId: { type: string }
-              from: { type: string }
-              to: { type: string }
-              conflict: { type: string, nullable: true, enum: [exists, same_path, null] }
-        summary: { type: object, properties: { count: { type: integer }, bytes: { type: integer }, newDirs: { type: array, items: { type: string } } } }
+              displayName: { type: string }
+              reason: { type: string, description: "例如：待删：先移入回收站 / 已经在目标目录 / 没有匹配的规则" }
+
+    ArchiveMove:
+      type: object
+      required: [photoId, displayName, from, to, ruleId, ruleName]
+      properties:
+        photoId: { type: string }
+        displayName: { type: string }
+        from: { type: string, description: 当前所在目录 }
+        to: { type: string, description: 目标目录（模板已展开） }
+        kind: { type: string, enum: [photo, video] }
+        stars: { type: integer }
+        sizeBytes: { type: integer }
+        ruleId: { type: string }
+        ruleName: { type: string }
 
     ArchiveResult:
       type: object
-      required: [ok, moved, failed]
+      description: 执行结果。成对实体（RAW+JPEG）要么整对搬走、要么整对失败。
+      required: [planId, moved]
       properties:
-        ok: { type: integer }
-        moved: { type: array, items: { type: string } }
-        failed: { type: array, items: { type: object, properties: { photoId: { type: string }, error: { type: string }, rolledBack: { type: boolean } } } }
+        planId: { type: string }
+        moved: { type: integer, description: 成功搬运的照片数（按 pair 计） }
+        failed: { type: array, items: { type: object, properties: { id: { type: string }, error: { type: string } } } }
 
     Rule:
       type: object
-      required: [id, name, yaml]
+      description: 一条归档规则。`dest` 是目标目录模板，YAML 是它的落盘形式（DSL 由 wayfinder 票 003 定稿）。
+      required: [id, name, dest]
       properties:
         id: { type: string }
         name: { type: string }
-        description: { type: string }
-        yaml: { type: string, description: "目标路径模板与条件（DSL 由票 003 定稿）" }
+        enabled: { type: boolean, default: true }
+        match:
+          type: object
+          properties:
+            kind: { type: string, enum: [any, photo, video], default: any }
+            minStars: { type: integer, minimum: 0, maximum: 5, default: 0 }
+            del: { type: boolean, default: false, description: "true = 只挑标了待删的（默认排除待删）" }
+            camera: { type: string, nullable: true }
+        dest:
+          type: string
+          description: "路径模板，变量：{root} {project} {device} {kind} {variant} {date}"
+          example: "{root}/{project}/{device}/照片/修改后"
+        onConflict: { type: string, enum: [rename, skip], default: rename }
+        pair: { type: boolean, default: true, description: true = RAW/JPEG 成对处理 }
+
+    Root:
+      type: object
+      required: [id, path, label]
+      properties:
+        id: { type: string }
+        path: { type: string }
+        label: { type: string }
+        photoCount: { type: integer }
+        online: { type: boolean, description: false = 当前不可访问（未挂载/未插） }
 
     Error:
       type: object

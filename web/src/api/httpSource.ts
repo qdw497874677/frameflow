@@ -1,13 +1,30 @@
 import type {
+  ArchivePlanDto,
+  ArchiveResultDto,
   FolderListingDto,
   MarkInputDto,
   MarkResultDto,
   OpResultDto,
   PhotoDto,
   PhotoPageDto,
+  RootDto,
+  RuleDto,
+  TrashEntryDto,
 } from './contract';
-import type { ListPhotosOptions, PhotoPage, PhotoSource } from './source';
-import type { Folder, FolderListing, MarkInput, MarkResult, OpResult, Photo } from '../core/types';
+import type { ListPhotosOptions, PhotoPage, PhotoSource, PlanOptions } from './source';
+import type {
+  ArchivePlan,
+  ArchiveResult,
+  Folder,
+  FolderListing,
+  MarkInput,
+  MarkResult,
+  OpResult,
+  Photo,
+  Root,
+  Rule,
+  TrashEntry,
+} from '../core/types';
 
 /** DTO → 领域模型。所有后端字段的兼容处理集中在这里。 */
 export function toPhoto(dto: PhotoDto): Photo {
@@ -51,6 +68,82 @@ export function toMarkInput(input: MarkInput): MarkInputDto {
   return dto;
 }
 
+export function toRoot(dto: RootDto): Root {
+  return {
+    id: dto.id,
+    path: dto.path,
+    label: dto.label || dto.path,
+    photoCount: dto.photoCount,
+    online: dto.online !== false,
+  };
+}
+
+export function toTrashEntry(dto: TrashEntryDto): TrashEntry {
+  return {
+    photoId: dto.photoId,
+    displayName: dto.displayName,
+    dir: dto.dir,
+    fromDir: dto.fromDir,
+    trashedAt: dto.trashedAt,
+    kind: dto.kind,
+    ar: dto.ar > 0 ? dto.ar : 1,
+    stars: dto.stars ?? 0,
+    hasRaw: Boolean(dto.hasRaw),
+    hasJpeg: Boolean(dto.hasJpeg),
+    sizeBytes: dto.sizeBytes,
+  };
+}
+
+export function toRule(dto: RuleDto): Rule {
+  return {
+    id: dto.id,
+    name: dto.name,
+    enabled: dto.enabled !== false,
+    match: {
+      kind: dto.match?.kind ?? 'any',
+      minStars: dto.match?.minStars ?? 0,
+      del: dto.match?.del ?? false,
+      camera: dto.match?.camera ?? null,
+    },
+    dest: dto.dest,
+    onConflict: dto.onConflict ?? 'rename',
+    pair: dto.pair !== false,
+  };
+}
+
+export function toRuleDto(rule: Rule): RuleDto {
+  return {
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    match: { ...rule.match },
+    dest: rule.dest,
+    onConflict: rule.onConflict,
+    pair: rule.pair,
+  };
+}
+
+export function toArchivePlan(dto: ArchivePlanDto): ArchivePlan {
+  return {
+    id: dto.id,
+    dir: dto.dir,
+    createdAt: dto.createdAt,
+    moves: dto.moves.map((m) => ({
+      photoId: m.photoId,
+      displayName: m.displayName,
+      from: m.from,
+      to: m.to,
+      kind: m.kind,
+      stars: m.stars ?? 0,
+      sizeBytes: m.sizeBytes,
+      ruleId: m.ruleId,
+      ruleName: m.ruleName,
+    })),
+    skipped: dto.skipped ?? [],
+    totalBytes: dto.totalBytes ?? 0,
+  };
+}
+
 async function request<T>(base: string, path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
     credentials: 'include',
@@ -75,6 +168,11 @@ async function request<T>(base: string, path: string, init?: RequestInit): Promi
 export function createHttpSource(base = '/api/v1'): PhotoSource {
   return {
     kind: 'http',
+
+    async listRoots() {
+      const res = await request<{ roots: RootDto[] }>(base, '/roots');
+      return res.roots.map(toRoot);
+    },
 
     async listFolders(path?: string) {
       const q = path ? `?path=${encodeURIComponent(path)}` : '';
@@ -111,6 +209,43 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
         body: JSON.stringify({ ids }),
       });
       return { ok: res.ok, failed: res.failed };
+    },
+
+    async listTrash() {
+      const res = await request<{ items: TrashEntryDto[] }>(base, '/trash');
+      return res.items.map(toTrashEntry);
+    },
+
+    async emptyTrash(ids?: string[]): Promise<OpResult> {
+      const res = await request<OpResultDto>(base, '/trash?confirm=true', {
+        method: 'DELETE',
+        body: JSON.stringify({ ids: ids ?? [] }),
+      });
+      return { ok: res.ok, failed: res.failed };
+    },
+
+    async listRules() {
+      const res = await request<{ rules: RuleDto[] }>(base, '/rules');
+      return res.rules.map(toRule);
+    },
+
+    async saveRules(rules: Rule[]) {
+      const body = JSON.stringify({ rules: rules.map(toRuleDto) });
+      const res = await request<{ rules: RuleDto[] }>(base, '/rules', { method: 'PUT', body });
+      return res.rules.map(toRule);
+    },
+
+    async planArchive(opts: PlanOptions) {
+      const body = JSON.stringify(opts);
+      return toArchivePlan(await request<ArchivePlanDto>(base, '/archive/plan', { method: 'POST', body }));
+    },
+
+    async applyArchive(planId: string): Promise<ArchiveResult> {
+      const res = await request<ArchiveResultDto>(base, '/archive/apply', {
+        method: 'POST',
+        body: JSON.stringify({ planId }),
+      });
+      return { planId: res.planId, moved: res.moved, failed: res.failed };
     },
   };
 }

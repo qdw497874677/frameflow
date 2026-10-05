@@ -84,3 +84,85 @@ export interface OpResult {
 
 /** 应用模式：a = 逐张挑片（卡片流），c = 批量扫射（网格） */
 export type ViewMode = 'a' | 'c';
+
+/** 侧边栏里可去的页面 */
+export type View = 'cull' | 'trash' | 'archive' | 'rules' | 'settings';
+
+/** 一个照片根目录：磁盘上的入口。可以有多个（机身卡、移动硬盘、NAS） */
+export interface Root {
+  id: string;
+  path: string;
+  label: string;
+  photoCount?: number;
+  /** 盘没插上时 false —— 侧边栏要看得见但不可点 */
+  online: boolean;
+}
+
+/** 回收站条目：以配对为单位（RAW+JPEG 一起进、一起出） */
+export interface TrashEntry {
+  photoId: string;
+  displayName: string;
+  /** 现在在哪（产品回收站目录） */
+  dir: string;
+  /** 原来在哪（还原回这里） */
+  fromDir: string;
+  trashedAt: string;
+  kind: PhotoKind;
+  ar: number;
+  stars: number;
+  hasRaw: boolean;
+  hasJpeg: boolean;
+  sizeBytes?: number;
+}
+
+/** 规则匹配条件：不填 = 不限 */
+export interface RuleMatch {
+  kind?: 'any' | PhotoKind;
+  /** 至少几星 */
+  minStars?: number;
+  /** 只看待删 */
+  del?: boolean;
+  camera?: string | null;
+}
+
+/** 归档规则：先把「匹配什么」和「放到哪」说清楚，规则编辑 UI 之后再做 */
+export interface Rule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  match: RuleMatch;
+  /** 目标模板，变量：{root} {project} {device} {kind} {variant} {date} */
+  dest: string;
+  onConflict: 'rename' | 'skip';
+  /** true = RAW+JPEG 整对一起搬 */
+  pair: boolean;
+}
+
+/** 预演里的一条移动 */
+export interface ArchiveMove {
+  photoId: string;
+  displayName: string;
+  from: string;
+  to: string;
+  kind: PhotoKind;
+  stars: number;
+  sizeBytes?: number;
+  ruleId: string;
+  ruleName: string;
+}
+
+/** 归档预演：先看清楚要搬什么、搬去哪，再动手 */
+export interface ArchivePlan {
+  id: string;
+  dir: string;
+  createdAt: string;
+  moves: ArchiveMove[];
+  skipped: { photoId: string; displayName: string; reason: string }[];
+  totalBytes: number;
+}
+
+export interface ArchiveResult {
+  planId: string;
+  moved: number;
+  failed: OpFailure[];
+}

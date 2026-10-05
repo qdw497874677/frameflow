@@ -77,3 +77,69 @@ export interface ErrorDto {
   message?: string;
   detail?: Record<string, unknown>;
 }
+
+/* ── 根目录 / 回收站 / 规则 / 归档 ────────────────────── */
+
+export interface RootDto {
+  id: string;
+  path: string;
+  label: string;
+  photoCount?: number;
+  online?: boolean;
+}
+
+export interface TrashEntryDto {
+  photoId: string;
+  displayName: string;
+  dir: string;
+  fromDir: string;
+  trashedAt: string;
+  kind: 'photo' | 'video';
+  ar: number;
+  stars?: number;
+  hasRaw?: boolean;
+  hasJpeg?: boolean;
+  sizeBytes?: number;
+}
+
+export interface RuleDto {
+  id: string;
+  name: string;
+  enabled?: boolean;
+  match?: {
+    kind?: 'any' | 'photo' | 'video';
+    minStars?: number;
+    del?: boolean;
+    camera?: string | null;
+  };
+  dest: string;
+  onConflict?: 'rename' | 'skip';
+  pair?: boolean;
+}
+
+export interface ArchiveMoveDto {
+  photoId: string;
+  displayName: string;
+  from: string;
+  to: string;
+  kind: 'photo' | 'video';
+  stars?: number;
+  sizeBytes?: number;
+  ruleId: string;
+  ruleName: string;
+}
+
+export interface ArchivePlanDto {
+  id: string;
+  dir: string;
+  createdAt: string;
+  moves: ArchiveMoveDto[];
+  skipped?: { photoId: string; displayName: string; reason: string }[];
+  totalBytes?: number;
+}
+
+export interface ArchiveResultDto {
+  planId: string;
+  moved: number;
+  failed: { id: string; error: string }[];
+}

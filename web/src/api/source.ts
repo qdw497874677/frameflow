@@ -1,4 +1,15 @@
-import type { FolderListing, MarkInput, MarkResult, OpResult, Photo } from '../core/types';
+import type {
+  ArchivePlan,
+  ArchiveResult,
+  FolderListing,
+  MarkInput,
+  MarkResult,
+  OpResult,
+  Photo,
+  Root,
+  Rule,
+  TrashEntry,
+} from '../core/types';
 
 export interface ListPhotosOptions {
   dir: string;
@@ -13,6 +24,14 @@ export interface PhotoPage {
   total?: number;
 }
 
+export interface PlanOptions {
+  dir: string;
+  /** 只跑这几条规则；不填 = 全部启用的规则 */
+  ruleIds?: string[];
+  /** 只归档打星的 */
+  onlyStarred?: boolean;
+}
+
 /**
  * 数据访问端口（port）。UI 只依赖这个接口：
  *  - httpSource：真实后端（contracts/openapi.yaml）
@@ -21,6 +40,8 @@ export interface PhotoPage {
  */
 export interface PhotoSource {
   readonly kind: 'mock' | 'http';
+  /** 有哪些根目录可管 */
+  listRoots(): Promise<Root[]>;
   listFolders(path?: string): Promise<FolderListing>;
   listPhotos(opts: ListPhotosOptions): Promise<PhotoPage>;
   /** 缩略图 URL：mock 返回 data URL；http 返回后端 URL */
@@ -28,4 +49,12 @@ export interface PhotoSource {
   saveMarks(items: MarkInput[]): Promise<MarkResult[]>;
   moveToTrash(ids: string[]): Promise<OpResult>;
   restore(ids: string[]): Promise<OpResult>;
+  /** 回收站里现在有什么 */
+  listTrash(): Promise<TrashEntry[]>;
+  /** 真删：传 ids 只删这些，不传 = 清空；后端会带 confirm 参数 */
+  emptyTrash(ids?: string[]): Promise<OpResult>;
+  listRules(): Promise<Rule[]>;
+  saveRules(rules: Rule[]): Promise<Rule[]>;
+  planArchive(opts: PlanOptions): Promise<ArchivePlan>;
+  applyArchive(planId: string): Promise<ArchiveResult>;
 }
