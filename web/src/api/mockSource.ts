@@ -1,7 +1,9 @@
 import type { ListPhotosOptions, PhotoPage, PhotoSource } from './source';
+import { matchesSelection } from '../core/selection';
 import { PALETTES, mulberry, renderMockPhoto, type FocusKind, type MockSpec } from './mock/render';
 import type {
   FolderListing,
+  MarkChange,
   MarkInput,
   MarkResult,
   OpResult,
@@ -100,6 +102,8 @@ export function createMockSource(): PhotoSource {
   const trashed = new Map<string, TrashEntry>();
   const starsById = new Map<string, number>();
   const delById = new Map<string, boolean>();
+  /** 变更日志：真后端会追加落盘（marks.jsonl），mock 存内存，读回来的形状一样 */
+  const changeLog: MarkChange[] = [];
 
   const thumbUrl = (photoId: string, size: 512 | 2048) => {
     const rec = byId.get(photoId);
@@ -145,7 +149,7 @@ export function createMockSource(): PhotoSource {
 
     async listPhotos(opts: ListPhotosOptions): Promise<PhotoPage> {
       // 目录树里只有叶子节点有照片；其余目录返回空列表（模拟真实下钻）
-      // 回收站里的、已经归档搬走的，都不在目录里出现
+      // 回收站里的不在目录里出现；选择集（谓词）在这里求值（真后端在服务端求）
       const items =
         opts.dir === MOCK_ROOT
           ? records
@@ -153,21 +157,55 @@ export function createMockSource(): PhotoSource {
               .map((rec) => {
                 const photo = toPhoto(rec);
                 photo.mark.stars = starsById.get(rec.id) ?? 0;
+                photo.mark.del = delById.get(rec.id) ?? false;
                 return photo;
               })
+              .filter((p) => matchesSelection(p, opts.selection))
           : [];
-      const filtered = opts.filter === 'starred' ? items.filter((i) => i.mark.stars > 0) : items;
-      return { items: filtered, total: filtered.length, nextCursor: null };
+      return { items, total: items.length, nextCursor: null };
     },
 
     thumbUrl,
 
     async saveMarks(items: MarkInput[]): Promise<MarkResult[]> {
+      const now = new Date().toISOString();
       items.forEach((i) => {
-        starsById.set(i.id, i.stars ?? 0);
-        delById.set(i.id, Boolean(i.del));
+        const prev: { stars: number; del: boolean } = {
+          stars: starsById.get(i.id) ?? 0,
+          del: delById.get(i.id) ?? false,
+        };
+        const next = { stars: i.stars ?? prev.stars, del: Boolean(i.del ?? prev.del) };
+        if (next.stars > 0 && next.del) next.del = false; // 不变式：互斥（后端同样会在写前纠正）
+
+        const at = i.at ?? now;
+        const by = i.by ?? 'me';
+        const channel = i.channel ?? 'inapp';
+        const rec = byId.get(i.id);
+        (['stars', 'del'] as const).forEach((field) => {
+          if (prev[field] === next[field]) return;
+          changeLog.push({
+            photoId: i.id,
+            displayName: rec?.displayName,
+            field,
+            from: prev[field],
+            to: next[field],
+            by,
+            channel,
+            at,
+          });
+        });
+
+        starsById.set(i.id, next.stars);
+        delById.set(i.id, next.del);
       });
       return items.map((i) => ({ id: i.id, ok: true, error: null }));
+    },
+
+    /** 变更日志（最新的在前）。真后端读 marks.jsonl；形状与排序与这里一致 */
+    async listMarkHistory(opts): Promise<MarkChange[]> {
+      const all = opts?.photoId ? changeLog.filter((c) => c.photoId === opts.photoId) : changeLog;
+      const newest = [...all].reverse();
+      return opts?.limit ? newest.slice(0, opts.limit) : newest;
     },
 
     async moveToTrash(ids: string[]): Promise<OpResult> {

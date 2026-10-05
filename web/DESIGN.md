@@ -66,9 +66,26 @@ v1 曾有一整套「归档规则引擎」：条件匹配 + `{root}/{project}/{d
 
 留在这里的只有两条不变量：**应用不导入、不导出、不搬动照片**；原文件只会被写标记（星标 XMP）与回收站操作碰到。导出（把挑好的照片交到别的目录/工具）与外部批注推送推迟到后续，记在 wayfinder 的 Not yet specified 里。
 
+## 标注的来源与时间
+
+每次实际发生变化（星 0→3、待删 否→是）都会记一条变更：`{ photoId, field, from, to, by, channel, at }`。
+落盘的是**追加型** `marks.jsonl`（后端，前端 mock 存内存），XMP 仍只留最终状态；`by` 目前恒为 `me`、`channel` 恒为 `inapp`。
+设置页可以看到最近 10 条（`GET /marks/history`）。
+
+这不是审计洁癖：将来把一批照片推给飞书让同事打星时，回来的标注必须能和你本地改的合并 ——
+没有「谁、什么时候、改了什么」，合并只能靠猜。详见 `docs/core-model.md` §3 不变量 6。
+
+## 选择集（Selection）
+
+「当前看到的是哪一批照片」是一个**可序列化的谓词**（`{kind, stars>=3, marked, camera, taken, folder, ids}`），
+不是一串 id。它能在 URL 里表达（`?sel=stars>=3,marked`，深链可分享）、能存进任务（导出/推送的输入），
+求值语义前后端一致（规范 `contracts/selection.md`，前端参考实现 `web/src/core/selection.ts`）。
+端口上它取代了原来的枚举 `filter`（`all|starred|trash|unmarked`）—— 枚举长不大，加个条件就要改端口。
+
 ## 尚未实现（明确留白）
 
 - 真实后端（`server/` 未实现；前端默认 mock）。
 - 根目录的**写入** API（设置页现在只读列表）。
 - 导出（把挑好的照片交到别的目录 / 别的工具）与外部批注推送（见 wayfinder 的 Not yet specified）；大批量列表的虚拟滚动与性能预算。
+- 任务层：契约里已写好 `/jobs`、`/channels` 的形状（`x-implemented: false`），前端暂无任务页 —— 第一个落地的异步能力是导出。选择集已在 URL 里可表达，但还没有筛选控件去改它。
 - 视频预览边界、EXIF 详情面板、以及「选片后回写 XMP 的进度/失败重试」的可见反馈。

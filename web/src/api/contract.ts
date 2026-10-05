@@ -57,6 +57,25 @@ export interface MarkInputDto {
   id: string;
   stars?: number;
   del?: boolean;
+  /** 客户端时刻（ISO）：服务端以它为准写变更日志，缺省用服务端时间 */
+  at?: string;
+  /** 谁改的：'me' | 'link:<别名>' | 'ai' | 'job:<id>' */
+  by?: string;
+  /** 从哪个渠道改的：'inapp' | 'feishu' | … */
+  channel?: string;
+}
+
+/** 标注变更事件：POST 之外只读（追加入日志，不回改） */
+export interface MarkChangeDto {
+  photoId: string;
+  displayName?: string;
+  field: 'stars' | 'del';
+  from: number | boolean | null;
+  to: number | boolean | null;
+  by: string;
+  channel: string;
+  at: string;
+  jobId?: string | null;
 }
 
 export interface MarkResultDto {

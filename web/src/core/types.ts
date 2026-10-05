@@ -64,7 +64,65 @@ export interface MarkInput {
   id: string;
   stars?: number;
   del?: boolean;
+  /** 客户端记下的时刻（ISO）；服务端写变更日志时用它，缺省用服务端时间 */
+  at?: string;
+  by?: string;
+  channel?: string;
 }
+
+/** 谁改的、从哪改的：外部批注回流的凭据 */
+export interface MarkActor {
+  /** 'me' | 'link:<别名>' | 'ai' | 'job:<id>' */
+  by: string;
+  /** 'inapp' | 'feishu' | … */
+  channel: string;
+}
+
+/** 本人、在应用里改的 —— 目前唯一的来源 */
+export const ME: MarkActor = { by: 'me', channel: 'inapp' };
+
+/**
+ * 标注变更事件：追加进变更日志（后端落 marks.jsonl），XMP / 库文件只留最终状态。
+ * 没有它，「飞书里同事点的星」和本地改的就没法合并。
+ */
+export interface MarkChange {
+  photoId: string;
+  displayName?: string;
+  field: 'stars' | 'del';
+  from: number | boolean | null;
+  to: number | boolean | null;
+  by: string;
+  channel: string;
+  at: string;
+  jobId?: string | null;
+}
+
+/**
+ * 选择集：可序列化的谓词，**不是 id 清单**。
+ * 任务是「选择集 + 操作 + 参数」—— 所以它要能存盘、能进 URL、能发给后端。
+ * 语法规范（对象形式与紧凑字符串形式的对应）见 contracts/selection.md。
+ */
+export interface Selection {
+  /** 项目（映射的目录）；省略 = 当前项目的目录 */
+  project?: string;
+  /** 谓词：字段之间 AND */
+  where?: {
+    kind?: PhotoKind;
+    stars?: { gte?: number; lte?: number; eq?: number };
+    del?: boolean;
+    /** 是否打过星（stars > 0） */
+    marked?: boolean;
+    /** 目录包含匹配（大小写不敏感） */
+    folder?: string;
+    camera?: string;
+    /** 拍摄日：闭区间，YYYY-MM-DD */
+    taken?: { after?: string; before?: string };
+  };
+  /** 手选清单（UI 里点出来的）；与 where 同时存在时取交集 */
+  ids?: string[];
+}
+
+export const EMPTY_SELECTION: Selection = {};
 
 export interface MarkResult {
   id: string;

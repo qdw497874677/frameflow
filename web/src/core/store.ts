@@ -1,11 +1,16 @@
 import { useSyncExternalStore } from 'react';
 import { source } from '../api';
+import { selectionToQuery } from './selection';
 import {
+  EMPTY_SELECTION,
+  ME,
   NO_MARK,
   type FolderListing,
   type Mark,
+  type MarkChange,
   type Photo,
   type Root,
+  type Selection,
   type TrashEntry,
   type View,
   type ViewMode,
@@ -53,6 +58,8 @@ function rectOf(el: Element | null): Rect | null {
 
 export interface AppState {
   dir: string;
+  /** 当前选择集（谓词）：列表里的照片就是它选出来的 —— 也是将来任务的输入 */
+  selection: Selection;
   listing: FolderListing | null;
   items: Photo[];
   /** 模式 A 的当前卡片下标 */
@@ -67,6 +74,8 @@ export interface AppState {
   /** 哪些节点是展开的 */
   expanded: Record<string, boolean>;
   trash: TrashEntry[];
+  /** 标注变更日志（最新的在前）：谁、什么时候、把哪个字段从什么改成了什么 */
+  history: MarkChange[];
   /** 非挑片页的通用忙标志（载入回收站/规则/预演） */
   busy: boolean;
   loading: boolean;
@@ -86,6 +95,7 @@ export interface AppState {
 
 const INITIAL: AppState = {
   dir: '/photos/2026-冰岛',
+  selection: EMPTY_SELECTION,
   listing: null,
   items: [],
   cursor: 0,
@@ -95,6 +105,7 @@ const INITIAL: AppState = {
   tree: {},
   expanded: { '/photos': true },
   trash: [],
+  history: [],
   busy: false,
   loading: false,
   error: null,
@@ -131,10 +142,14 @@ class AppStore {
 
   /* ── 载入 ───────────────────────────────────────────── */
 
-  async open(dir: string) {
-    this.patch({ dir, loading: true, error: null });
+  async open(dir: string, selection?: Selection) {
+    const sel = selection ?? this.state.selection;
+    this.patch({ dir, selection: sel, loading: true, error: null });
     try {
-      const [listing, page] = await Promise.all([source.listFolders(dir), source.listPhotos({ dir })]);
+      const [listing, page] = await Promise.all([
+        source.listFolders(dir),
+        source.listPhotos({ dir, selection: sel }),
+      ]);
       this.undoStack = [];
       this.patch({ listing, items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
       this.flash(`载入 ${page.items.length} 张 · ${dir}`);
@@ -154,6 +169,55 @@ class AppStore {
     if (view === this.state.view) return;
     this.patch({ view });
     if (view === 'trash') void this.loadTrash();
+    if (view === 'settings') void this.loadMarkHistory();
+  }
+
+  /* ── 选择集（谓词） ─────────────────────────────────── */
+
+  /**
+   * 换一个选择集：URL 与列表跟着变。
+   * 今天只有设置页与深链在改它；将来「把这一批推给飞书」就是把同一个谓词存进任务。
+   */
+  async setSelection(selection: Selection) {
+    this.patch({ selection });
+    this.syncUrl();
+    await this.reload();
+  }
+
+  /** 目录不变、按当前选择集重列（选择集变了，或盘上被外部改过） */
+  async reload() {
+    const { dir, selection } = this.state;
+    this.patch({ loading: true, error: null });
+    try {
+      const page = await source.listPhotos({ dir, selection });
+      this.undoStack = [];
+      this.patch({ items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
+    } catch (err) {
+      this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /** 把选择集写进地址栏（分享出去的就是「同一个谓词」，不是一串 id） */
+  private syncUrl() {
+    try {
+      const url = new URL(window.location.href);
+      const sel = selectionToQuery(this.state.selection);
+      if (sel) url.searchParams.set('sel', sel);
+      else url.searchParams.delete('sel');
+      window.history.replaceState(null, '', url);
+    } catch {
+      /* file:// 或受限环境里改不了 URL，忽略 */
+    }
+  }
+
+  async loadMarkHistory() {
+    this.patch({ busy: true });
+    try {
+      const history = await source.listMarkHistory({ limit: 50 });
+      this.patch({ history, busy: false });
+    } catch (err) {
+      this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /** 载入根目录，并把第一个能用的根的子目录填进树里 */
@@ -438,12 +502,20 @@ class AppStore {
     this.patch({ notice });
   }
 
-  /** 标记变更合并保存到后端（mock 下是空操作） */
+  /** 标记变更合并保存到后端（mock 下写内存日志，真后端追加 marks.jsonl） */
   private scheduleSave() {
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
-      const payload = this.state.items.map((it) => ({ id: it.id, stars: it.mark.stars, del: it.mark.del }));
+      const at = new Date().toISOString();
+      const payload = this.state.items.map((it) => ({
+        id: it.id,
+        stars: it.mark.stars,
+        del: it.mark.del,
+        at,
+        by: ME.by,
+        channel: ME.channel,
+      }));
       void source
         .saveMarks(payload)
         .catch((err: unknown) => this.flash(`保存失败：${err instanceof Error ? err.message : String(err)}`));

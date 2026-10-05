@@ -8,7 +8,7 @@ openapi: 3.1.0
 info:
   title: art-workspace API
   version: 0.1.0
-  description: 照片整理 web 应用：目录浏览、RAW+JPEG 配对、星级/待删标记、按规则归档。
+  description: 照片整理 web 应用：目录浏览、RAW+JPEG 配对、星级/待删标记、回收站；任务与外部批注通道为预留。
 servers:
   - url: /api/v1
     description: 前端经同源 /api/v1（Vite dev 代理或生产同域反向代理）
@@ -77,7 +77,8 @@ paths:
         - { name: dir, in: query, required: true, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
-        - { name: filter, in: query, schema: { type: string, enum: [all, starred, trash, unmarked], default: all } }
+        - { name: sel, in: query, schema: { type: string }, description: "选择集（谓词）的紧凑字符串形式，如 `stars>=3,marked,kind:photo`。语法与求值语义见 contracts/selection.md" }
+        - { name: filter, in: query, deprecated: true, schema: { type: string, enum: [all, starred, trash, unmarked], default: all }, description: "已弃用：等价于 sel 的四个常用简写（starred ⇔ marked；unmarked ⇔ marked:false）" }
       responses:
         "200":
           description: ok
@@ -122,6 +123,8 @@ paths:
         - `stars > 0` 与 `del = true` 互斥；同时给出时以 `del` 为准（清星）。
         - 以 **pair 为单位**：一次请求内的 RAW/JPEG 视为同一实体，一起写入。
         - `stars` 通过共享 XMP 持久化（与 Lightroom / Capture One 互通）。
+        - 每个**实际发生变化**的字段追加一条变更日志（见 `GET /marks/history`）；
+          未变化的项不写日志。日志是追加型、不回改，XMP 只留最终状态。
       requestBody:
         required: true
         content:
@@ -174,6 +177,111 @@ paths:
       responses:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/OpResult" } } } }
 
+  /marks/history:
+    get:
+      summary: 标注变更日志（最新的在前）
+      description: |
+        谁、什么时候、把哪个字段从什么改成了什么。挑片是同步的，写日志不改变手感；
+        它是把批注任务推给外部渠道（如飞书）、再把别人的批注并回来时的对账凭据。
+        后端落 `marks.jsonl`（追加型，不重写历史）。
+      parameters:
+        - { name: photoId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 1000 } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/MarkChange" } } } }
+
+  # ── 以下为**预留**端点：契约先定形状，后端实现见 docs/core-model.md ──────────
+
+  /jobs:
+    post:
+      summary: （预留，未实现）创建一个任务：选择集 + 操作 + 参数
+      description: 任务是最小可追踪单位（导出/删除/处理/推送批注）。先 `plan`，人看过再 `apply`。
+      x-implemented: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobCreateRequest" }
+      responses:
+        "201": { description: 已创建（状态为 planned 或 queued）, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+    get:
+      summary: （预留，未实现）任务列表
+      x-implemented: false
+      parameters:
+        - { name: state, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Job" } } } } } } }
+
+  /jobs/{id}:
+    get:
+      summary: （预留，未实现）任务详情（含 manifest：每个单位做了什么）
+      x-implemented: false
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /jobs/{id}/events:
+    get:
+      summary: （预留，未实现）任务进度事件流（SSE）
+      description: |
+        `text/event-stream`。支持 `Last-Event-ID` 重连补发（事件是追加日志，可重放）。
+        单用户单进程：没有消息队列，事件日志代替事件总线。
+      x-implemented: false
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: SSE 流, content: { text/event-stream: { schema: { type: string } } } }
+
+  /jobs/{id}/cancel:
+    post:
+      summary: （预留，未实现）取消任务（已完成的部分回滚或保留，由 handler 的 undo 决定）
+      x-implemented: false
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+
+  /jobs/{id}/undo:
+    post:
+      summary: （预留，未实现）撤销任务（只有 handler 声明可以撤销时才可调用）
+      x-implemented: false
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+
+  /channels:
+    get:
+      summary: （预留，未实现）已接入的批注通道（应用内、飞书、其他客户端）
+      x-implemented: false
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Channel" } } } } } } }
+
+  /channels/{id}/inbound:
+    post:
+      summary: （预留，未实现）外部批注回流入口
+      description: |
+        外部渠道（飞书回调、链接 token 的页面）把批注结果送回这里。
+        鉴权：任务签发的范围受限 token（只能写这一批的标注），不建账号体系。
+        `by` 记 `link:<别名>`；冲突以 `at` 较晚者为准，平局以服务端接收顺序为准。
+      x-implemented: false
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [items], properties: { token: { type: string }, items: { type: array, items: { $ref: "#/components/schemas/MarkInput" } } } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: "#/components/schemas/MarkResult" } } } } } } }
+
 components:
   responses:
     Error:
@@ -223,6 +331,24 @@ components:
         id: { type: string }
         stars: { type: integer, minimum: 0, maximum: 5 }
         del: { type: boolean }
+        at: { type: string, format: date-time, description: 客户端时刻；服务端以它为准写变更日志，缺省用服务端时间 }
+        by: { type: string, description: "谁改的：me | link:<别名> | ai | job:<id>" , default: me }
+        channel: { type: string, description: "从哪个渠道改的：inapp | feishu | …", default: inapp }
+
+    MarkChange:
+      type: object
+      description: 标注变更事件（追加进日志，不重写历史）
+      required: [photoId, field, by, channel, at]
+      properties:
+        photoId: { type: string }
+        displayName: { type: string }
+        field: { type: string, enum: [stars, del] }
+        from: { description: "改前（stars 为整数，del 为布尔；未知为 null）", nullable: true }
+        to: { description: 改后, nullable: true }
+        by: { type: string }
+        channel: { type: string }
+        at: { type: string, format: date-time }
+        jobId: { type: string, nullable: true, description: 由某个任务引起时填上 }
 
     MarkResult:
       type: object
@@ -236,12 +362,18 @@ components:
 
     TrashEntry:
       type: object
-      required: [id, displayName, trashedAt, originalDir]
+      required: [photoId, displayName, dir, fromDir, trashedAt]
       properties:
-        id: { type: string }
+        photoId: { type: string }
         displayName: { type: string }
-        originalDir: { type: string }
+        dir: { type: string, description: 现在在哪（产品回收站目录） }
+        fromDir: { type: string, description: 原来在哪（还原回这里） }
         trashedAt: { type: string, format: date-time }
+        kind: { type: string, enum: [photo, video] }
+        ar: { type: number }
+        stars: { type: integer }
+        hasRaw: { type: boolean }
+        hasJpeg: { type: boolean }
         sizeBytes: { type: integer }
 
     OpResult:
@@ -260,6 +392,96 @@ components:
         label: { type: string }
         photoCount: { type: integer }
         online: { type: boolean, description: false = 当前不可访问（未挂载/未插） }
+
+    Selection:
+      type: object
+      description: |
+        选择集：可序列化的谓词（不是 id 清单）。任务是「选择集 + 操作 + 参数」。
+        GET /photos 的 `sel` 查询参数是它的紧凑字符串形式，语义完全一致（见 contracts/selection.md）。
+      properties:
+        project: { type: string, description: 项目（映射的目录）；省略 = 当前目录 }
+        where:
+          type: object
+          description: 谓词：字段之间 AND
+          properties:
+            kind: { type: string, enum: [photo, video] }
+            stars:
+              type: object
+              properties:
+                gte: { type: integer, minimum: 0, maximum: 5 }
+                lte: { type: integer, minimum: 0, maximum: 5 }
+                eq: { type: integer, minimum: 0, maximum: 5 }
+            del: { type: boolean }
+            marked: { type: boolean, description: 是否打过星（stars > 0） }
+            folder: { type: string, description: 目录包含匹配，大小写不敏感 }
+            camera: { type: string, description: 机身包含匹配，大小写不敏感 }
+            taken:
+              type: object
+              properties:
+                after: { type: string, format: date }
+                before: { type: string, format: date }
+        ids: { type: array, items: { type: string }, description: 手选清单；与 where 同时存在时取交集 }
+
+    JobState:
+      type: string
+      enum: [planned, queued, running, done, failed, cancelled, interrupted]
+
+    JobItem:
+      type: object
+      description: manifest 的一行——「这个单位被怎么处理了」
+      required: [id, status]
+      properties:
+        id: { type: string, description: 照片 id 或组 id }
+        displayName: { type: string }
+        status: { type: string, enum: [planned, done, skipped, failed] }
+        from: { type: string }
+        to: { type: string }
+        note: { type: string }
+
+    Artifact:
+      type: object
+      required: [kind, path]
+      properties:
+        kind: { type: string, description: "file | dir | url | message" }
+        path: { type: string }
+        bytes: { type: integer }
+
+    Job:
+      type: object
+      required: [id, kind, state, selection, createdAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, description: "能力名：export | trash | process | annotate | …（一个 kind 一个 handler）" }
+        state: { $ref: "#/components/schemas/JobState" }
+        selection: { $ref: "#/components/schemas/Selection" }
+        params: { type: object, additionalProperties: true }
+        progress: { type: object, properties: { done: { type: integer }, total: { type: integer } } }
+        items: { type: array, items: { $ref: "#/components/schemas/JobItem" } }
+        artifacts: { type: array, items: { $ref: "#/components/schemas/Artifact" } }
+        error: { type: string, nullable: true }
+        reversible: { type: boolean, description: handler 是否声明可撤销 }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+
+    JobCreateRequest:
+      type: object
+      required: [kind, selection]
+      properties:
+        kind: { type: string }
+        selection: { $ref: "#/components/schemas/Selection" }
+        params: { type: object, additionalProperties: true }
+        mode: { type: string, enum: [plan, apply], default: plan, description: plan 只读预演；apply 真干 }
+
+    Channel:
+      type: object
+      required: [id, kind, label]
+      properties:
+        id: { type: string }
+        kind: { type: string, description: "inapp | feishu | webhook | …" }
+        label: { type: string }
+        inbound: { type: boolean, description: 是否支持批注回流 }
+        enabled: { type: boolean }
 
     Error:
       type: object

@@ -13,7 +13,10 @@
 |---|---|---|
 | `scan` | 目录遍历、照片发现、RAW+JPEG **配对** | 同目录 + stem 大小写不敏感相等 + 扩展名分类；多 RAW 取字母序最早；每次扫描重建配对（票 001） |
 | `preview` | 分层预览管线：外部 JPEG → 内嵌 JPEG 提取 → LibRaw 兜底 | 512 / 2048 两档缓存，缓存键 `path+mtime+size`；内嵌 JPEG 缺 Orientation 需回填（票 001） |
-| `marks` | 星级 / 待删的持久化 | 星级写共享 XMP（`xmpDM:good`，与 LR/C1 互通）；pair 为一等实体，成对写入（票 001） |
+| `marks` | 星级 / 待删的持久化，以及变更日志 | 星级写共享 XMP（`xmpDM:good`，与 LR/C1 互通）；pair 为一等实体，成对写入（票 001）；每个实际变化的字段追加一条 `marks.jsonl`（含 `by/at/channel/from→to`）—— 外部批注回流的对账凭据 |
+| `jobs` | 任务层：一个能力一个 handler | 契约 `validate → plan → apply → undo?`，只依赖 `core/`，handler 之间不互相 import；先预演再执行；每个任务落 manifest（做了什么）与事件日志（`jobs.jsonl`）；执行队列不持久化，重启把 `running` 标 `interrupted` |
+| `channels` | 批注通道（应用内 / 飞书 / 其他客户端） | 入方向走 `/channels/{id}/inbound`；v1 不建账号体系，用范围受限的链接 token，回流记 `by: 'link:<别名>'` |
+| `storage` | 状态与日志的落盘位置 | 索引/缓存可重建；事件日志与 manifest 不可重建，必须追加写（见 `docs/core-model.md` 不变量 6） |
 | `trash` | 逻辑删除区（产品回收站） | 删除 = 移入产品回收站，可恢复；pair 成对进出（票 001 + 用户决策）；`dir/.trash` 下的文件**不参与扫描配对** |
 | `roots` | 根目录列表与在线检测 | 多根（本地盘/挂载点）；`online=false` 表示当前不可访问，前端只灰显不报错（票 004） |
 | `auth` | 单用户认证与会话 | 家用 + Tailscale 场景下的最简方案（票 005） |
@@ -23,17 +26,36 @@
 
 前端已完成（`web/`），它按 `contracts/openapi.yaml` 调用以下端点；后端照此实现即可跑起来：
 
-`GET /health`、`POST|DELETE /session`、`GET /roots`、`GET /folders`、`GET /photos`、`GET /photos/{id}/thumb|file`、`PUT /marks`、`GET|POST|DELETE /trash`、`POST /trash/restore`。
+`GET /health`、`POST|DELETE /session`、`GET /roots`、`GET /folders`、`GET /photos`（选择集用 `?sel=`，语法见 `contracts/selection.md`）、`GET /photos/{id}/thumb|file`、`PUT /marks`、`GET /marks/history`、`GET|POST|DELETE /trash`、`POST /trash/restore`。
+
+`/jobs`、`/jobs/{id}/events|cancel|undo`、`/channels`、`/channels/{id}/inbound` 已在契约里**预留形状**（`x-implemented: false`），但前端暂不调用 —— 它们属于第一个异步能力（导出）落地时的事。
+
+## 任务层的接缝（实现第一个异步能力时照这个来）
+
+```ts
+// 每个能力一个文件：server/src/jobs/export.ts、trash.ts、process.ts、annotate.ts…
+interface JobHandler<P> {
+  kind: string;                                   // 'export' | 'trash' | 'process' | 'annotate'
+  validate(params: P, ctx: Core): void;           // 参数不对就在创建任务前就报错
+  plan(selection: Selection, params: P, ctx: Core): Promise<Plan>;   // 只读预演，产出 manifest 预览 + 体积/目录数
+  apply(plan: Plan, ctx: Core, report: Progress): Promise<Manifest>; // 真干，逐单位记 manifest
+  undo?(manifest: Manifest, ctx: Core): Promise<void>;               // 可选，声明了才是可撤销任务
+}
+```
+
+handler 只依赖 `core/`（扫描、配对、XMP、路径、选择集求值），不 import 其它 handler；
+新增能力 = 新增一个 kind，`httpapi` 与前端零改动。第一个落地的是 **导出**（只写新位置，不碰原片）。
 
 三条后端必须自己保证的语义（前端已按此编写，且 mock 实现里可见）：
 
-1. `PUT /marks`：`stars > 0` 与 `del = true` 互斥，同时给出时以 `del` 为准；按 pair 写入共享 XMP。
+1. `PUT /marks`：`stars > 0` 与 `del = true` 互斥，同时给出时以 `del` 为准；按 pair 写入共享 XMP；每个实际变化的字段追加一条变更日志（`GET /marks/history` 读它）。
 2. `POST /trash` 只是移入产品回收站（可还原）；`DELETE /trash?confirm=true` 是**唯一**删磁盘文件的入口，`ids` 为空 = 清空回收站。
 3. 应用不导入、不导出、不搬动照片：除了写星标与回收站操作，**不碰原文件**。
+4. `GET /photos?sel=` 的谓词求值语义见 `contracts/selection.md`（前端 `matchesSelection` 是参考实现）。
 
 ## 不变式
 
 1. **磁盘是真相**：不建媒体库、不复制导入；数据库（若有）只是索引/缓存，永远可重建。
 2. **成对原子**：RAW+JPEG 配对在打标、删除上永远一起行动。
-3. **只有两处写磁盘**：星标/待删（XMP）与回收站（移入 `.trash` / 还原 / 真删）。
+3. **只有两处写磁盘**：星标/待删（XMP）与回收站（移入 `.trash` / 还原 / 真删）；变更日志与任务 manifest 是**追加写**的新文件，不改动已有内容。
 4. **可重建**：预览缓存与索引删除后，重扫即可恢复。

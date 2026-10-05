@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { GalleryVerticalEnd, LayoutGrid } from 'lucide-react';
 import { store, useAppState } from '@/core/store';
+import { selectionFromQuery } from '@/core/selection';
 import type { View } from '@/core/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toaster } from '@/components/ui/sonner';
@@ -18,11 +19,11 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
 export function App() {
   const { dir, view, mode, notice, error } = useAppState();
 
-  // 首次进入：载入当前目录 + 根目录树；支持 ?mode=a|c 与 ?view= 深链（截图与分享都靠它）
+  // 首次进入：载入当前目录 + 根目录树；支持 ?mode=a|c、?view= 与 ?sel= 深链（截图与分享都靠它）
   useEffect(() => {
-    void store.open(dir);
-    void store.loadRoots();
     const params = new URLSearchParams(window.location.search);
+    void store.open(dir, selectionFromQuery(params.get('sel')));
+    void store.loadRoots();
     const wantedMode = params.get('mode');
     if (wantedMode === 'a' || wantedMode === 'c') store.setMode(wantedMode);
     const wantedView = params.get('view') as View | null;

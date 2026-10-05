@@ -1,4 +1,4 @@
-import { Check, Cloud, HardDrive, Server, TriangleAlert } from 'lucide-react';
+import { Check, Cloud, HardDrive, ListChecks, Server, TriangleAlert } from 'lucide-react';
 import { source } from '@/api';
 import { store, useAppState } from '@/core/store';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator';
  * 前端只显示现状 + 能做的动作。
  */
 export function SettingsPage() {
-  const { roots, dir } = useAppState();
+  const { roots, dir, history, busy } = useAppState();
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
@@ -82,6 +82,41 @@ export function SettingsPage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm">
+            <ListChecks className="size-4 text-muted-foreground" />
+            标注变更
+          </CardTitle>
+          <CardDescription className="text-xs">
+            每次改动都记下「谁、什么时候、把哪个字段从什么改成了什么」。挑片是同步的，这不会影响手感；
+            它是后续把批注任务推给飞书等渠道、再把别人的批注并回来时的对账凭据（契约：GET /marks/history）。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-1 text-xs">
+          {history.length === 0 && (
+            <div className="text-muted-foreground">{busy ? '读取中…' : '还没有变更记录。'}</div>
+          )}
+          {history.slice(0, 10).map((c, i) => (
+            <div key={`${c.photoId}-${c.field}-${c.at}-${i}`} className="flex items-center gap-2">
+              <span className="w-16 shrink-0 tabular-nums text-muted-foreground">{c.at.slice(11, 19)}</span>
+              <span className="truncate font-mono">{c.displayName ?? c.photoId}</span>
+              <span className="shrink-0 text-muted-foreground">{c.field === 'stars' ? '星' : '待删'}</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {c.field === 'stars' ? c.from : c.from ? '是' : '否'} →{' '}
+                {c.field === 'stars' ? c.to : c.to ? '是' : '否'}
+              </span>
+              <span className="ml-auto shrink-0 text-muted-foreground/70">
+                {c.by} · {c.channel}
+              </span>
+            </div>
+          ))}
+          {history.length > 10 && (
+            <div className="pt-1 text-[11px] text-muted-foreground/70">只显示最近 10 条（共 {history.length} 条）。</div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Cloud className="size-4 text-muted-foreground" />
             访问与部署
           </CardTitle>
@@ -95,6 +130,9 @@ export function SettingsPage() {
             </Button>
             <Button size="sm" variant="outline" onClick={() => void store.loadTrash()}>
               刷新回收站
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void store.loadMarkHistory()}>
+              刷新标注变更
             </Button>
           </div>
         </CardContent>

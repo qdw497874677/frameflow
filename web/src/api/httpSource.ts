@@ -1,5 +1,6 @@
 import type {
   FolderListingDto,
+  MarkChangeDto,
   MarkInputDto,
   MarkResultDto,
   OpResultDto,
@@ -8,10 +9,12 @@ import type {
   RootDto,
   TrashEntryDto,
 } from './contract';
-import type { ListPhotosOptions, PhotoPage, PhotoSource } from './source';
+import type { ListPhotosOptions, MarkHistoryOptions, PhotoPage, PhotoSource } from './source';
+import { selectionToQuery } from '../core/selection';
 import type {
   Folder,
   FolderListing,
+  MarkChange,
   MarkInput,
   MarkResult,
   OpResult,
@@ -59,7 +62,24 @@ export function toMarkInput(input: MarkInput): MarkInputDto {
   const dto: MarkInputDto = { id: input.id };
   if (input.stars !== undefined) dto.stars = input.stars;
   if (input.del !== undefined) dto.del = input.del;
+  if (input.at !== undefined) dto.at = input.at;
+  if (input.by !== undefined) dto.by = input.by;
+  if (input.channel !== undefined) dto.channel = input.channel;
   return dto;
+}
+
+export function toMarkChange(dto: MarkChangeDto): MarkChange {
+  return {
+    photoId: dto.photoId,
+    displayName: dto.displayName,
+    field: dto.field,
+    from: dto.from ?? null,
+    to: dto.to ?? null,
+    by: dto.by,
+    channel: dto.channel,
+    at: dto.at,
+    jobId: dto.jobId ?? null,
+  };
 }
 
 export function toRoot(dto: RootDto): Root {
@@ -125,7 +145,8 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
 
     async listPhotos(opts: ListPhotosOptions): Promise<PhotoPage> {
       const params = new URLSearchParams({ dir: opts.dir });
-      if (opts.filter) params.set('filter', opts.filter);
+      const sel = opts.selection ? selectionToQuery(opts.selection) : '';
+      if (sel) params.set('sel', sel);
       if (opts.cursor) params.set('cursor', opts.cursor);
       if (opts.limit) params.set('limit', String(opts.limit));
       const page = await request<PhotoPageDto>(base, `/photos?${params.toString()}`);
@@ -140,6 +161,15 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
       const body = JSON.stringify({ items: items.map(toMarkInput) });
       const res = await request<{ results: MarkResultDto[] }>(base, '/marks', { method: 'PUT', body });
       return res.results.map((r) => ({ id: r.id, ok: r.ok, error: r.error ?? null }));
+    },
+
+    async listMarkHistory(opts?: MarkHistoryOptions): Promise<MarkChange[]> {
+      const params = new URLSearchParams();
+      if (opts?.photoId) params.set('photoId', opts.photoId);
+      if (opts?.limit) params.set('limit', String(opts.limit));
+      const q = params.toString();
+      const res = await request<{ items: MarkChangeDto[] }>(base, `/marks/history${q ? `?${q}` : ''}`);
+      return res.items.map(toMarkChange);
     },
 
     async moveToTrash(ids: string[]): Promise<OpResult> {

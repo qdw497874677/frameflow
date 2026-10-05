@@ -1,17 +1,30 @@
 import type {
   FolderListing,
+  MarkChange,
   MarkInput,
   MarkResult,
   OpResult,
   Photo,
   Root,
+  Selection,
   TrashEntry,
 } from '../core/types';
 
 export interface ListPhotosOptions {
   dir: string;
-  filter?: 'all' | 'starred' | 'trash' | 'unmarked';
+  /**
+   * 选择集（谓词）。省略 = 该目录的全部照片。
+   * 以前这里是一个枚举 filter（all/starred/trash/unmarked）—— 枚举长不大，
+   * 换个条件就要改端口；谓词可以直接进 URL、存进任务里。
+   */
+  selection?: Selection;
   cursor?: string;
+  limit?: number;
+}
+
+export interface MarkHistoryOptions {
+  /** 只要这一张的变更 */
+  photoId?: string;
   limit?: number;
 }
 
@@ -36,6 +49,8 @@ export interface PhotoSource {
   /** 缩略图 URL：mock 返回 data URL；http 返回后端 URL */
   thumbUrl(photoId: string, size: 512 | 2048): string;
   saveMarks(items: MarkInput[]): Promise<MarkResult[]>;
+  /** 标注变更日志（最新的在前）：谁、什么时候、把哪个字段从什么改成了什么 */
+  listMarkHistory(opts?: MarkHistoryOptions): Promise<MarkChange[]>;
   moveToTrash(ids: string[]): Promise<OpResult>;
   restore(ids: string[]): Promise<OpResult>;
   /** 回收站里现在有什么 */
