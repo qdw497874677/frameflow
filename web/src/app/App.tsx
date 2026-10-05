@@ -7,22 +7,21 @@ import { Button } from '@/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
-import { Deck } from '@/features/cull/Deck';
-import { Grid } from '@/features/browse/Grid';
+import { Stage } from './Stage';
 
 /**
  * 应用外壳：顶栏（这一批的账 + 撤销/重置）、中间舞台、底栏（模式切换）。
  * 模式 A 一次一张专注挑，模式 C 批量扫；两边打的是同一份标记。
  */
 export function App() {
-  const { dir, items, mode, notice, error, loading, canUndo } = useAppState();
+  const { dir, items, mode, notice, error, canUndo } = useAppState();
   const c = counts(items);
 
-  // 首次进入：支持 ?mode=c 深链（截图与分享都靠它）
+  // 首次进入：加载根目录 + 支持 ?mode=c 深链（截图与分享都靠它）
   useEffect(() => {
+    void store.open(dir);
     const wanted = new URLSearchParams(window.location.search).get('mode');
     if (wanted === 'a' || wanted === 'c') store.setMode(wanted);
-    void store.open(dir);
     // 只跑一次：目录切换由 open() 显式触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -31,12 +30,12 @@ export function App() {
     if (error) toast.error(error);
   }, [error]);
 
-  // Shift + ←/→ 换模式（和原型一致的手感）
+  // Shift + ←/→ 变焦（和原型一致的手感）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.shiftKey) return;
-      if (e.key === 'ArrowRight') store.setMode('c');
-      else if (e.key === 'ArrowLeft') store.setMode('a');
+      if (e.key === 'ArrowRight') store.zoomTo('c');
+      else if (e.key === 'ArrowLeft') store.zoomTo('a');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -91,21 +90,15 @@ export function App() {
       </header>
 
       <main className="relative min-h-0 overflow-hidden">
-        {loading ? (
-          <div className="grid h-full place-items-center text-sm text-muted-foreground">正在读取照片…</div>
-        ) : mode === 'a' ? (
-          <Deck />
-        ) : (
-          <Grid />
-        )}
+        <Stage />
       </main>
 
       <footer className="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 pb-[calc(env(safe-area-inset-bottom)+0.375rem)]">
-        <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">Shift + ←/→ 切模式</span>
+        <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">Shift + ←/→ 变焦</span>
         <ToggleGroup
           type="single"
           value={mode}
-          onValueChange={(v) => v && store.setMode(v as 'a' | 'c')}
+          onValueChange={(v) => v && store.zoomTo(v as 'a' | 'c')}
           variant="outline"
           size="sm"
           className="mx-auto"

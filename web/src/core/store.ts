@@ -19,6 +19,29 @@ export interface UndoEntry {
   dir: -1 | 0 | 1;
 }
 
+/** 视口坐标里的一个矩形（量一次、拿去过动画） */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 变焦途中那张「飞着的照片」：从哪起飞、往哪个方向变 */
+export interface Flight {
+  id: string;
+  from: Rect;
+  /** 1 = 拉远去网格，-1 = 推近回卡片流 */
+  dir: 1 | -1;
+}
+
+function rectOf(el: Element | null): Rect | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return null;
+  return { x: r.x, y: r.y, w: r.width, h: r.height };
+}
+
 export interface AppState {
   dir: string;
   listing: FolderListing | null;
@@ -34,6 +57,11 @@ export interface AppState {
   entryDir: -1 | 0 | 1;
   entryToken: number;
   canUndo: boolean;
+  /** 变焦去网格时，希望哪一张落在视野中央（同 centerToken 一起构成一次性信号） */
+  centerId: string | null;
+  centerToken: number;
+  /** 正在变焦的「飞卡」；空表示没有变焦在进行 */
+  flight: Flight | null;
 }
 
 const INITIAL: AppState = {
@@ -48,6 +76,9 @@ const INITIAL: AppState = {
   entryDir: 0,
   entryToken: 0,
   canUndo: false,
+  centerId: null,
+  centerToken: 0,
+  flight: null,
 };
 
 type Listener = () => void;
@@ -89,6 +120,51 @@ class AppStore {
   setMode(mode: ViewMode) {
     if (mode === this.state.mode) return;
     this.patch({ mode });
+  }
+
+  /**
+   * 变焦：一个看 ⇄ 批量扫。两边是同一份数据、同一套标记，所以切换应该是「镜头拉远/推近」
+   * 而不是换一页。做法：把一个浮在最上层的「飞卡」从当前卡片的矩形，连续补间到目标格子的
+   * 矩形（同时两层各自淡入淡出），落地后由目标那一层接手 —— 全程只有一张照片在动。
+   */
+  zoomTo(mode: ViewMode) {
+    if (mode === this.state.mode) return;
+    const it = this.current();
+
+    if (mode === 'c') {
+      // 网格一直挂在后台，所以先让它滚到落点（不能居中的情况就滚到能滚的位置），
+      // 下一帧量卡片位置再起飞：落点在起飞前就是已知的
+      this.patch({ centerId: it?.id ?? null, centerToken: this.state.centerToken + 1 });
+      const fly = () => {
+        const from = rectOf(document.querySelector('[data-deck-card]'));
+        this.patch({ flight: it && from ? { id: it.id, from, dir: 1 } : null, mode: 'c' });
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fly);
+      else fly();
+      return;
+    }
+
+    // 回卡片流：起点是刚刚点的那一格，终点（卡片）要等切完之后才知道，由 FlightOverlay 量
+    const from = it ? rectOf(document.querySelector(`[data-photo="${CSS.escape(it.id)}"]`)) : null;
+    this.patch({ mode: 'a', flight: it && from ? { id: it.id, from, dir: -1 } : null });
+  }
+
+  /** 飞卡落地：交给目标那一层显示 */
+  endFlight() {
+    if (this.state.flight) this.patch({ flight: null });
+  }
+
+  /** 网格里点某张 = 镜头推近到它 */
+  focusAt(index: number) {
+    const it = this.state.items[index];
+    if (!it) return;
+    const from = rectOf(document.querySelector(`[data-photo="${CSS.escape(it.id)}"]`));
+    this.patch({
+      cursor: index,
+      mode: 'a',
+      entryDir: 0,
+      flight: from ? { id: it.id, from, dir: -1 } : null,
+    });
   }
 
   /* ── 打标（星级与待删互斥） ─────────────────────────── */

@@ -64,22 +64,23 @@ function UnderCard({
 }
 
 export function Deck() {
-  const { items, cursor, entryDir, entryToken, mode, canUndo } = useAppState();
-  const stageRef = useRef<HTMLDivElement>(null);
+  const { items, cursor, entryDir, entryToken, mode, canUndo, flight } = useAppState();
+  const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState({ w: 0, h: 0 });
   const zoomApi = useRef<ZoomApi | null>(null);
 
+  // 用 callback ref 而不是 useRef + []：加载中这一块是不渲染的（空态），
+  // 一次性的 effect 会在那时拿到 null 就再也不量了 —— 舞台尺寸会永远停在 0。
   useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
+    if (!stageEl) return;
     const ro = new ResizeObserver((entries) => {
       const r = entries[0]?.contentRect;
       if (r) setStage({ w: r.width, h: r.height });
     });
-    ro.observe(el);
+    ro.observe(stageEl);
     return () => ro.disconnect();
-  }, []);
+  }, [stageEl]);
 
   const top = items[cursor];
   const next1 = items[cursor + 1];
@@ -173,7 +174,7 @@ export function Deck() {
 
   return (
     <div className="flex h-full flex-col">
-      <div ref={stageRef} className="relative min-h-0 flex-1">
+      <div ref={setStageEl} className="relative min-h-0 flex-1">
         <div className="absolute inset-0" style={{ perspective: 1100, perspectiveOrigin: '50% 45%' }}>
           <div className="absolute inset-0 grid place-items-center" style={{ transformStyle: 'preserve-3d' }}>
             {next2 && <UnderCard photo={next2} frame={underFrame(next2)} depth={2} progress={progress} />}
@@ -188,7 +189,9 @@ export function Deck() {
               <motion.div
                 key={top.id}
                 ref={cardRef}
+                data-deck-card
                 className="size-full"
+                style={{ opacity: flight?.id === top.id ? 0 : 1 }}
                 initial={{ scale: 0.965, filter: 'brightness(0.55) saturate(0.95)' }}
                 animate={{ scale: 1, filter: 'brightness(1) saturate(1)' }}
                 transition={{ duration: 0.32, ease: [0.2, 0.8, 0.3, 1] }}
