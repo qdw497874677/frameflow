@@ -24,6 +24,8 @@ interface AuthInfo {
 }
 
 const authInfo = new WeakMap<FastifyRequest, AuthInfo>();
+/** 这一次请求带了有效凭据吗（`/health` 要用它回答「我登进去了吗」） */
+const authed = new WeakSet<FastifyRequest>();
 
 function infoOf(req: FastifyRequest): AuthInfo {
   return authInfo.get(req) ?? { via: 'disabled' };
@@ -53,18 +55,25 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
       photoId: thumbMatch ? decodeURIComponent(thumbMatch[1] ?? '') : undefined,
     });
     authInfo.set(req, who ?? { via: 'disabled' });
+    if (who) authed.add(req);
     if (!auth.enabled) return; // 免认证：一律放行，但来源已经认过了
+    // 静态前端（'/'、/assets/*、index.html 回落）不受认证门保护：应用壳里没有数据，
+    // 数据全在 /api/ 后面。把壳也锁上的话，浏览器连登录页都拿不到（只能看到 401 的 JSON）。
+    if (!path.startsWith('/api/')) return;
     if (path === '/api/v1/health' || path === '/api/v1/session') return;
     if (who) return;
     return reply.code(401).send({ error: '未认证：先 POST /api/v1/session，或带 Bearer token' });
   });
 
   // ── 关于服务本身 ───────────────────────────────────────────────────────
-  app.get('/api/v1/health', async () => ({
+  app.get('/api/v1/health', async (req) => ({
     ok: true,
     version: VERSION,
     roots: cfg.roots.map((r) => r.id),
     authRequired: auth.enabled,
+    // 「后端要不要密码」与「你这次带没带有效凭据」是两件事：前端靠前者决定显不显示登录页，
+    // 靠后者判断刚登完的这次/session 有没有真的生效（少了它会把登录成功后的人又踢回登录页）。
+    authenticated: !auth.enabled || authed.has(req),
   }));
 
   app.get('/api/v1/capabilities', async () => ({

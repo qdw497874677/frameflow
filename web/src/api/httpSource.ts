@@ -10,6 +10,7 @@ import type {
   TrashEntryDto,
 } from './contract';
 import type { ListPhotosOptions, MarkHistoryOptions, PhotoPage, PhotoSource } from './source';
+import { AuthRequiredError } from './source';
 import { selectionToQuery } from '../core/selection';
 import type {
   Folder,
@@ -114,6 +115,7 @@ async function request<T>(base: string, path: string, init?: RequestInit): Promi
     headers: init?.body ? { 'content-type': 'application/json' } : undefined,
     ...init,
   });
+  if (res.status === 401) throw new AuthRequiredError();
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {
@@ -196,6 +198,42 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
         body: JSON.stringify({ ids: ids ?? [] }),
       });
       return { ok: res.ok, failed: res.failed };
+    },
+
+    async authStatus() {
+      const res = await request<{ authRequired?: boolean; authenticated?: boolean }>(base, '/health');
+      const required = Boolean(res.authRequired);
+      // 旧后端没有 authenticated 字段：免认证时视为已登录，开着认证时保守视为未登录
+      const authed = res.authenticated ?? !required;
+      return { required, authed };
+    },
+
+    async login(password: string) {
+      // 不走 request()：那里的 401 会被换成 AuthRequiredError（"需要登录"），
+      // 而这里要的是服务端说的真原因（"密码不对"），否则用户看不出密码错在哪。
+      const res = await fetch(`${base}/session`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (res.status === 204 || res.ok) return;
+      let message = res.status === 401 ? '密码不对' : `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string; message?: string };
+        message = body.message ?? body.error ?? message;
+      } catch {
+        /* 非 JSON 错误体，保留默认文案 */
+      }
+      throw new Error(message);
+    },
+
+    async logout() {
+      try {
+        await request<void>(base, '/session', { method: 'DELETE' });
+      } catch {
+        /* 后端没开认证时 DELETE /session 也可能返回 401/404：登出不该因此报错 */
+      }
     },
   };
 }

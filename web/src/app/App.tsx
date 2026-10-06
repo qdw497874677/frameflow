@@ -8,6 +8,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar, NAV } from './AppSidebar';
 import { Stage } from './Stage';
+import { LoginScreen } from '@/features/auth/LoginScreen';
 import { TrashPage } from '@/features/trash/TrashPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 
@@ -16,7 +17,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
  * 挑片页保留自己的顶栏（这一批的账 + 撤销/重置）和底栏（一个看 ⇄ 批量扫 的变焦切换）。
  */
 export function App() {
-  const { dir, view, mode, notice, error } = useAppState();
+  const { dir, view, mode, notice, error, auth } = useAppState();
 
   // 首次进入：载入根目录并落到第一个有照片的目录；支持 ?dir=/?mode=a|c、?view= 与 ?sel= 深链（截图与分享都靠它）
   useEffect(() => {
@@ -46,6 +47,16 @@ export function App() {
   }, [view]);
 
   const title = NAV.find((n) => n.id === view)?.label ?? '';
+
+  // 后端要密码而还没登：只有一道门，别的什么都不渲染
+  if (auth === 'required') {
+    return (
+      <>
+        <LoginScreen />
+        <Toaster theme="dark" position="top-center" />
+      </>
+    );
+  }
 
   return (
     <SidebarProvider>

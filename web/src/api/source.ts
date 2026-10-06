@@ -35,6 +35,17 @@ export interface PhotoPage {
 }
 
 /**
+ * 后端说要登录（HTTP 401）。界面据此弹登录页，而不是把人扔进一个空舞台。
+ * 单独一个类型而不是普通 Error：调用方要能区分「没登录」与「出错」。
+ */
+export class AuthRequiredError extends Error {
+  constructor(message = '需要登录') {
+    super(message);
+    this.name = 'AuthRequiredError';
+  }
+}
+
+/**
  * 数据访问端口（port）。UI 只依赖这个接口：
  *  - httpSource：真实后端（contracts/openapi.yaml）
  *  - mockSource：浏览器内假数据（无需后端即可开发交互）
@@ -57,4 +68,9 @@ export interface PhotoSource {
   listTrash(): Promise<TrashEntry[]>;
   /** 真删：传 ids 只删这些，不传 = 清空；后端会带 confirm 参数 */
   emptyTrash(ids?: string[]): Promise<OpResult>;
+  /** 登录状态（`/health`）：后端要不要密码 + 这次请求有没有带有效凭据；mock 恒 `{required:false, authed:true}` */
+  authStatus(): Promise<{ required: boolean; authed: boolean }>;
+  /** 密码换会话 cookie（单用户）；密码不对时抛错 */
+  login(password: string): Promise<void>;
+  logout(): Promise<void>;
 }

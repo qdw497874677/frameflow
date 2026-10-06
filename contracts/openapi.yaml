@@ -374,6 +374,14 @@ components:
         ok: { type: boolean }
         version: { type: string }
         roots: { type: array, items: { type: string }, description: 已配置的可浏览根目录 }
+        authRequired:
+          type: boolean
+          description: 后端是否启用了密码（`password` 非空）；前端据此决定要不要显示登录页
+        authenticated:
+          type: boolean
+          description: |
+            本次请求是否带了有效凭据（session cookie / bearer / 链接 token）。
+            与 `authRequired` 分开：只看前者的话，刚登录成功的人再探一次就会被踢回登录页。
 
     Photo:
       type: object

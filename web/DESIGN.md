@@ -84,9 +84,18 @@ v1 曾有一整套「归档规则引擎」：条件匹配 + `{root}/{project}/{d
 求值语义前后端一致（规范 `contracts/selection.md`，前端参考实现 `web/src/core/selection.ts`）。
 端口上它取代了原来的枚举 `filter`（`all|starred|trash|unmarked`）—— 枚举长不大，加个条件就要改端口。
 
+## 登录门（单用户）
+
+后端 `password` 留空 = 不启用认证，前端直接进（本地开发的默认）。填了密码：前端 boot 时问 `GET /health`，得到两个独立的答案 ——
+`authRequired`（后端要不要密码）与 `authenticated`（**这次请求带没带有效凭据**）。只有「要密码且没带凭据」才显示登录页。
+
+两者必须分开：只问「要不要密码」的话，刚登录成功、接着又跑一次 boot 的人会因为那次探测没带 cookie 被踢回登录页（这是端到端测试跑出来的真 bug）。静态壳（`/`、`/assets/*`）不受认证门保护 —— 锁上的话浏览器连登录页都拿不到，只会看到 401 的 JSON；数据全在 `/api/` 后面。
+
+密码换一个签名 cookie（30 天）；AI/CLI 用 `POST /api-tokens` 签发的 Bearer，外部批注者用 `?t=` 自认证链接 token（见 `docs/core-model.md` §11）。
+
 ## 尚未实现（明确留白）
 
-- 真实后端（`server/` 未实现；前端默认 mock）。
+- 真实后端：`server/` 已有可跑的骨架（扫描/配对/缩略图/标注/回收站），`web` 用 `VITE_API_BASE=/api/v1` 构建后由同一个进程托管；仍未做：任务层、通道、AI 执行者（见下）。
 - 根目录的**写入** API（设置页现在只读列表）。
 - 导出（把挑好的照片交到别的目录 / 别的工具）与外部批注推送（见 wayfinder 的 Not yet specified）；大批量列表的虚拟滚动与性能预算。
 - 任务层：契约里已写好 `/jobs`、`/channels` 的形状（`x-implemented: false`），前端暂无任务页 —— 第一个落地的异步能力是导出。选择集已在 URL 里可表达，但还没有筛选控件去改它。

@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator';
  * 前端只显示现状 + 能做的动作。
  */
 export function SettingsPage() {
-  const { roots, dir, history, busy } = useAppState();
+  const { roots, dir, history, busy, authEnabled } = useAppState();
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
@@ -23,7 +23,7 @@ export function SettingsPage() {
             根目录
           </CardTitle>
           <CardDescription className="text-xs">
-            文件夹就是真相：这些是磁盘上被管理的入口，不做导入、不改结构（除非你按下归档）。
+            文件夹就是真相：这些是磁盘上被管理的入口，不做导入、不改目录结构 —— 应用只写标记。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-xs">
@@ -137,6 +137,25 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {authEnabled && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Server className="size-4 text-muted-foreground" />
+              会话
+            </CardTitle>
+            <CardDescription className="text-xs">
+              密码在后端配置里；退出后回到登录页（换设备时先退一次）。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button size="sm" variant="outline" onClick={() => void store.logout()}>
+              退出登录
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { source } from '../api';
+import { AuthRequiredError } from '../api/source';
 import { selectionToQuery } from './selection';
 import {
   EMPTY_SELECTION,
@@ -67,6 +68,13 @@ export interface AppState {
   mode: ViewMode;
   /** 当前在哪个页面（侧边栏的一项） */
   view: View;
+  /**
+   * 认证状态。后端开了密码时，没登录的人看到的是登录页而不是空舞台。
+   * checking = 还没问过后端；ok = 可以用。
+   */
+  auth: 'checking' | 'ok' | 'required';
+  /** 后端是否开着认证（设置页据此显示「退出登录」） */
+  authEnabled: boolean;
   /** 可管理的根目录 */
   roots: Root[];
   /** 侧边栏目录树：path → 它的子目录（懒加载） */
@@ -106,6 +114,8 @@ const INITIAL: AppState = {
   cursor: 0,
   mode: 'a',
   view: 'cull',
+  auth: 'checking',
+  authEnabled: false,
   roots: [],
   tree: {},
   expanded: { '/photos': true },
@@ -179,6 +189,41 @@ class AppStore {
     if (view === 'settings') void this.loadMarkHistory();
   }
 
+  /* ── 认证（单用户密码） ─────────────────────────────── */
+
+  /**
+   * 问一次后端要不要登录。问不出来（旧后端 / 网络拖一下）就不挡人 ——
+   * 真需要鉴权时，后续请求的 401 会再把状态推回 required。
+   */
+  async checkAuth(): Promise<boolean> {
+    try {
+      const { required, authed } = await source.authStatus();
+      this.patch({ authEnabled: required });
+      // 「要不要密码」与「我们现在有没有会话」是两件事：
+      // 只看 required 的话，刚登完的人再 boot 一次，会被当前那次未带凭据的探测结果翻回登录页。
+      if (!required || authed) {
+        this.patch({ auth: 'ok' });
+        return true;
+      }
+      return false;
+    } catch {
+      this.patch({ authEnabled: false });
+      return true;
+    }
+  }
+
+  /** 登录：密码不对时抛错（调用方显示在表单里） */
+  async login(password: string) {
+    await source.login(password);
+    this.patch({ auth: 'ok', error: null });
+    await this.boot(this.state.dir || undefined);
+  }
+
+  async logout() {
+    await source.logout();
+    this.patch({ auth: 'required', items: [], trash: [], pendingTrash: [], history: [], error: null });
+  }
+
   /* ── 选择集（谓词） ─────────────────────────────────── */
 
   /**
@@ -247,17 +292,26 @@ class AppStore {
    * 打开根就是一个空舞台（挑片页会显示「这一批挑完了」，让人以为库是空的）。
    */
   async boot(preferredDir?: string) {
-    await this.loadRoots();
-    const roots = this.state.roots;
-    const start = preferredDir ?? roots.find((r) => r.online)?.path ?? roots[0]?.path ?? '';
-    if (!start) {
-      this.patch({ loading: false, error: '没有可用的照片库：先在 artworks.config.yaml 里加一个 roots' });
+    if (!(await this.checkAuth())) {
+      this.patch({ auth: 'required' });
       return;
     }
-    const target = preferredDir ?? (await this.firstDirWithPhotos(start)) ?? start;
-    await this.revealPath(target);
-    this.patch({ view: 'cull' });
-    await this.open(target);
+    try {
+      await this.loadRoots();
+      const roots = this.state.roots;
+      const start = preferredDir ?? roots.find((r) => r.online)?.path ?? roots[0]?.path ?? '';
+      if (!start) {
+        this.patch({ loading: false, error: '没有可用的照片库：先在 artworks.config.yaml 里加一个 roots' });
+        return;
+      }
+      const target = preferredDir ?? (await this.firstDirWithPhotos(start)) ?? start;
+      await this.revealPath(target);
+      this.patch({ view: 'cull' });
+      await this.open(target);
+    } catch (err) {
+      if (err instanceof AuthRequiredError) this.patch({ auth: 'required' });
+      else this.patch({ error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /** 从 path 往下找第一个有照片的目录（深海了就算了，怕库大跑到天荒地老） */

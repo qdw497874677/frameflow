@@ -252,5 +252,12 @@ export function createMockSource(): PhotoSource {
       });
       return { ok: n, failed: [] };
     },
+
+    // mock 没有认证：开发时不必登录
+    async authStatus() {
+      return { required: false, authed: true };
+    },
+    async login() {},
+    async logout() {},
   };
 }
