@@ -18,7 +18,7 @@
 | `jobs` | 任务层：一个能力一个 handler | 契约 `validate → plan → apply → undo?`，只依赖 `core/`，handler 之间不互相 import；先预演再执行；每个任务落 manifest（做了什么）与事件日志（`jobs.jsonl`）；执行队列不持久化，重启把 `running` 标 `interrupted` |
 | `channels` | 批注通道（应用内 / 飞书 / 其他客户端） | 入方向走 `/channels/{id}/inbound`；v1 不建账号体系，用范围受限的链接 token，回流记 `by: 'link:<别名>'` |
 | `storage` | 状态与日志的落盘位置 | 索引/缓存可重建；事件日志与 manifest 不可重建，必须追加写（见 `docs/core-model.md` 不变量 6） |
-| `trash` | 逻辑删除区（产品回收站） | 删除 = 移入产品回收站，可恢复；pair 成对进出（票 001 + 用户决策）；`dir/.trash` 下的文件**不参与扫描配对** |
+| `trash` | 逻辑删除区（产品回收站）—— 已实现 | 删除 = 移入产品回收站，可恢复；pair（含 `.xmp` 侧车）成对进出（票 001 + 用户决策）；搬走时**顺手把标记清掉**（`channel:'trash'`），否则还原后会带着「待删」回来，而挑片默认隐藏待删 —— 照片就像消失了；落地在 `<照片目录>/.trash/<显示名>/`，记录与日志在 `dataDir/trash.jsonl`（`{op:'in'|'out'}` 追加写，重启后按它重建回收站索引）；`dir/.trash` 下的文件**不参与扫描配对**；还原时同名文件排号（`名字 (2)`），绝不覆盖 |
 | `roots` | 根目录列表与在线检测 | 多根（本地盘/挂载点）；`online=false` 表示当前不可访问，前端只灰显不报错（票 004） |
 | `auth` | 单用户认证与会话 | 家用 + Tailscale 场景下的最简方案（票 005） |
 | `httpapi` | HTTP 层：路由、序列化、错误码 | 严格实现 `contracts/openapi.yaml`；不含业务逻辑，只做编解码与调用 |

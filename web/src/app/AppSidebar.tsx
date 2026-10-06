@@ -29,8 +29,9 @@ export const NAV: { id: View; label: string; icon: typeof Images }[] = [
 ];
 
 export function AppSidebar() {
-  const { view, items, trash, roots, canUndo } = useAppState();
+  const { view, items, trash, pendingTrash, roots, canUndo } = useAppState();
   const c = counts(items);
+  const trashCount = pendingTrash.length + trash.length;
   const rootLabel = roots.find((r) => r.online)?.label ?? '照片库';
 
   return (
@@ -66,8 +67,8 @@ export function AppSidebar() {
                     <item.icon className="size-4" />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
-                  {item.id === 'trash' && c.trash + trash.length > 0 && (
-                    <SidebarMenuBadge className="tabular-nums">{c.trash + trash.length}</SidebarMenuBadge>
+                  {item.id === 'trash' && trashCount > 0 && (
+                    <SidebarMenuBadge className="tabular-nums">{trashCount}</SidebarMenuBadge>
                   )}
                   {item.id === 'cull' && c.starred > 0 && (
                     <SidebarMenuBadge className="tabular-nums text-gold">{c.starred}</SidebarMenuBadge>

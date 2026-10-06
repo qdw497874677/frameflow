@@ -74,6 +74,11 @@ export interface AppState {
   /** 哪些节点是展开的 */
   expanded: Record<string, boolean>;
   trash: TrashEntry[];
+  /**
+   * 「还留在原地的待删」：默认列表把待删藏起来（挑片只看剩下的），
+   * 所以这个状态得单独问一次后端 —— 否则打了 tag 的照片会既不在挑片里、也不在回收站里。
+   */
+  pendingTrash: Photo[];
   /** 标注变更日志（最新的在前）：谁、什么时候、把哪个字段从什么改成了什么 */
   history: MarkChange[];
   /** 非挑片页的通用忙标志（载入回收站/规则/预演） */
@@ -94,7 +99,7 @@ export interface AppState {
 }
 
 const INITIAL: AppState = {
-  dir: '/photos/2026-冰岛',
+  dir: '',
   selection: EMPTY_SELECTION,
   listing: null,
   items: [],
@@ -105,6 +110,7 @@ const INITIAL: AppState = {
   tree: {},
   expanded: { '/photos': true },
   trash: [],
+  pendingTrash: [],
   history: [],
   busy: false,
   loading: false,
@@ -153,6 +159,7 @@ class AppStore {
       this.undoStack = [];
       this.patch({ listing, items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
       this.flash(`载入 ${page.items.length} 张 · ${dir}`);
+      void this.loadPendingTrash();
     } catch (err) {
       this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -232,6 +239,56 @@ class AppStore {
     }
   }
 
+  /**
+   * 开箱落点：载入根目录 → 从第一个在线根往下找第一个**真有照片**的目录 →
+   * 把树展开到那一层 → 打开它。
+   *
+   * 为什么不直接打开根：库是按「项目/机身/原照片」分层的，根底下一般一张直属照片都没有，
+   * 打开根就是一个空舞台（挑片页会显示「这一批挑完了」，让人以为库是空的）。
+   */
+  async boot(preferredDir?: string) {
+    await this.loadRoots();
+    const roots = this.state.roots;
+    const start = preferredDir ?? roots.find((r) => r.online)?.path ?? roots[0]?.path ?? '';
+    if (!start) {
+      this.patch({ loading: false, error: '没有可用的照片库：先在 artworks.config.yaml 里加一个 roots' });
+      return;
+    }
+    const target = preferredDir ?? (await this.firstDirWithPhotos(start)) ?? start;
+    await this.revealPath(target);
+    this.patch({ view: 'cull' });
+    await this.open(target);
+  }
+
+  /** 从 path 往下找第一个有照片的目录（深海了就算了，怕库大跑到天荒地老） */
+  private async firstDirWithPhotos(path: string, depth = 0): Promise<string | null> {
+    if (depth > 4) return null;
+    try {
+      const page = await source.listPhotos({ dir: path, selection: this.state.selection, limit: 1 });
+      if (page.items.length > 0) return path;
+      const listing = await source.listFolders(path);
+      for (const kid of listing.folders ?? []) {
+        const found = await this.firstDirWithPhotos(kid.path, depth + 1);
+        if (found) return found;
+      }
+    } catch {
+      /* 读不动就当这条线没戏 */
+    }
+    return null;
+  }
+
+  /** 让侧边栏把某一层展开着显示：沿祖先链逐层懒加载 */
+  async revealPath(path: string) {
+    const parts = path.split('/').filter(Boolean);
+    const expanded = { ...this.state.expanded };
+    for (let i = 1; i <= parts.length; i++) {
+      const p = '/' + parts.slice(0, i).join('/');
+      expanded[p] = true;
+      if (!this.state.tree[p]) await this.loadTree(p);
+    }
+    this.patch({ expanded });
+  }
+
   private async loadTree(path: string) {
     try {
       const listing = await source.listFolders(path);
@@ -259,22 +316,43 @@ class AppStore {
   async loadTrash() {
     this.patch({ busy: true });
     try {
-      const trash = await source.listTrash();
-      this.patch({ trash, busy: false });
+      const [trash, pending] = await Promise.all([
+        source.listTrash(),
+        source.listPhotos({ dir: this.state.dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500 }),
+      ]);
+      this.patch({ trash, pendingTrash: pending.items, busy: false });
     } catch (err) {
       this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  /** 把当前标记为「待删」的整批移到回收站 */
+  /** 单独刷新「待删」（打完 tag 之后、换目录之后调用） */
+  async loadPendingTrash() {
+    try {
+      const page = await source.listPhotos({
+        dir: this.state.dir,
+        selection: { ...EMPTY_SELECTION, where: { del: true } },
+        limit: 500,
+      });
+      this.patch({ pendingTrash: page.items });
+    } catch {
+      /* 回收站页会显示错误，这里的失败不影响挑片 */
+    }
+  }
+
+  /** 把标记为「待删」的整批移到回收站 */
   async commitTrash() {
-    const ids = this.state.items.filter((it) => it.mark.del).map((it) => it.id);
+    const ids = this.state.pendingTrash.map((it) => it.id);
     if (!ids.length) {
       this.flash('没有标为待删的照片');
       return;
     }
     const res = await source.moveToTrash(ids);
-    this.patch({ items: this.state.items.filter((it) => !it.mark.del), cursor: 0 });
+    this.patch({
+      items: this.state.items.filter((it) => !it.mark.del),
+      pendingTrash: [],
+      cursor: 0,
+    });
     await this.loadTrash();
     this.flash(`已移入回收站 ${res.ok} 张（可整批还原）`);
   }
@@ -518,6 +596,7 @@ class AppStore {
       }));
       void source
         .saveMarks(payload)
+        .then(() => this.loadPendingTrash())
         .catch((err: unknown) => this.flash(`保存失败：${err instanceof Error ? err.message : String(err)}`));
     }, 400);
   }

@@ -1,0 +1,12 @@
+# 本机开发用的真实照片样本（从 NAS 拷的一小份，见 wayfinder/tickets/005）
+host: 127.0.0.1
+port: 8787
+dataDir: /tmp/artworks-data
+password: ""
+logLevel: info
+roots:
+  - id: test
+    label: 本机测试库
+    path: /home/qdw/Pictures/artworks-test
+scan:
+  maxDepth: 8

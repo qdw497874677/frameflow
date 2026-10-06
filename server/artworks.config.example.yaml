@@ -1,0 +1,48 @@
+# art-workspace 后端配置示例
+#
+# 用 `cp artworks.config.example.yaml artworks.config.yaml` 复制一份再改；
+# 也可以放到别处，用 `--config=/path/to.yaml` 或环境变量 `ARTWORKS_CONFIG` 指定。
+#
+# 所有路径都是**服务端进程可见的真实磁盘路径**：
+#   - 服务跑在 NAS 上（推荐）→ 写容器/主机上的本地路径，如 /vol1/photos
+#   - 服务跑在别的机器上   → 写挂载点，如 /mnt/nas/摄影（NFS/SMB 都一样，代码不分叉）
+# 网络共享上的照片目录**只读也能用**（标注会退到 dataDir/marks.jsonl），但那样 XMP 不会回写。
+
+# 监听地址：默认只监听本机。
+#   本机开发：127.0.0.1
+#   家里 + Tailscale 访问：0.0.0.0（同时请务必设置 password）
+host: 127.0.0.1
+port: 8787
+
+# 应用数据目录：索引、缩略图缓存、marks.jsonl、token —— **不要放在照片共享里**。
+dataDir: ~/.local/share/artworks
+
+# 单用户密码。留空 = 免认证（只在本机开发时这么用）。
+password: ""
+
+# 照片根目录（可以多个：本机目录、移动硬盘、NAS 挂载点……）
+roots:
+  - id: nas          # 稳定标识：改名后 URL / 选择集里的路径不变
+    label: NAS 摄影
+    path: /mnt/nas/qdw/摄影
+  # - id: local
+  #   label: 本机图片
+  #   path: ~/Pictures
+
+scan:
+  # 下钻深度上限（防止误指到 / 上把整盘扫了）
+  maxDepth: 8
+  # 额外忽略的目录名（小写比较）；下面是内置默认值，写在这里是覆盖而不是追加
+  ignore:
+    - .artworks
+    - .trash
+    - .git
+    - node_modules
+    - "@eaDir"
+    - "#recycle"
+    - "@Recycle"
+    - $RECYCLE.BIN
+    - System Volume Information
+    - .thumbnails
+
+logLevel: info

@@ -1,0 +1,27 @@
+{
+  "name": "@artworks/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "art-workspace 后端：唯一接触磁盘的进程（扫描/配对、预览、标注、回收站、归档、任务）",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/static": "^10.1.5",
+    "exiftool-vendored": "^38.3.0",
+    "fastify": "^5.12.5",
+    "sharp": "^0.35.5",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}
