@@ -190,7 +190,7 @@ async function buildRecord(
   else if (group.raw && opts.hasExtractedPreview) {
     const sig = `${Math.floor(group.raw.mtimeMs)}-${group.raw.size}`;
     if (opts.hasExtractedPreview({ absStem, sig })) previewSource = 'embedded_jpeg';
-  }
+  } else if (group.video) previewSource = 'video_poster'; // 封面按需由 ffmpeg 抽帧（thumbs.ts）
 
   const marks = readXmpMarks(`${absStem}.xmp`) ?? readXmpMarks(main.path + '.xmp') ?? null;
 
@@ -203,6 +203,7 @@ async function buildRecord(
     kind: group.raw || group.image ? 'photo' : 'video',
     raw: group.raw ? { path: group.raw.path, mtimeMs: group.raw.mtimeMs, size: group.raw.size, ext: group.raw.ext } : undefined,
     jpeg: group.image ? { path: group.image.path, mtimeMs: group.image.mtimeMs, size: group.image.size, ext: group.image.ext } : undefined,
+    video: group.video ? { path: group.video.path, mtimeMs: group.video.mtimeMs, size: group.video.size, ext: group.video.ext } : undefined,
     previewPath,
     previewSource,
     meta: {},

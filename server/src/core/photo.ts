@@ -8,7 +8,7 @@
 export type PhotoKind = 'photo' | 'video';
 
 /** 预览来源，排查用（票 001 的分层管线） */
-export type PreviewSource = 'external_jpeg' | 'embedded_jpeg' | 'raw_decode' | 'pending';
+export type PreviewSource = 'external_jpeg' | 'embedded_jpeg' | 'video_poster' | 'raw_decode' | 'pending';
 
 export type FocusHint = 'sharp' | 'soft' | 'miss';
 
@@ -44,7 +44,9 @@ export interface PhotoRecord {
   kind: PhotoKind;
   raw?: FileRef & { ext: string };
   jpeg?: FileRef & { ext: string };
-  /** 生成预览时优先读的文件（外部 JPEG 优先，否则 RAW） */
+  /** 视频文件（`kind='video'` 才有）：没有 raw/jpeg，预览走 ffmpeg 抽帧 */
+  video?: FileRef & { ext: string };
+  /** 生成预览时优先读的文件（外部 JPEG 优先，否则 RAW，视频就是它自己） */
   previewPath: string;
   previewSource: PreviewSource;
   meta: FileMeta;

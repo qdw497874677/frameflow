@@ -328,13 +328,15 @@ export class Library {
   }
 
   /** 把 id 解成磁盘上的绝对路径（`variant` 决定要 RAW 还是 JPEG） */
-  absFile(rec: PhotoRecord, variant: 'jpeg' | 'raw' | 'auto'): { path: string; name: string; mime: string } | null {
-    const pick = variant === 'raw' ? rec.raw : variant === 'jpeg' ? rec.jpeg : (rec.jpeg ?? rec.raw);
+  absFile(rec: PhotoRecord, variant: 'jpeg' | 'raw' | 'video' | 'auto'): { path: string; name: string; mime: string } | null {
+    const pick = variant === 'raw' ? rec.raw : variant === 'jpeg' ? rec.jpeg : variant === 'video' ? rec.video : (rec.jpeg ?? rec.raw ?? rec.video);
     if (!pick) return null;
     const name = `${rec.displayName}${pick.ext}`;
-    const mime = pick.ext === '.jpg' || pick.ext === '.jpeg' ? 'image/jpeg'
-      : pick.ext === '.png' ? 'image/png'
-      : pick.ext === '.mp4' ? 'video/mp4'
+    const ext = pick.ext.toLowerCase();
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+      : ext === '.png' ? 'image/png'
+      : ext === '.mp4' || ext === '.m4v' ? 'video/mp4'
+      : ext === '.mov' ? 'video/quicktime'
       : 'application/octet-stream';
     return { path: pick.path, name, mime };
   }

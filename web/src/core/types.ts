@@ -6,7 +6,7 @@
 export type PhotoKind = 'photo' | 'video';
 
 /** 预览来源：用于排查「为什么这张图慢 / 糊 / 是内嵌小图」 */
-export type PreviewSource = 'external_jpeg' | 'embedded_jpeg' | 'raw_decode' | 'pending';
+export type PreviewSource = 'external_jpeg' | 'embedded_jpeg' | 'video_poster' | 'raw_decode' | 'pending';
 
 /** 可选的模糊/跑焦提示（未来服务端分析；mock 会造这几种） */
 export type FocusHint = 'sharp' | 'soft' | 'miss' | null;

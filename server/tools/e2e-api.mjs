@@ -9,7 +9,7 @@
  * 变更日志 / 选择集 / API token（bearer 记为 AI）/ 手动重扫 / 回收站尚未实现。
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import sharp from 'sharp';
 
@@ -143,7 +143,23 @@ check(rawSrc === 'embedded_jpeg', '来源标为 embedded_jpeg', String(rawSrc));
 
 const video = videos[0];
 const vres = await thumb(video.id, 512);
-check(vres.res.status === 422 || vres.res.status === 200, '视频：要么 422 要么有封面（不能 500）', `HTTP ${vres.res.status} ${vres.body?.error ?? ''}`);
+check(vres.res.status === 200 && vres.buf.length > 1024, '视频：ffmpeg 抽帧出封面（不再 422）', `HTTP ${vres.res.status} src=${vres.res.headers.get('x-preview-source')} ${(vres.buf.length / 1024).toFixed(0)}KB ${await jpegSize(vres.buf)} ${vres.body?.error ?? ''}`);
+check(vres.res.headers.get('x-preview-source') === 'video_poster', '视频封面来源标为 video_poster');
+const videoDisk = join(root.diskPath, (video.videoPath ?? '').replace(`/${root.id}`, ''));
+const videoStat = existsSync(videoDisk) ? statSync(videoDisk) : null;
+check(Boolean(videoStat), '视频在盘上有实体文件', video.videoPath ?? '（没有 videoPath）');
+check(video.sizeBytes === videoStat?.size, '视频记录带上真实 sizeBytes（不再是 undefined）', `${video.sizeBytes} vs ${videoStat?.size}`);
+check(
+  Boolean(videoStat) && Math.abs(Date.parse(video.mtime) - videoStat.mtimeMs) < 1000,
+  '视频 mtime 来自磁盘，不是请求时刻',
+  `api=${video.mtime} disk=${videoStat ? new Date(videoStat.mtimeMs).toISOString() : '—'}`,
+);
+check(video.preview === 'video_poster', '视频的 preview 标成 video_poster', String(video.preview));
+if (videoStat) {
+  const vfile = await fetch(`${BASE}/photos/${encodeURIComponent(video.id)}/file?variant=video`);
+  const vbuf = Buffer.from(await vfile.arrayBuffer());
+  check(vfile.status === 200 && vbuf.length === videoStat.size, '视频原文件能下载（variant=video）', `HTTP ${vfile.status} ${vbuf.length}B`);
+}
 
 // ── 5b. 多 RAW 格式：没有外拍 JPEG 时抽内嵌预览 ───────────────────────
 for (const [label, name] of [
@@ -218,14 +234,35 @@ check(selKind.body.items.length === 0, 'sel=kind:video 在这个目录里是空�
 // ── 9. API token：AI/CLI 凭据 ────────────────────────────────────────────
 const tok = await req('/api-tokens', { method: 'POST', ...json({ label: 'e2e-agent', scope: 'full' }) });
 check(tok.status === 201 && tok.body.token?.startsWith('aw_'), '签发 API token（明文只出现一次）', tok.body.id);
+check(typeof tok.body.linkToken === 'string' && tok.body.linkToken.length > 20, '签发时一并给出链接 token（缩略图自认证）', `${String(tok.body.linkToken).slice(0, 12)}… exp=${tok.body.linkExpiresAt}`);
+check(
+  String(tok.body.thumbUrlTemplate ?? '').includes('{id}') && String(tok.body.thumbUrlTemplate ?? '').includes('{size}'),
+  '给出缩略图 URL 模板（{id}/{size} 自己填）',
+  String(tok.body.thumbUrlTemplate).slice(0, 80),
+);
+const linkThumb = await fetch(`${BASE}/photos/${encodeURIComponent(jpegOnly.id)}/thumb?size=512&t=${encodeURIComponent(tok.body.linkToken)}`);
+check(linkThumb.status === 200, '链接 token 能取缩略图（图像加载器不用带 header）', `HTTP ${linkThumb.status} src=${linkThumb.headers.get('x-preview-source')}`);
+const tampered = `${String(tok.body.linkToken).slice(0, -2)}xx`;
+const badLink = await fetch(`${BASE}/photos/${encodeURIComponent(jpegOnly.id)}/thumb?size=512&t=${encodeURIComponent(tampered)}`);
+check(
+  health.body?.authRequired ? badLink.status === 401 : badLink.status === 200,
+  health.body?.authRequired ? '改过的链接 token 被拒（401）' : '改过的链接 token 在免认证模式下无所谓',
+  `HTTP ${badLink.status}`,
+);
 const aiMark = await putMarks([{ id: target.id, stars: 4 }], { authorization: `Bearer ${tok.body.token}` });
 check(aiMark.status === 200, 'Bearer token 能调 PUT /marks');
 const aiHist = await req('/marks/history?limit=5');
 check(aiHist.body.items[0]?.by === 'ai:e2e-agent', 'AI 的改动记成 by=ai:e2e-agent', JSON.stringify({ by: aiHist.body.items[0]?.by, channel: aiHist.body.items[0]?.channel }));
 const listed = await req('/api-tokens');
-check((listed.body.items ?? []).some((t) => t.id === tok.body.id), 'token 列表按 id 列出（不泄露明文）', `lastUsedAt=${listed.body.items[0]?.lastUsedAt ?? '—'}`);
+check((listed.body.tokens ?? []).some((t) => t.id === tok.body.id), 'token 列表用 tokens 字段列出（不泄露明文）', `lastUsedAt=${listed.body.tokens?.[0]?.lastUsedAt ?? '—'}`);
 const revoked = await req(`/api-tokens?id=${tok.body.id}`, { method: 'DELETE' });
 check(revoked.status === 204, 'token 可撤销');
+const linkAfterRevoke = await fetch(`${BASE}/photos/${encodeURIComponent(jpegOnly.id)}/thumb?size=512&t=${encodeURIComponent(tok.body.linkToken)}`);
+check(
+  health.body?.authRequired ? linkAfterRevoke.status === 401 : linkAfterRevoke.status === 200,
+  health.body?.authRequired ? '撤销 API token 后链接 token 一起失效（401）' : '免认证模式下链接 token 照旧',
+  `HTTP ${linkAfterRevoke.status}`,
+);
 const afterRevoke = await putMarks([{ id: target.id, stars: 1 }], { authorization: `Bearer ${tok.body.token}` });
 const authRequired = health.body?.authRequired === true;
 check(

@@ -5,7 +5,8 @@
  *  - **Bearer token**（`/api-tokens`）：AI agent / CLI / MCP 用，长期、可撤销、记 lastUsedAt。
  *    只存哈希 —— 明文只在签发那一次出现。
  *  - **自认证链接 token**（`?t=`）：给「把图片 URL 交给自己的图像加载器」的客户端用
- *    （带不上自定义 header），也用于范围受限的外部批注链接。同样是 HMAC 签名，带过期时间。
+ *    （带不上自定义 header）。签发 API token 时一并给出（`linkToken`），签名里绑定那条 token 的
+ *    id：撤销 API token = 链接立刻失效；范围只有读缩略图（`/thumb`）。
  *
  * 签名密钥落在 `dataDir/secret`（0600）。密码为空 = 免认证，只在本机开发时这么用。
  */
@@ -35,7 +36,7 @@ interface ApiTokenRecord extends ApiTokenMeta {
 }
 
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
-const THUMB_TTL_MS = 7 * 24 * 3600 * 1000;
+const LINK_TTL_MS = 30 * 24 * 3600 * 1000;
 
 export class Auth {
   private readonly dataDir: string;
@@ -65,7 +66,6 @@ export class Auth {
     cookie?: string | undefined;
     authorization?: string | undefined;
     thumbToken?: string | undefined;
-    photoId?: string | undefined;
   }): Identity | null {
     // 注意：checkSession 在免认证模式下恒为 true，所以这里要先看 enabled
     if (this.enabled && this.checkSession(input.cookie)) return { via: 'session' };
@@ -74,10 +74,8 @@ export class Auth {
       const token = this.verifyToken(header.slice(7).trim());
       if (token) return { via: 'bearer', token };
     }
-    if (input.thumbToken) {
-      const link = this.verifyThumbToken(input.thumbToken);
-      if (link && (!input.photoId || !link.photoId || link.photoId === input.photoId)) return { via: 'link' };
-    }
+    // `?t=` 只被缩略图路由消费（server.ts 的 thumbMatch），所以这里给的只读凭据走不到写接口
+    if (input.thumbToken && this.verifyLinkToken(input.thumbToken)) return { via: 'link' };
     return null;
   }
 
@@ -123,18 +121,25 @@ export class Auth {
     return kind === 'session' && Number(exp) > Date.now();
   }
 
-  // ── 自认证链接 token（缩略图 `?t=`、外部批注链接）────────────────────────
+  // ── 自认证链接 token（缩略图 `?t=`）──────────────────────────────
 
-  thumbToken(photoId: string, size: number, ttlMs = THUMB_TTL_MS): string {
-    return this.sign(`thumb|${photoId}|${size}|${Date.now() + ttlMs}`);
+  /**
+   * 把某条 API token 的「只读预览」权限签进 URL 里：图像加载器带不上 header 时用
+   * `/photos/{id}/thumb?size=…&t=<linkToken>`。签名里只有 tokenId + 过期时间，不带照片 id
+   * —— 一个 token 管一批缩略图；对应的 API token 一撤销，它立刻失效。
+   */
+  issueLinkToken(tokenId: string, ttlMs = LINK_TTL_MS): { token: string; expiresAt: string } {
+    const exp = Date.now() + ttlMs;
+    return { token: this.sign(`link|${tokenId}|${exp}`), expiresAt: new Date(exp).toISOString() };
   }
 
-  verifyThumbToken(token: string | undefined | null): { photoId: string; size?: number } | null {
+  verifyLinkToken(token: string | undefined | null): { tokenId: string } | null {
     const payload = this.verify(token);
     if (!payload) return null;
-    const [kind, photoId, size, exp] = payload.split('|');
-    if (kind !== 'thumb' || !photoId || Number(exp) <= Date.now()) return null;
-    return { photoId, size: size ? Number(size) : undefined };
+    const [kind, tokenId, exp] = payload.split('|');
+    if (kind !== 'link' || !tokenId || !(Number(exp) > Date.now())) return null;
+    // 撤销即失效：tokens.json 是唯一事实来源
+    return this.tokens.some((t) => t.id === tokenId) ? { tokenId } : null;
   }
 
   // ── API token ──────────────────────────────────────────────────────────

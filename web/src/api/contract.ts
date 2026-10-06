@@ -39,11 +39,12 @@ export interface PhotoDto {
   hasJpeg?: boolean;
   rawPath?: string | null;
   jpegPath?: string | null;
+  videoPath?: string | null;
   sizeBytes?: number;
   mtime: string;
   stars: number;
   del: boolean;
-  preview?: 'external_jpeg' | 'embedded_jpeg' | 'raw_decode' | 'pending';
+  preview?: 'external_jpeg' | 'embedded_jpeg' | 'video_poster' | 'raw_decode' | 'pending';
   focusHint?: 'sharp' | 'soft' | 'miss' | null;
 }
 

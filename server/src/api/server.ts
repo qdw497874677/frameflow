@@ -47,12 +47,12 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     // 两件事分开：**认来源**（谁在操作，永远做）与**拦请求**（认证开着才做）
     const path = req.url.split('?')[0] ?? '';
     const q = req.query as Record<string, string> | undefined;
-    const thumbMatch = /^\/api\/v1\/photos\/([^/]+)\/thumb$/.exec(path);
+    const thumbMatch = /^\/api\/v1\/photos\/[^/]+\/thumb$/.test(path);
     const who = auth.identify({
       cookie: req.cookies?.[COOKIE],
       authorization: req.headers.authorization,
+      // `?t=` 只在缩略图路由上算凭据：链接 token 的范围就是「看预览」，不碰写接口
       thumbToken: thumbMatch ? q?.['t'] : undefined,
-      photoId: thumbMatch ? decodeURIComponent(thumbMatch[1] ?? '') : undefined,
     });
     authInfo.set(req, who ?? { via: 'disabled' });
     if (who) authed.add(req);
@@ -150,7 +150,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
 
   app.get('/api/v1/photos/:id/file', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const q = req.query as { variant?: 'jpeg' | 'raw' | 'auto' };
+    const q = req.query as { variant?: 'jpeg' | 'raw' | 'video' | 'auto' };
     const rec = lib.get(id);
     if (!rec) return reply.code(404).send({ error: '没这张照片' });
     const file = lib.absFile(rec, q.variant ?? 'auto');
@@ -207,15 +207,21 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   });
 
   // ── AI / CLI 用的长期 token ────────────────────────────────────────────
-  app.get('/api/v1/api-tokens', async () => ({ items: auth.listTokens() }));
+  app.get('/api/v1/api-tokens', async () => ({ tokens: auth.listTokens() }));
 
   app.post('/api/v1/api-tokens', async (req, reply) => {
     const body = (req.body ?? {}) as { label?: string; scope?: string };
     const { token, meta } = auth.issueToken(body.label ?? '未命名', body.scope ?? 'full');
+    const link = auth.issueLinkToken(meta.id);
     return reply.code(201).send({
       token,
       ...meta,
-      note: '明文只出现这一次；以后请求带 Authorization: Bearer <token>。缩略图用 /photos/{id}/thumb?t=<签发时给的链接 token>。',
+      // 图像加载器（agent / 模型服务商）带不上自定义 header，所以缩略图 URL 自带凭据：
+      // 把 {id} 换成照片 id、{size} 换 512/2048。linkToken 绑在这条 API token 上，撤销即失效。
+      linkToken: link.token,
+      linkExpiresAt: link.expiresAt,
+      thumbUrlTemplate: `/api/v1/photos/{id}/thumb?size={size}&t=${link.token}`,
+      note: '明文只出现这一次；以后请求带 Authorization: Bearer <token>。缩略图用 thumbUrlTemplate（把 {id}/{size} 填上），不用带 header。',
     });
   });
 

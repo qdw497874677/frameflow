@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from 'cn';
-import { Maximize2, Star, Trash2 } from 'lucide-react';
+import { Maximize2, Play, Star, Trash2 } from 'lucide-react';
 import { store, useAppState } from '@/core/store';
 import { source } from '@/api';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,14 @@ export function Grid() {
   const { items, cursor, mode, centerId, centerToken, flight } = useAppState();
   const [open, setOpen] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // 隐藏层先别加载缩略图：一进目录就是几十张，视频还要 ffmpeg 抽帧。布局照留（aspect-ratio 占位），
+  // 所以切过来时的变焦飞行仍然量得到落点。
+  const gridVisible = mode !== 'a';
+  const [everVisible, setEverVisible] = useState(gridVisible);
+  useEffect(() => {
+    if (gridVisible) setEverVisible(true);
+  }, [gridVisible]);
 
   // 变焦前先把当前这张摆到视野中央：这样从卡片流缩过来时，它就在原地变小
   useLayoutEffect(() => {
@@ -73,13 +81,24 @@ export function Grid() {
                   className="block w-full"
                   aria-label={`${p.displayName}（放大看）`}
                 >
-                  <img
-                    src={source.thumbUrl(p.id, 512)}
-                    alt={p.displayName}
-                    style={{ aspectRatio: p.ar }}
-                    className="w-full object-cover"
-                    draggable={false}
-                  />
+                  {everVisible ? (
+                    <img
+                      src={source.thumbUrl(p.id, 512)}
+                      alt={p.displayName}
+                      style={{ aspectRatio: p.ar }}
+                      className="w-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      draggable={false}
+                    />
+                  ) : (
+                    <div style={{ aspectRatio: p.ar }} className="w-full bg-muted/30" />
+                  )}
+                  {p.kind === 'video' && (
+                    <span className="pointer-events-none absolute top-1/2 left-1/2 grid size-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm">
+                      <Play className="size-4 fill-white" />
+                    </span>
+                  )}
                   {p.mark.del && <span className="absolute inset-0 bg-danger/20" />}
                 </button>
 

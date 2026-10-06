@@ -26,7 +26,7 @@ paths:
       description: |
         前端与 AI 客户端都靠它发现能力（见 docs/core-model.md §12）。
         新增能力 = 后端新增一个模块文件，前端零改动。
-      x-implemented: false
+      x-implemented: true
       responses:
         "200":
           description: 注册表投影
@@ -128,7 +128,7 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
         - { name: size, in: query, schema: { type: integer, enum: [512, 2048], default: 512 } }
-        - { name: t, in: query, schema: { type: string }, description: "自认证的链接 token / 短期签名：agent 把图片 URL 交给自己的图像加载器时带不上自定义 header（见 docs/core-model.md §11）" }
+        - { name: t, in: query, schema: { type: string }, description: "自认证的链接 token：签发 API token 时随响应给出（`linkToken`），图像加载器带不上 header 时用它。绑定签发它的 API token，撤销即失效；范围只有缩略图（见 docs/core-model.md §11）" }
       responses:
         "200": { description: JPEG 字节, content: { image/jpeg: { schema: { type: string, format: binary } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -139,7 +139,7 @@ paths:
       summary: 原始文件（RAW 或 JPEG）下载/直出
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
-        - { name: variant, in: query, schema: { type: string, enum: [jpeg, raw, auto], default: auto } }
+        - { name: variant, in: query, schema: { type: string, enum: [jpeg, raw, video, auto], default: auto } }
       responses:
         "200": { description: 原始字节, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -226,7 +226,7 @@ paths:
   /api-tokens:
     get:
       summary: 列出已签发的 API token（AI agent / CLI / MCP 用）
-      x-implemented: false
+      x-implemented: true
       responses:
         "200":
           description: ok
@@ -236,7 +236,7 @@ paths:
 
     post:
       summary: 签发一个 API token（明文只在响应里出现一次）
-      x-implemented: false
+      x-implemented: true
       requestBody:
         required: true
         content:
@@ -247,11 +247,24 @@ paths:
           description: 已签发
           content:
             application/json:
-              schema: { type: object, required: [id, label, token], properties: { id: { type: string }, label: { type: string }, token: { type: string } } }
+              schema:
+                type: object
+                required: [id, label, token]
+                properties:
+                  id: { type: string }
+                  label: { type: string }
+                  token: { type: string }
+                  linkToken:
+                    type: string
+                    description: 自认证链接 token：缩略图 URL 用 `?t=<linkToken>`（图像加载器带不上 header）；绑定这条 API token，撤销即失效
+                  linkExpiresAt: { type: string, format: date-time }
+                  thumbUrlTemplate:
+                    type: string
+                    description: 把 `{id}` / `{size}`（512 或 2048）填上的缩略图 URL 模板
 
     delete:
       summary: 撤销一个 API token
-      x-implemented: false
+      x-implemented: true
       parameters:
         - { name: id, in: query, required: true, schema: { type: string } }
       responses:
@@ -360,7 +373,7 @@ components:
       type: apiKey
       in: query
       name: t
-      description: "范围受限的批注链接 token（外部批注者）：只读这一批 + 只写标注，回流记 by: link:<别名>"
+      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；当前范围是只读缩略图，绑定签发它的 API token（撤销即失效）。范围受限的外部批注链接（只读一批 + 只写标注，记 by: link:<别名>）是后续形态，见 docs/core-model.md §11"
   responses:
     Error:
       description: 错误
@@ -403,11 +416,12 @@ components:
         hasJpeg: { type: boolean }
         rawPath: { type: string, nullable: true }
         jpegPath: { type: string, nullable: true }
+        videoPath: { type: string, nullable: true, description: 视频文件（kind=video 时的单文件路径） }
         sizeBytes: { type: integer }
         mtime: { type: string, format: date-time }
         stars: { type: integer, minimum: 0, maximum: 5 }
         del: { type: boolean }
-        preview: { type: string, enum: [external_jpeg, embedded_jpeg, raw_decode, pending], description: 预览来源（排查用） }
+        preview: { type: string, enum: [external_jpeg, embedded_jpeg, video_poster, raw_decode, pending], description: 预览来源（排查用） }
         focusHint: { type: string, enum: [sharp, soft, miss], nullable: true, description: 可选的模糊/跑焦提示（未来功能，前端可忽略） }
 
     MarkInput:

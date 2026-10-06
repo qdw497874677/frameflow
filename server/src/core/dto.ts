@@ -24,6 +24,7 @@ export interface PhotoDto {
   hasJpeg?: boolean;
   rawPath?: string | null;
   jpegPath?: string | null;
+  videoPath?: string | null;
   sizeBytes?: number;
   mtime: string;
   stars: number;
@@ -103,8 +104,8 @@ export function toPhotoDto(rec: PhotoRecord): PhotoDto {
   const swapped = (rec.meta.orientation ?? 1) >= 5;
   const w = swapped ? rec.meta.height : rec.meta.width;
   const h = swapped ? rec.meta.width : rec.meta.height;
-  const sizeBytes = (rec.raw?.size ?? 0) + (rec.jpeg?.size ?? 0);
-  const mtimeMs = Math.max(rec.raw?.mtimeMs ?? 0, rec.jpeg?.mtimeMs ?? 0);
+  const sizeBytes = (rec.raw?.size ?? 0) + (rec.jpeg?.size ?? 0) + (rec.video?.size ?? 0);
+  const mtimeMs = Math.max(rec.raw?.mtimeMs ?? 0, rec.jpeg?.mtimeMs ?? 0, rec.video?.mtimeMs ?? 0);
   return {
     id: rec.id,
     dir,
@@ -121,6 +122,7 @@ export function toPhotoDto(rec: PhotoRecord): PhotoDto {
     hasJpeg: Boolean(rec.jpeg),
     rawPath: rec.raw ? virtualFilePath(dir, basename(rec.raw.path)) : null,
     jpegPath: rec.jpeg ? virtualFilePath(dir, basename(rec.jpeg.path)) : null,
+    videoPath: rec.video ? virtualFilePath(dir, basename(rec.video.path)) : null,
     sizeBytes: sizeBytes || undefined,
     mtime: new Date(mtimeMs || Date.now()).toISOString(),
     stars: rec.stars,

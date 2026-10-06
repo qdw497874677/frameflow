@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { cn } from 'cn';
-import { ChevronLeft, ChevronRight, Star, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Star, Trash2, X } from 'lucide-react';
 import { store } from '@/core/store';
 import { source } from '@/api';
 import type { Photo } from '@/core/types';
@@ -45,6 +45,8 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
         return;
       }
       const k = e.key;
+      // Shift + ←/→ 留给 App 层的变焦，看片台里不抢
+      if (e.shiftKey) return;
       if (k >= '1' && k <= '5') store.setStars(photo.id, Number(k));
       else if (k === '0') store.clearMark(photo.id);
       else if (k.toLowerCase() === 'x') store.toggleDel(photo.id);
@@ -114,6 +116,11 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
             alt={photo.displayName}
             className="absolute inset-0 size-full object-contain"
           />
+          {photo.kind === 'video' && (
+            <span className="pointer-events-none absolute top-1/2 left-1/2 grid size-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm">
+              <Play className="size-5 fill-white" />
+            </span>
+          )}
         </div>
 
         {/* 星级行 */}

@@ -139,6 +139,8 @@ export function Deck() {
         return;
       }
       const k = e.key;
+      // Shift + ←/→ 是 App 层的「一个看 ⇄ 批量扫」变焦快捷键，这里让路（否则会顺手把当前张提交掉）
+      if (e.shiftKey) return;
       if (k >= '1' && k <= '5') {
         if (top) store.setStars(top.id, Number(k));
       } else if (k === '0') {
@@ -217,14 +219,14 @@ export function Deck() {
                 style={{ opacity: likeOpacity, scale: likeScale }}
                 className="pointer-events-none absolute top-8 left-6 -rotate-9 rounded-lg border-[3px] border-gold px-2.5 py-1 text-xl font-black tracking-widest text-gold"
               >
-                LIKE
+                留下
                 {stars > 1 && <span className="ml-1.5 align-middle text-base">{'★'.repeat(stars)}</span>}
               </motion.div>
               <motion.div
                 style={{ opacity: nopeOpacity }}
                 className="pointer-events-none absolute top-8 right-6 rotate-9 rounded-lg border-[3px] border-danger px-2.5 py-1 text-xl font-black tracking-widest text-danger"
               >
-                NOPE
+                待删
               </motion.div>
             </motion.div>
           </div>
@@ -245,11 +247,14 @@ export function Deck() {
               {FOCUS_LABEL[focus] ?? focus}
             </span>
           )}
+          {top.kind === 'video' && (
+            <span className="shrink-0 rounded-sm bg-secondary px-1.5 py-0.5 text-foreground/70">视频</span>
+          )}
           {top.hasRaw && top.hasJpeg && (
             <span className="shrink-0 rounded-sm bg-secondary px-1.5 py-0.5 text-foreground/70">RAW+JPEG</span>
           )}
           <span className="truncate">
-            {top.camera}
+            {top.camera ?? (top.kind === 'video' ? top.displayName : '')}
             {top.lens ? ` · ${top.lens}` : ''}
           </span>
         </div>

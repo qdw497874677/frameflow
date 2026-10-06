@@ -19,3 +19,6 @@ build/
 # 编辑器
 .idea/
 .vscode/
+
+# 本机私有配置（含 NAS 挂载点等本机路径；模板 server/artworks.config.example.yaml）
+server/artworks.config.local.yaml

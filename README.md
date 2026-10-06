@@ -39,6 +39,18 @@ node tools/shot.mjs --url "http://127.0.0.1:5173/?mode=a" --out /tmp/a.png   # �
 前端默认使用内置 **mock 数据源**（浏览器内 canvas 生成假照片），无需后端即可开发交互；
 接真实后端时设 `VITE_API_BASE=/api/v1`（或让 Vite 代理转发到本地后端，见 `web/vite.config.ts`）。
 
+让后端一个进程托管前端（http://127.0.0.1:8787）：
+
+```bash
+cd web && VITE_API_BASE=/api/v1 npm run build   # 产物 web/dist；少这个环境变量会打成 mock 数据源
+cd server && ./tools/dev.sh start                # 扫描 + 托管 web/dist + 提供 API，日志 /tmp/artworks-server.log
+```
+
+配置：`server/artworks.config.yaml` 是入库的默认值（全字段模板见 `server/artworks.config.example.yaml`）。
+本机私有路径（例如 NAS 挂载点）写进 `server/artworks.config.local.yaml` —— 已 gitignore，`dev.sh` 会自动优先读它；
+也可以用环境变量指定别的文件：`ARTWORKS_CONFIG=/path/to/cfg.yaml ./tools/dev.sh start`
+（优先级：`--config=` > `ARTWORKS_CONFIG` > `artworks.config.local.yaml` > `artworks.config.yaml`）。
+
 ## 规划
 
 当前路线与已定决策：`wayfinder/map.md`；票（tickets）在 `wayfinder/tickets/`，研究笔记在 `wayfinder/research/`。

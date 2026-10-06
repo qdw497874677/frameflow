@@ -9,6 +9,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT="${PORT:-8787}"
 LOG="${LOG:-/tmp/artworks-server.log}"
+# 本机私有配置优先（artworks.config.local.yaml 已 gitignore）：ARTWORKS_CONFIG 显式指定 > 本机文件 > 入库默认
+# loadConfig 会跳过不存在的候选路径，所以文件不在时自动回落到 artworks.config.yaml
+export ARTWORKS_CONFIG="${ARTWORKS_CONFIG:-artworks.config.local.yaml}"
 
 pid_of() {
   ss -ltnp 2>/dev/null | grep ":${PORT}\b" | grep -oP 'pid=\K[0-9]+' | head -1 || true
