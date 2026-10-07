@@ -150,6 +150,6 @@ export interface AnnotateSource {
   getJobForAnnotator(token: string, jobId: string): Promise<Job>;
   /** 本任务 items 的缩略图：URL 自带凭据（图像标签带不上自定义 header） */
   thumbUrlForAnnotator(photoId: string, token: string, size: 512 | 2048): string;
-  /** 回流：`by` 由服务端从 token 别名推；返回逐项结果（重复 clientRef 会返回首次结果） */
+  /** 回流：`by` 由服务端从 token 里的批注人推；返回逐项结果（重复 clientRef 会返回首次结果） */
   submitInbound(token: string, jobId: string, items: InboundItem[]): Promise<MarkResult[]>;
 }

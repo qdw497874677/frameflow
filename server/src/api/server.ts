@@ -30,7 +30,7 @@ type DirEntry = { name: string; path: string };
 interface AuthInfo {
   via: 'disabled' | 'session' | 'bearer' | 'link' | 'annotate';
   token?: ApiTokenMeta;
-  /** `via='annotate'`：任务范围 token（批注链接）里的任务 id 与批注者别名 */
+  /** `via='annotate'`：任务范围 token（批注链接）里的任务 id 与批注人 */
   jobId?: string;
   alias?: string;
 }
@@ -129,15 +129,21 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     if (who?.via === 'annotate') {
       const jobId = who.jobId ?? '';
       if (!jobs.rangeTokenValid(jobId)) return reply.code(403).send({ error: '这个批注链接已经失效了（任务已取消或没了）' });
-      const seg = decodeURIComponent(path.split('/')[4] ?? '');
-      const thumbOf = thumbMatch ? seg : null;
-      const detailOf = jobDetailMatch ? seg : null;
+      // 作用域只看路径与方法：详情只读（GET）、回流只写（POST）。今天就算不判方法也
+      // 越不了权（这两条路由只有一个方法），但将来给 /jobs/{id} 加 PUT/DELETE 时就晚了。
+      let seg = '';
+      try {
+        seg = decodeURIComponent(path.split('/')[4] ?? '');
+      } catch {
+        // 畸形百分号编码（`/photos/%/thumb`）：不泄漏、也不让它冒成 500
+        return reply.code(404).send({ error: '这个批注链接只对它那个任务有效' });
+      }
       const inScope =
-        thumbOf !== null
-          ? jobs.hasItem(jobId, thumbOf)
-          : detailOf !== null
-            ? detailOf === jobId
-            : path === `/api/v1/jobs/${jobId}/inbound`;
+        thumbMatch && req.method === 'GET'
+          ? jobs.hasItem(jobId, seg)
+          : jobDetailMatch && req.method === 'GET'
+            ? seg === jobId
+            : inboundMatch && req.method === 'POST' && seg === jobId;
       if (!inScope) return reply.code(404).send({ error: '这个批注链接只对它那个任务有效' });
       return;
     }
@@ -450,8 +456,8 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     }
   });
 
-  // 外部批注的回流口：批注者带着任务范围 token（`?t=`）来，免登录。
-  // `by` 由凭据推（link:<别名>），请求体里就算带了也不采信；只能写这个任务 items 里的照片。
+  // 外部批注的回流口：批注人带着任务范围 token（`?t=`）来，免登录。
+  // `by` 由凭据推（link:<批注人>），请求体里就算带了也不采信；只能写这个任务 items 里的照片。
   app.post('/api/v1/jobs/:id/inbound', async (req, reply) => {
     const { id } = req.params as { id: string };
     const items = inboundItemsOf(req.body);

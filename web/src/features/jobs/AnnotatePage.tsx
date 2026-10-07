@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw, Star, Trash2, X } from 'lucide-react';
 import { cn } from 'cn';
 import { annotateSource } from '@/api';
+import { AuthRequiredError } from '@/api/source';
 import type { InboundItem, Job, JobItem } from '@/core/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,7 @@ interface LocalMark {
   status: 'saved' | 'pending' | 'failed';
 }
 
-/** 范围 token 的载荷是 `annotate|<jobId>|<别名>|<exp>|<tokenId>`（base64url）——批注页只需要前两段 */
+/** 范围 token 的载荷是 `annotate|<jobId>|<批注人>|<exp>|<tokenId>`（base64url）——批注页只需要前两段 */
 function decodeToken(token: string): { jobId: string; alias: string } | null {
   if (token.startsWith('mock-')) return { jobId: token.slice(5), alias: '外部批注人' };
   try {
@@ -67,8 +68,9 @@ export function AnnotatePage() {
       setPhase('ready');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // 401/403 = 链接失效（任务取消/撤销签发 token/过期），不是网络问题
-      if (/401|403|失效|未认证/.test(msg)) setPhase('dead');
+      // 401 = 服务端不认这条 token（过期/任务被取消/签发它的凭据被撤销）。注意
+      // AuthRequiredError 的文案是「需要登录」，靠字符串匹配是匹配不到的。
+      if (e instanceof AuthRequiredError || /40[134]|失效|未认证|只对它那个任务/.test(msg)) setPhase('dead');
       else {
         setPhase('error');
         setError(msg);
@@ -85,16 +87,28 @@ export function AnnotatePage() {
       if (!meta) return;
       setSending(true);
       try {
-        await annotateSource.submitInbound(token, meta.jobId, items);
+        const results = await annotateSource.submitInbound(token, meta.jobId, items);
+        // 服务端逐项回结果：整批恒 200，单项失败在 results[].ok 里 —— 失败项得留在
+        // 队列里，不能整批都当「已记录」（那样界面说记上了、后端没记）。
+        const bad = new Set(results.filter((r) => !r.ok).map((r) => r.id));
         setMarks((prev) => {
           const next = { ...prev };
           items.forEach((it) => {
-            next[it.photoId] = { stars: it.stars ?? 0, del: it.del === true, status: 'saved' };
+            next[it.photoId] = {
+              stars: it.stars ?? 0,
+              del: it.del === true,
+              status: bad.has(it.photoId) ? 'failed' : 'saved',
+            };
           });
           return next;
         });
-        setPending((prev) => prev.filter((p) => !items.some((i) => i.photoId === p.photoId)));
-        setNote(items.length > 1 ? `${items.length} 条已记录` : '已记录');
+        const failed = items.filter((it) => bad.has(it.photoId));
+        setPending((prev) => {
+          const rest = prev.filter((p) => !items.some((i) => i.photoId === p.photoId));
+          return [...rest, ...failed];
+        });
+        if (failed.length === 0) setNote(items.length > 1 ? `${items.length} 条已记录` : '已记录');
+        else setNote(`${failed.length} 条没记上：${results.find((r) => !r.ok)?.error ?? '服务端拒绝了'}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setMarks((prev) => {
@@ -228,6 +242,7 @@ export function AnnotatePage() {
             <li key={it.id}>
               <button
                 onClick={() => setOpenId(it.id)}
+                aria-label={`${it.displayName ?? it.id}，${m?.del ? '已标待删' : m?.stars ? `已标 ${m.stars} 星` : '未标'}`}
                 className={cn(
                   'relative block w-full overflow-hidden rounded-lg border text-left transition-colors',
                   marked ? 'border-gold/60' : 'border-border/60',
@@ -298,6 +313,7 @@ export function AnnotatePage() {
                     <button
                       key={n}
                       aria-label={`${n} 星`}
+                      aria-pressed={on}
                       onClick={() => mark(current, { stars: n, del: false })}
                       className="grid size-11 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
                     >

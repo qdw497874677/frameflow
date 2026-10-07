@@ -92,7 +92,7 @@ v1 曾有一整套「归档规则引擎」：条件匹配 + `{root}/{project}/{d
 
 两者必须分开：只问「要不要密码」的话，刚登录成功、接着又跑一次 boot 的人会因为那次探测没带 cookie 被踢回登录页（这是端到端测试跑出来的真 bug）。静态壳（`/`、`/assets/*`）不受认证门保护 —— 锁上的话浏览器连登录页都拿不到，只会看到 401 的 JSON；数据全在 `/api/` 后面。
 
-密码换一个签名 cookie（30 天）；AI/CLI 用 `POST /api-tokens` 签发的 Bearer，外部批注者用 `?t=` 自认证链接 token（见 `docs/core-model.md` §11）。
+密码换一个签名 cookie（30 天）；AI/CLI 用 `POST /api-tokens` 签发的 Bearer，外部批注人用 `?t=` 自认证链接 token（见 `docs/core-model.md` §11）。
 
 ## 任务与批注
 

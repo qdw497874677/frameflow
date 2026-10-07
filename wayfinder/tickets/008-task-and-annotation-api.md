@@ -17,7 +17,7 @@ blocked-by: []
 1. **任务资源的字段**：`kind / selection / params / state / progress / manifest / artifacts` 各自要到什么粒度？manifest 记到「文件」还是「照片（组）」？产物（导出目录、报告文件）怎么指？
 2. **选择集的表达**：谓词字段集合是否够（项目 / kind / stars / del / marked / taken / folder / camera）？要不要命名保存（`POST /selections`）还是 v1 只做内联谓词 + 手选 id 列表？
 3. **回流协议**：外部批注（飞书卡片点击 / 其他客户端）经什么端点进来（`POST /channels/{id}/inbound`）？载荷带什么（photoId、stars/del、by、at、幂等键）？冲突策略（后写覆盖 + 保留历史）在 API 上怎么体现 —— 要不要乐观并发（带 `expectedFrom`）？
-4. **身份与权限**：外部批注者不做账号体系，那就得定 token 的形态与范围（只读这一批 + 只能写标注、有效期、能否撤销）。它同时决定 004 的访问控制怎么设计。
+4. **身份与权限**：外部批注人不做账号体系，那就得定 token 的形态与范围（只读这一批 + 只能写标注、有效期、能否撤销）。它同时决定 004 的访问控制怎么设计。
 5. **进度流**：`GET /jobs/{id}/events` 用 SSE 还是轮询？重连与补发（`Last-Event-ID`）要不要在 v1 做？
 6. **同步便捷入口的边界**：`/trash` 保留为同步路径，与 `kind: 'trash'` 的任务是什么关系（同一实体的即时执行？还是两套实现）？哪些能力允许有便捷入口？
 
@@ -29,7 +29,7 @@ blocked-by: []
 
 1. **任务字段粒度**：`selection` 存谓词（「怎么选出来的」凭据），`items[]` 存**创建时展开的快照** —— 派发出去的那一批必须稳定，人看到的和系统记的是同一批。粒度是**照片配对组**（RAW+JPEG 是一个单位，与 marks/回收站的 pair 语义一致），不是文件；`progress` 数 items。`artifacts` 对 annotate 是发出去的卡片/链接（`kind: message | url`），对 export 是目录/文件。`mode: plan` 只展开 items 不落库，人看过再 `apply`。
 2. **选择集表达**：v1 **不做** `POST /selections`。快照已由 `items` 解决；命名保存是浏览侧（智能相册）的功能，与任务层无关。手选继续用 `selection.ids`。
-3. **回流协议**：端点从 `/channels/{id}/inbound` 改成 **`POST /jobs/{id}/inbound`** —— 通道只出站，回流是任务的事（任务才是进度/审计/撤销的单位）。载荷 `{ items: [{ photoId, stars?, del?, at?, clientRef? }] }`；`by` **不由客户端给**，从 token 别名推 `link:<别名>`（避免伪造）。幂等 = 每条 `clientRef`（重复提交跳过并返回首次结果 —— 外部系统会整批重发）。冲突 = 后写覆盖 + 历史留痕（`marks.jsonl` 的 `from→to` 与任务事件流都能对账）；乐观并发（`expectedFrom`）v1 不做。
+3. **回流协议**：端点从 `/channels/{id}/inbound` 改成 **`POST /jobs/{id}/inbound`** —— 通道只出站，回流是任务的事（任务才是进度/审计/撤销的单位）。载荷 `{ items: [{ photoId, stars?, del?, at?, clientRef? }] }`；`by` **不由客户端给**，从 token 里的批注人推 `link:<批注人>`（避免伪造）。幂等 = 每条 `clientRef`（重复提交跳过并返回首次结果 —— 外部系统会整批重发）。冲突 = 后写覆盖 + 历史留痕（`marks.jsonl` 的 `from→to` 与任务事件流都能对账）；乐观并发（`expectedFrom`）v1 不做。
 4. **身份与权限**：不做账号体系，把链接 token 扩成**范围 token**（载荷 `annotate:<jobId>`）：只读该任务的选择集 + 缩略图、只能 POST 该任务的 inbound、有效期 30 天、可撤销；`?t=` 或 `Authorization: Bearer` 都认。范围 token 绑定签发它的 API token，撤销即失效。
 5. **进度流**：v1 用**增量轮询** `GET /jobs/{id}/events?since=<seq>` → `{ items: JobEvent[], nextSince }`，事件带单调递增 `seq`。将来要实时推送时在同一形状上加 SSE（`Last-Event-ID` = `seq`，日志可重放）—— 契约先不标 SSE。
 6. **同步便捷入口**：`/trash` 保持同步，**不设** `kind:'trash'`（不做同一实体的两套实现）。规则：同步、单工作单位、没有进度 → 便捷入口（`PUT /marks`、`/trash`、`POST /scan`）；长跑、多步、有进度或需要审计 → `/jobs`。kind 先只落 `annotate`。

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink, Link2, Send, Users } from 'lucide-react';
 import { jobSource, source } from '@/api';
 import { store, useAppState } from '@/core/store';
@@ -26,14 +26,29 @@ export function DispatchAnnotateButton() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const busyRef = useRef(false);
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const rootId = dir?.split('/')[1] ?? '';
   const empty = !selection.where || Object.keys(selection.where).length === 0;
-  const scoped: Selection = {
-    ...selection,
-    ...(rootId ? { project: rootId } : {}),
-    ...(empty && !selection.ids?.length ? { ids: items.map((i) => i.id) } : {}),
-  };
+  // 预演与实派必须用**同一个**选择集对象：它是 effect 的依赖，每次渲染新建一个的话
+  // 预演会反复重来，而依赖数组里只看得到字段列表（selection.ids 变了但 items.length 没变
+  // 时预演不刷新）—— 两边会看到不同的张数。
+  const scoped: Selection = useMemo(
+    () => ({
+      ...selection,
+      ...(rootId ? { project: rootId } : {}),
+      ...(empty && !selection.ids?.length ? { ids: items.map((i) => i.id) } : {}),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selection, rootId, empty, items],
+  );
   const scopeText = empty
     ? `眼前这批 ${items.length} 张`
     : `当前筛选（${dir ? dir.split('/').slice(2).join('/') || '项目根' : '项目'}）`;
@@ -64,9 +79,12 @@ export function DispatchAnnotateButton() {
     };
     // label 只在派发时进 params：预演不必随每次击键重来
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selection, dir, items.length]);
+  }, [open, scoped]);
 
   const dispatch = async () => {
+    // 防重入：同一个标签页里连点两下（或回车 + 点击）会派出两个任务
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const job = await jobSource.createJob({
@@ -82,17 +100,23 @@ export function DispatchAnnotateButton() {
       let cur = job;
       for (let i = 0; i < 20 && cur.artifacts.length === 0 && isActive(cur.state); i++) {
         await new Promise((r) => setTimeout(r, 600));
+        if (!aliveRef.current) return;
         try {
           cur = await jobSource.getJob(job.id);
-        } catch {
-          break;
+        } catch (e) {
+          // 读不到就说出来（能重试），别静默卡在「链接签发中…」
+          if (aliveRef.current) {
+            setError(`读不到任务状态：${e instanceof Error ? e.message : String(e)} —— 稍后去任务页看看`);
+          }
+          return;
         }
-        setCreated(cur);
+        if (aliveRef.current) setCreated(cur);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (aliveRef.current) setBusy(false);
     }
   };
 
@@ -157,11 +181,18 @@ export function DispatchAnnotateButton() {
                 >
                   {copied ? <Check /> : <Copy />}
                 </Button>
-                <Button variant="ghost" size="icon-sm" asChild aria-label="打开批注页" disabled={!absolute}>
-                  <a href={absolute} target="_blank" rel="noreferrer">
+                {absolute ? (
+                  <Button variant="ghost" size="icon-sm" asChild aria-label="打开批注页">
+                    <a href={absolute} target="_blank" rel="noreferrer">
+                      <ExternalLink />
+                    </a>
+                  </Button>
+                ) : (
+                  // <Button asChild disabled> 管不到里面的 <a>：没链接时直接渲染一个 disabled 按钮
+                  <Button variant="ghost" size="icon-sm" aria-label="打开批注页" disabled>
                     <ExternalLink />
-                  </a>
-                </Button>
+                  </Button>
+                )}
               </div>
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 链接自带凭据（范围 token，30 天）：批注人不用登录、只能看这个任务里的照片、只能写回这个任务。
@@ -172,7 +203,7 @@ export function DispatchAnnotateButton() {
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <label htmlFor="annotate-label" className="text-xs text-muted-foreground">
-                  批注人（回流记成 <span className="font-mono">link:&lt;别名&gt;</span>，用来区分是谁标的）
+                  批注人（回流记成 <span className="font-mono">link:&lt;批注人&gt;</span>，用来区分是谁标的）
                 </label>
                 <Input
                   id="annotate-label"

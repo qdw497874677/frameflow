@@ -18,7 +18,7 @@ import { annotate } from './annotate.ts';
 /** handler 拿到的东西：库（读照片/写标注）+ 任务层给的能力 */
 export interface JobContext {
   lib: Library;
-  /** 签发任务范围 token（载荷 `annotate|<jobId>|<别名>|<exp>|<签发它的 API token id>`），见 api/auth.ts */
+  /** 签发任务范围 token（载荷 `annotate|<jobId>|<批注人>|<exp>|<签发它的 API token id>`），见 api/auth.ts */
   signRangeToken: (jobId: string, alias: string, tokenId?: string | null) => { token: string; expiresAt: string };
 }
 
@@ -31,7 +31,7 @@ export interface InboundInput {
   clientRef?: string;
 }
 
-/** 进 handler 的项：`by` 已经由凭据解析好（范围 token → `link:<别名>`，主凭据 → `me`） */
+/** 进 handler 的项：`by` 已经由凭据解析好（范围 token → `link:<批注人>`，主凭据 → `me`） */
 export interface InboundWrite extends InboundInput {
   by: string;
 }

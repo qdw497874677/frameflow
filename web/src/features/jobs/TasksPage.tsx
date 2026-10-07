@@ -40,6 +40,9 @@ export function TasksPage() {
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const sinceRef = useRef(0);
+  // 跟着 selectedId 走的 ref：异步响应回来时用它判断「这个结果还属于当前选中的任务吗」
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selectedId;
 
   const loadList = useCallback(async () => {
     try {
@@ -79,13 +82,14 @@ export function TasksPage() {
     let alive = true;
     sinceRef.current = 0;
     setEvents([]);
+    setDetail(null); // 切换任务时先清干净，别让上一条的进度/流水挂在右边
     const tick = async () => {
       try {
         const [job, page] = await Promise.all([
           jobSource.getJob(selectedId),
           jobSource.jobEvents(selectedId, { since: sinceRef.current }),
         ]);
-        if (!alive) return;
+        if (!alive || selectedRef.current !== selectedId) return;
         sinceRef.current = page.nextSince;
         setDetail(job);
         if (page.items.length) setEvents((prev) => [...prev, ...page.items]);
@@ -94,18 +98,28 @@ export function TasksPage() {
         if (alive) setError(e instanceof Error ? e.message : String(e));
       }
     };
-    void tick();
-    const t = setInterval(() => void tick(), 2500);
+    // 串行循环而不是 setInterval：后端慢过一次 2.5s 时，两个 tick 会读到同一个游标，
+    // 把同一批事件追加两次、把 nextSince 回退（任务页的核心信息就是这条流水）
+    let stopped = false;
+    void (async () => {
+      while (!stopped) {
+        await tick();
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    })();
     return () => {
       alive = false;
-      clearInterval(t);
+      stopped = true;
     };
   }, [selectedId]);
 
   const act = async (fn: () => Promise<Job>) => {
+    const id = selectedId;
     setBusy(true);
     try {
-      setDetail(await fn());
+      const next = await fn();
+      // 发请求期间人可能已经切到别的任务了：别把旧任务的结果盖到新的上面
+      if (selectedRef.current === id) setDetail(next);
       await loadList();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -118,7 +132,8 @@ export function TasksPage() {
   const itemOf = useCallback((id: string) => detail?.items.find((i) => i.id === id), [detail]);
   const undone = events.some((e) => e.type === 'undone');
   const canCancel = detail ? detail.state !== 'done' && detail.state !== 'failed' && detail.state !== 'cancelled' : false;
-  const canUndo = Boolean(detail?.reversible) && !undone && detail?.state !== 'cancelled';
+  // 取消的提示里写着「要退回请 undo」—— 服务端也允许对已取消的任务撤销（只回滚标注，不再迁状态）
+  const canUndo = Boolean(detail?.reversible) && !undone;
 
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">

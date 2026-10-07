@@ -12,7 +12,7 @@
  *   ① token 载荷是 `annotate|<jobId>|<别名>|<exp>`，有效期 30 天；
  *   ② 范围 token 只能读**本任务 items 里**的缩略图（任务外 404），只能 POST 本任务的 inbound；
  *      拿它去 GET /jobs、/photos、/marks/history 一律 401（范围受限不是嘴上说说）；
- *   ③ 回流里的 `by` 由 token 推（`link:<别名>`），请求体里塞的 `by` 被忽略；
+ *   ③ 回流里的 `by` 由 token 推（`link:<批注人>`），请求体里塞的 `by` 被忽略；
  *   ④ `clientRef` 幂等：重发同样的项不重复写盘、返回首次结果、事件留 `skipped`；改值也一样被挡住；
  *   ⑤ items 全有终态 → 任务 `done`；`GET /marks/history?jobId=` 能对账（from → to、channel、by）；
  *   ⑥ undo 按本任务写下的 `from` 回滚（记 `channel: 'undo'`），任务落 `cancelled` + `undone` 事件；
@@ -78,7 +78,7 @@ async function req(path, init = {}) {
   return { status: res.status, body };
 }
 
-/** 不带任何会话 cookie 的请求（批注者手里只有链接） */
+/** 不带任何会话 cookie 的请求（批注人手里只有链接） */
 async function bare(path, init = {}) {
   const res = await fetch(BASE + path, {
     ...init,
@@ -377,7 +377,7 @@ const hist = await req(`/marks/history?jobId=${jobId}&limit=100`);
 const rows = hist.body?.items ?? [];
 check(rows.length >= 3, '主凭据 GET /marks/history?jobId= 看到这次回流', `n=${rows.length}`);
 check(rows.every((c) => c.jobId === jobId), '都挂在本任务上（jobId 贯通到变更日志）', rows.map((c) => c.jobId === jobId).join(','));
-check(rows.every((c) => c.by === 'link:老婆'), 'by = link:<别名>（由上链的 token 推）', [...new Set(rows.map((c) => c.by))].join(','));
+check(rows.every((c) => c.by === 'link:老婆'), 'by = link:<批注人>（由上链的 token 推）', [...new Set(rows.map((c) => c.by))].join(','));
 check(!rows.some((c) => String(c.by).includes('伪造')), '请求体里塞的 by 被忽略（凭据说了算）', [...new Set(rows.map((c) => c.by))].join(','));
 check(rows.every((c) => c.channel === 'inapp'), 'channel 来自任务的 params.channel', [...new Set(rows.map((c) => c.channel))].join(','));
 check(rows.every((c) => c.from !== c.to), 'from ≠ to（真变了才记）', rows.map((c) => `${c.from}→${c.to}`).slice(0, 3).join(' '));
@@ -461,6 +461,11 @@ const token2 = (job2?.artifacts?.find((a) => a.kind === 'url')?.path ?? '').slic
 check(Boolean(token2) && payloadOf(token2).alias === '老王', '第二个任务（别名 老王）也签了链接', payloadOf(token2).alias);
 const aliveThumb = await bare(`/photos/${picks[0].id}/thumb?t=${encodeURIComponent(token2)}`);
 check(aliveThumb.status === 200, '取消前链接可用', `status=${aliveThumb.status}`);
+const inb2 = await bare(`/jobs/${created2.id}/inbound?t=${encodeURIComponent(token2)}`, {
+  method: 'POST',
+  body: JSON.stringify({ items: [{ photoId: picks[0].id, stars: 3, clientRef: 'job2-1' }] }),
+});
+check(inb2.status === 200 && inb2.body?.results?.[0]?.ok === true, '第二个任务先收到一条回流（好在取消后验证 undo）', `status=${inb2.status} ${JSON.stringify(inb2.body?.results?.[0] ?? null).slice(0, 60)}`);
 const cancelled = await post(`/jobs/${created2.id}/cancel`);
 check(cancelled.status === 200 && cancelled.body?.state === 'cancelled', '取消任务', `${cancelled.status}/${cancelled.body?.state}`);
 const deadThumb2 = await bare(`/photos/${picks[0].id}/thumb?t=${encodeURIComponent(token2)}`);
@@ -469,6 +474,25 @@ const cancelAgain = await post(`/jobs/${created2.id}/cancel`);
 check(cancelAgain.status === 409, '再取消一次 → 409', `${cancelAgain.status}`);
 const noUndo = await post(`/jobs/${jobId}/undo`);
 check(noUndo.status === 409, '撤销过的任务再 undo → 409', `${noUndo.status} ${JSON.stringify(noUndo.body?.error ?? '')}`);
+// 取消过的任务照样能撤销（取消的提示里就写着「要退回请 undo」）：回滚标注，但状态不再迁
+// （状态机不允许 cancelled → cancelled —— 这里曾经在回滚完标注之后抛 409，标注白回滚了）
+const keptAfterCancel = (await photosIn(A7)).find((x) => x.id === picks[0].id);
+check((keptAfterCancel?.stars ?? 0) === 3, '取消不清标注（写的标注留着，等 undo）', `stars=${keptAfterCancel?.stars}`);
+const undoCancelled = await post(`/jobs/${created2.id}/undo`);
+check(
+  undoCancelled.status === 200 && undoCancelled.body?.state === 'cancelled',
+  '已取消的任务也能 undo → 200 且仍是 cancelled',
+  `${undoCancelled.status}/${undoCancelled.body?.state}`,
+);
+const rolledBack2 = (await photosIn(A7)).find((x) => x.id === picks[0].id);
+const was2 = before.find((b) => b.id === picks[0].id);
+check(
+  (rolledBack2?.stars ?? 0) === was2.stars && (rolledBack2?.del === true) === was2.del,
+  '取消后的撤销也真回滚了标注',
+  `stars=${rolledBack2?.stars}/del=${rolledBack2?.del}（原 ${was2.stars}/${was2.del}）`,
+);
+const undoTwice2 = await post(`/jobs/${created2.id}/undo`);
+check(undoTwice2.status === 409, '再撤销一次 → 409（已撤过）', `${undoTwice2.status}`);
 
 // ── 7. 主凭据没受影响 ─────────────────────────────────────────────────────
 console.log('\n── 主凭据照旧 ──');
@@ -480,7 +504,7 @@ const mainThumb = await req(`/photos/${picks[0].id}/thumb`);
 check(mainThumb.status === 200, '主凭据读缩略图不受范围 token 影响', `status=${mainThumb.status}`);
 const audit = await req(`/marks/history?jobId=${jobId}&limit=200`);
 const kinds = (audit.body?.items ?? []).map((c) => `${c.by}/${c.channel}`);
-check(new Set(kinds).size >= 2, '一次往返在日志里留下两个来源（批注者 + 自己回滚）', [...new Set(kinds)].join(','));
+check(new Set(kinds).size >= 2, '一次往返在日志里留下两个来源（批注人 + 自己回滚）', [...new Set(kinds)].join(','));
 const jsonl = readFileSync(join(DATA_DIR, 'marks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 check(jsonl.some((c) => c.by === 'link:老婆' && c.jobId === jobId), '落盘也在：marks.jsonl 里能看到 link:老婆 + jobId', `${jsonl.length} 行`);
 
@@ -534,6 +558,50 @@ const raceWrites = (raceRows.body?.items ?? []).filter((c) => c.by === 'link:并
 check(raceWrites.length === 1, '并发重发只写一次盘（clientRef 幂等抗竞态）', `写入 ${raceWrites.length} 条`);
 const raceEvents = await req(`/jobs/${job4?.id}/events?limit=200`);
 check((raceEvents.body?.items ?? []).some((e) => e.type === 'skipped' && e.clientRef === 'race-1'), '事件流里能看到一次 skipped', `${(raceEvents.body?.items ?? []).filter((e) => e.type === 'skipped').length} 条`);
+
+// ── 10. 作用域 = 路径 + 方法；畸形编码不炸 ─────────────────────────────────
+console.log('\n── 范围 token 只放行那几个动作 ──');
+const getInbound = await bare(`/jobs/${job4?.id}/inbound?t=${encodeURIComponent(token4)}`);
+check([401, 404].includes(getInbound.status), 'GET 回流入口（不是 POST）→ 不放行（路由层先挡，401/404）', `${getInbound.status}`);
+const badPct = await bare(`/jobs/%E0%A4%A?t=${encodeURIComponent(token4)}`);
+check(badPct.status !== 500 && [400, 404].includes(badPct.status), '畸形百分号编码 → 400/404（以前会 URIError → 500）', `${badPct.status}`);
+const otherJobDetail = await bare(`/jobs/别处?t=${encodeURIComponent(token4)}`);
+check(otherJobDetail.status === 404, '范围 token 读别人的任务详情 → 404', `${otherJobDetail.status}`);
+
+// ── 11. 单项失败要逐项回 ok:false（批注页靠它决定哪些进重发队列）────────────
+console.log('\n── 单项失败逐项回结果 ──');
+const created5 = (await post('/jobs', { kind: 'annotate', selection: { ids: picks.slice(0, 2).map((x) => x.id) }, params: { label: '单项失败' }, mode: 'apply' })).body;
+const job5 = await pollJob(created5?.id, ['running']);
+const token5 = (job5?.artifacts?.find((a) => a.kind === 'url')?.path ?? '').slice(5);
+// 派出去之后，主人在挑片页把其中一张扔进了回收站 —— 批注人那边还不知道
+const trashed = await post('/trash', { ids: [picks[0].id] });
+check(trashed.status === 200 && trashed.body?.ok === 1, '主人把其中一张扔进回收站', `${trashed.status} ${JSON.stringify(trashed.body ?? null).slice(0, 60)}`);
+const mixed = await bare(`/jobs/${job5?.id}/inbound?t=${encodeURIComponent(token5)}`, {
+  method: 'POST',
+  body: JSON.stringify({
+    items: [
+      { photoId: picks[0].id, stars: 2, clientRef: 'mixed-bad' },
+      { photoId: picks[1].id, stars: 2, clientRef: 'mixed-good' },
+    ],
+  }),
+});
+const mixedById = new Map((mixed.body?.results ?? []).map((r) => [r.id, r]));
+check(
+  mixed.status === 200 && mixedById.get(picks[0].id)?.ok === false && /回收站|不认识这张照片/.test(mixedById.get(picks[0].id)?.error ?? ''),
+  '整批还是 200，坏的那项逐项回 ok:false + 原因（批注页据此进重发队列）',
+  JSON.stringify(mixedById.get(picks[0].id) ?? null).slice(0, 90),
+);
+check(mixedById.get(picks[1].id)?.ok === true, '好的一项照常写上', JSON.stringify(mixedById.get(picks[1].id) ?? null).slice(0, 90));
+const failedEvents = await req(`/jobs/${job5?.id}/events?limit=200`);
+check((failedEvents.body?.items ?? []).some((e) => e.type === 'failed' && e.photoId === picks[0].id), '事件流里留了 failed（哪一项没写上）', `${(failedEvents.body?.items ?? []).filter((e) => e.type === 'failed').length} 条`);
+const job5After = await req(`/jobs/${job5?.id}`);
+check(
+  (job5After.body?.items ?? []).find((i) => i.id === picks[0].id)?.status === 'failed',
+  'items 里那一项落 failed（任务页看得见）',
+  (job5After.body?.items ?? []).map((i) => `${i.displayName}:${i.status}`).join(' '),
+);
+const restored2 = await post('/trash/restore', { ids: [picks[0].id] });
+check(restored2.status === 200 && restored2.body?.ok === 1, '照片捞回原位（夹具不留垃圾）', `${restored2.status}`);
 
 await stopServer(server);
 

@@ -72,7 +72,7 @@ export interface MarkInput {
 
 /** 谁改的、从哪改的：外部批注回流的凭据 */
 export interface MarkActor {
-  /** 'me' | 'link:<别名>' | 'ai' | 'job:<id>' */
+  /** 'me' | 'link:<批注人>' | 'ai' | 'job:<id>' */
   by: string;
   /** 'inapp' | 'feishu' | … */
   channel: string;
@@ -207,7 +207,7 @@ export interface JobItem {
   at?: string | null;
 }
 
-/** 批注回流的一项：批注页给某一张的最终结论（`by` 不在里面 —— 由服务端从链接别名推） */
+/** 批注回流的一项：批注页给某一张的最终结论（`by` 不在里面 —— 由服务端从链接里的批注人推） */
 export interface InboundItem {
   photoId: string;
   stars?: number;
@@ -245,7 +245,7 @@ export interface JobEvent {
   photoId?: string | null;
   from?: number | boolean | string | null;
   to?: number | boolean | string | null;
-  /** me | link:<别名> | ai:<模型> | job:<id> */
+  /** me | link:<批注人> | ai:<模型> | job:<id> */
   by?: string | null;
   channel?: string | null;
   clientRef?: string | null;

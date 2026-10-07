@@ -250,7 +250,9 @@ export class JobsService {
     }
     const outcome = await handler.undo(job, this.ctx, this.sinkFor(id));
     if (outcome.state === 'failed') throw new JobError('conflict', outcome.error ?? '撤销失败');
-    const undone = this.store.setState(id, 'cancelled', { error: null });
+    // 已取消的任务照样能撤销（回滚它写过的标注）——取消的提示里就写着「要退回请 undo」。
+    // 但它已经是 cancelled，不必再迁一次状态（状态机不允许 cancelled → cancelled）。
+    const undone = job.state === 'cancelled' ? this.get(id) : this.store.setState(id, 'cancelled', { error: null });
     this.store.addEvent(id, { type: 'undone', note: outcome.note ?? '任务已撤销，本任务写下的标注已回滚' });
     return undone;
   }
@@ -272,7 +274,7 @@ export class JobsService {
   }
 
   /**
-   * 外部回流：`by` 由凭据推（范围 token → `link:<别名>`，主凭据 → `me`），**请求体里的 by 不算数**。
+   * 外部回流：`by` 由凭据推（范围 token → `link:<批注人>`，主凭据 → `me`），**请求体里的 by 不算数**。
    * 只认这个任务 items 里的照片（别的照片 404）、clientRef 幂等（重复的跳过并返回首次结果）。
    */
   private async inboundOnce(id: string, raw: InboundInput[], by: string): Promise<MarkResultDto[]> {

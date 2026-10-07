@@ -113,7 +113,7 @@ GET  /jobs/{id}/events           增量事件日志（?since= 轮询，seq 游�
 POST /jobs/{id}/cancel
 POST /jobs/{id}/undo             handler 实现了 undo 才可用
 GET  /channels                   有哪些出站派发目标
-POST /jobs/{id}/inbound          外部批注回流口（IM 回调 / 外部客户端；by 由 token 别名推）
+POST /jobs/{id}/inbound          外部批注回流口（IM 回调 / 外部客户端；by 由 token 里的批注人推）
 GET  /marks/history              标注变更流（按照片 / 时间 / 任务）
 POST /selections                 可选：保存命名选择集（v1 不做 —— 快照由任务的 items 解决）
 ```
@@ -126,7 +126,7 @@ POST /selections                 可选：保存命名选择集（v1 不做 —�
 |---|---|---|
 | **导出**（挑好的照片交到别处） | `jobs/export.ts`：`plan` 展开目标路径 + 冲突处理，`apply` 复制 + 写 manifest，`params.recipe` | 任务页 + 一个「导出」入口 |
 | **滤镜 / 处理** | 就是 export 的 **recipe 参数**（`{filters: [...], resize: {...}, format}`），不是新管线 | 同上 |
-| **推送到飞书批注** | `jobs/annotate.ts` + `channels/feishu.ts`：推送选择集为卡片（先展开 `items` 快照），回执经 `POST /jobs/{id}/inbound` 写成标注（`by: 'link:<别名>'`） | 任务页显示「待外部批注」 |
+| **推送到飞书批注** | `jobs/annotate.ts` + `channels/feishu.ts`：推送选择集为卡片（先展开 `items` 快照），回执经 `POST /jobs/{id}/inbound` 写成标注（`by: 'link:<批注人>'`） | 任务页显示「待外部批注」 |
 | **AI 自动挑选** | 一个 `annotate` 任务的执行者（产出标注，`by: 'ai'`），不是新架构 | 无 |
 | **定时任务**（每周导出四星） | `selection` + `schedule` 两个字段，加一个 cron 触发；**调度器最后做** | 无 |
 
@@ -142,7 +142,7 @@ POST /selections                 可选：保存命名选择集（v1 不做 —�
 
 1. **标注要不要记「谁 / 什么时候」** → **要**，且最早加（成本极小，晚加要迁移历史）。
 2. **任务要不要持久化** → **最小持久化**（状态表 / JSONL），重启后历史可查；但**执行队列不持久化**，重启时把 `running` 标为 `interrupted` 让人重跑，别做断点续传。
-3. **外部批注者的身份** → **v1 不做账号体系**。一个任务签发一个**带权限范围的链接 token**（只读这一批 + 只能写标注），回填 `by: 'link:<别名>'`。
+3. **外部批注人的身份** → **v1 不做账号体系**。一个任务签发一个**带权限范围的链接 token**（只读这一批 + 只能写标注），回填 `by: 'link:<批注人>'`。
 4. **第一个落地的异步能力** → **导出**。它最安全（只写新位置，不碰原片）；飞书推送等 004（状态存哪 / 访问控制）与 005（技术栈）定了再做。**实际先落的是 `annotate`（推送批注，2026-10-07）**：004/008 定了任务骨架与范围 token 后，用户要求先把「推一批给人批注」跑通；导出仍是下一个 kind。
 
 ## 11. AI 接入面：AI 是最挑剔的客户端，不是特殊通道
@@ -180,7 +180,7 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 1. **签发长期 Bearer token**：`POST /api-tokens`（列出 / 签发 / 撤销），明文只在签发响应里出现一次，服务端存哈希 + `label/lastUsedAt/scope`；agent 用 `Authorization: Bearer …` 调 API。
 2. **缩略图 URL 必须自认证**：`GET /photos/{id}/thumb?size=2048&t=<linkToken>`。原因很实在 —— agent 是把 URL 交给自己的图像加载器（甚至模型服务商）去取的，**带不上自定义 header**；URL 里必须自带凭据。
    已实现：签发 API token（`POST /api-tokens`）时响应里一并给出 `linkToken` 与 `thumbUrlTemplate`（把 `{id}` / `{size}` 填上即可）。签名载荷是 `link|<tokenId>|<exp>`（30 天）——绑的是**签发它的那条 API token**，不是单张照片，所以一个 linkToken 能取全库缩略图；撤销 API token 立刻失效。范围只有 `/thumb`：`?t=` 只在缩略图路由上被消费，写接口仍然只认 cookie / Bearer。
-范围受限的外部批注链接（`by: link:<别名>`）**已落地（2026-10-07，票 008/015）**：载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图、`GET /jobs/{id}`（**只读 token 里那一个任务**：批注页刷新后靠它读回已经标过的 items）与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
+范围受限的外部批注链接（`by: link:<批注人>`）**已落地（2026-10-07，票 008/015）**：载荷 `annotate|<jobId>|<批注人>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图、`GET /jobs/{id}`（**只读 token 里那一个任务**：批注页刷新后靠它读回已经标过的 items）与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
 
 **权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
 

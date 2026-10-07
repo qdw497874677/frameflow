@@ -65,7 +65,7 @@ export interface MarkInputDto {
   del?: boolean;
   /** 客户端时刻（ISO）：服务端以它为准写变更日志，缺省用服务端时间 */
   at?: string;
-  /** 谁改的：'me' | 'link:<别名>' | 'ai' | 'job:<id>' */
+  /** 谁改的：'me' | 'link:<批注人>' | 'ai' | 'job:<id>' */
   by?: string;
   /** 从哪个渠道改的：'inapp' | 'feishu' | … */
   channel?: string;
@@ -239,7 +239,7 @@ export interface JobEventPageDto {
   nextSince: number;
 }
 
-/** 批注回流的一项（`POST /jobs/{id}/inbound`）：`by` 由服务端从 token 别名推，请求体里没有这个字段 */
+/** 批注回流的一项（`POST /jobs/{id}/inbound`）：`by` 由服务端从 token 里的批注人推，请求体里没有这个字段 */
 export interface InboundItemDto {
   photoId: string;
   stars?: number;

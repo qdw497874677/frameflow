@@ -7,10 +7,10 @@
  *  - **自认证链接 token**（`?t=`）：给「把图片 URL 交给自己的图像加载器」的客户端用
  *    （带不上自定义 header）。签发 API token 时一并给出（`linkToken`），签名里绑定那条 token 的
  *    id：撤销 API token = 链接立刻失效；范围只有读缩略图（`/thumb`）。
- *  - **任务范围 token**（同样走 `?t=`）：批注任务签发给外部批注人，载荷绑定任务 id、批注者别名
+ *  - **任务范围 token**（同样走 `?t=`）：批注任务签发给外部批注人，载荷绑定任务 id、批注人
  *    与**签发它的 API token id**（`-` = 从会话/免认证签发，没有可撤销的 token）。撤销模型两条：
  *    签发它的 API token 一撤销就失效（与 linkToken 同一套），任务本身被取消/删掉也失效（任务层判）。
- *    范围只有「该任务 items 里的缩略图」与「POST /jobs/{id}/inbound」，回流记 `by: 'link:<别名>'`。
+ *    范围只有「该任务 items 里的缩略图」与「POST /jobs/{id}/inbound」，回流记 `by: 'link:<批注人>'`。
  *    两种 `?t=` 凭据按路由分开消费：缩略图路由认 linkToken 与范围 token，回流路由**只认范围 token**
  *    （缩略图链接是只读的，不能拿去写标注）。
  *
@@ -35,7 +35,7 @@ export type CredentialVia = 'session' | 'bearer' | 'link' | 'annotate';
 export interface Identity {
   via: CredentialVia;
   token?: ApiTokenMeta;
-  /** `via='annotate'`：任务范围 token 解析出的任务 id 与批注者别名 */
+  /** `via='annotate'`：任务范围 token 解析出的任务 id 与批注人 */
   jobId?: string;
   alias?: string;
 }
@@ -165,7 +165,7 @@ export class Auth {
 
   /**
    * 给一个任务签发「范围受限的批注链接」：载荷 `annotate|<jobId>|<alias>|<exp>|<tokenId>`。
-   * 别名就是分发时填的批注者（回流记 `by: link:<alias>`），签名里绑 jobId —— 链接只能读
+   * 第 3 段是分发时填的批注人（回流记 `by: link:<alias>`），签名里绑 jobId —— 链接只能读
    * 这个任务 items 里的缩略图、只能往这个任务回流。`tokenId` = 签发这条链接的 API token
    * （会话/免认证签发时给 `-`）：撤销那条 token，链接立刻失效；任务被撤销/删掉也失效。
    */

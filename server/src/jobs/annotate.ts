@@ -4,11 +4,11 @@
  * 一次 annotate 任务走三步：
  *  1. `plan`：把选择集**展开成 items 快照**（一张照片 = 一项，RAW+JPEG 是同一项）。
  *     快照是刻意的：任务的粒度是「这批照片」，之后照片被移走/改了条件都不影响这张清单。
- *  2. `apply`：签发**任务范围 token**（载荷 `annotate|<jobId>|<别名>|<exp>`，30 天），
+ *  2. `apply`：签发**任务范围 token**（载荷 `annotate|<jobId>|<批注人>|<exp>`，30 天），
  *     把批次链接写进 artifacts（`kind: 'url'`，形如 `/j?t=…`；批注页以后再做），任务进 `running` 等回流。
  *     这一步**不等**对方回复（人可能明天才看），所以 `apply` 里不写任何等待逻辑。
  *  3. 回流：`POST /jobs/{id}/inbound`（api/server.ts 的鉴权闸认这条路上的 `?t=` 范围 token，免登录）。
- *     `by` 由 token 里的别名推成 `link:<别名>`，写标注走 `lib.applyMarks`（落 marks.jsonl：from→to + channel + jobId）。
+ *     `by` 由 token 里的批注人推成 `link:<批注人>`，写标注走 `lib.applyMarks`（落 marks.jsonl：from→to + channel + jobId）。
  *     全部 items 有终态后任务 `done`（收尾在 jobs/service.ts）。
  *
  * `undo`：用 marks.jsonl 里**本任务写下的 from** 值把标注回滚（最早的 from 才算「任务前的样子」），
@@ -48,7 +48,7 @@ function validate(draft: JobDraft, ctx: JobContext): JobProblem[] {
   }
   const label = draft.params['label'];
   if (typeof label !== 'string' || !label.trim()) {
-    problems.push({ field: 'params.label', message: '要带 params.label：批注者的名字（回流记 by: link:<名字>，会出现在标注变更日志里）' });
+    problems.push({ field: 'params.label', message: '要带 params.label：批注人的名字（回流记 by: link:<名字>，会出现在标注变更日志里）' });
   } else if (label.includes('|') || label.includes('\n')) {
     problems.push({ field: 'params.label', message: '名字里别带 `|` 或换行（签名载荷用 `|` 分隔字段）' });
   } else if (label.trim().length > 40) {
@@ -77,7 +77,7 @@ function apply(job: Job, ctx: JobContext, sink: JobSink): JobOutcome {
   sink.event({
     type: 'dispatched',
     channel,
-    note: `批次链接已签发：${job.items.length} 张，批注者「${label}」，${expiresAt.slice(0, 10)} 前有效（链接只读这个任务里的照片）`,
+    note: `批次链接已签发：${job.items.length} 张，批注人「${label}」，${expiresAt.slice(0, 10)} 前有效（链接只读这个任务里的照片）`,
   });
   return { state: 'running', note: '等外部批注回流（POST /jobs/{id}/inbound）' };
 }
@@ -223,7 +223,7 @@ export const annotate: JobHandler = {
   label: '推一批照片给人批注',
   params: {
     channel: { type: 'string', default: DEFAULT_CHANNEL, description: '出站通道（GET /channels 里的 id）' },
-    label: { type: 'string', required: true, description: '批注者别名：回流记 by: link:<别名>（<= 40 字，不能带 | 与换行）' },
+    label: { type: 'string', required: true, description: '批注人：回流记 by: link:<批注人>（<= 40 字，不能带 | 与换行）' },
   },
   sideEffect: 'mark',
   undoable: true,

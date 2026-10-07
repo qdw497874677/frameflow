@@ -466,7 +466,7 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
 
     // ── 批注页（/j?t=）───────────────────────────────────────────
     // mock 的范围 token 就写成 `mock-<jobId>`：离线开发/截图时能直接打开批注页。
-    // 语义对齐真后端：by 由链接别名推（外部批注人）、clientRef 幂等、回流推进 items 与进度。
+    // 语义对齐真后端：by 由链接里的批注人推（外部批注人）、clientRef 幂等、回流推进 items 与进度。
 
     async getJobForAnnotator(token: string, jobId: string): Promise<Job> {
       return api.getJob(jobIdOfMockToken(token) || jobId);

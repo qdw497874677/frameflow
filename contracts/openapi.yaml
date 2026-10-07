@@ -365,7 +365,7 @@ paths:
         创建时服务端把 `selection` 谓词**展开成 `items` 快照** —— 派发出去的那一批必须是稳定的；
         谓词本身仍留在 `selection` 里作为「怎么选出来的」凭据（见 contracts/selection.md）。
         第一个 kind 是 `annotate`：`params: { channel, label }` —— `channel` 是投递通道（v1 只有 `inapp`），
-        `label` 是批注者别名（回流记 `by: 'link:<label>'`）。
+        `label` 是批注人（回流记 `by: 'link:<label>'`）。
 
         `mode: 'plan'` **不落库、不签发任何东西**：返回的 `Job` 只是预览，`id` 固定为 `"plan"`（不是真任务，
         `GET /jobs/{id}` 查不到）；`mode: 'apply'` 才落库并把状态推到 `queued` → `running`。
@@ -433,9 +433,9 @@ paths:
     post:
       summary: 外部批注回流入口
       description: |
-        批注者（拿着任务签发的范围 token，`annotate:<jobId>`）把结果送回**任务**；
+        批注人（拿着任务签发的范围 token，`annotate:<jobId>`）把结果送回**任务**；
         通道只负责出站投递，回流一律落在这里。
-        `by` **不由请求体决定** —— 从 token 的别名推出 `by: 'link:<别名>'`（避免伪造）；
+        `by` **不由请求体决定** —— 从 token 里的批注人推出 `by: 'link:<批注人>'`（避免伪造）；
         只能写这个任务 items 里的照片，写别的返回 404。
         幂等：每条可带 `clientRef`，重复提交同一条会跳过并返回首次结果（外部系统会整批重发）——
         **整批都是老 `clientRef` 的重放**在任务已经 `done`/`cancelled` 时也照旧回 200（重发问的是「记下没有」）；
@@ -514,7 +514,7 @@ components:
       type: apiKey
       in: query
       name: t
-      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，`-` = 会话/免认证签发：只读该任务的选择集（`GET /jobs/{id}` 只放行 token 里那个 id）+ 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<别名>'`，撤销签发 token 即失效）共用这套签名原语，见 docs/core-model.md §11"
+      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate|<jobId>|<批注人>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，`-` = 会话/免认证签发：只读该任务的选择集（`GET /jobs/{id}` 只放行 token 里那个 id）+ 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<批注人>'`，撤销签发 token 即失效）共用这套签名原语，见 docs/core-model.md §11"
   responses:
     Error:
       description: 错误
@@ -573,7 +573,7 @@ components:
         stars: { type: integer, minimum: 0, maximum: 5 }
         del: { type: boolean }
         at: { type: string, format: date-time, description: 客户端时刻；服务端以它为准写变更日志，缺省用服务端时间 }
-        by: { type: string, description: "谁改的：me | link:<别名> | ai | job:<id>" , default: me }
+        by: { type: string, description: "谁改的：me | link:<批注人> | ai | job:<id>" , default: me }
         channel: { type: string, description: "从哪个渠道改的：inapp | feishu | …", default: inapp }
 
     MarkChange:
@@ -671,7 +671,7 @@ components:
                 eq: { type: integer, minimum: 0, maximum: 5 }
             del: { type: boolean }
             marked: { type: boolean, description: 是否打过星（stars > 0） }
-            by: { type: string, description: "最后一次标注变更的来源前缀：me | link:<别名> | ai:<模型>（从未标注过的不匹配）；服务端由 marks.jsonl 推导，前端 matchesSelection 暂不支持" }
+            by: { type: string, description: "最后一次标注变更的来源前缀：me | link:<批注人> | ai:<模型>（从未标注过的不匹配）；服务端由 marks.jsonl 推导，前端 matchesSelection 暂不支持" }
             folder: { type: string, description: 目录包含匹配，大小写不敏感 }
             camera: { type: string, description: 机身包含匹配，大小写不敏感 }
             taken:
@@ -714,20 +714,20 @@ components:
         photoId: { type: string, nullable: true }
         from: { nullable: true, description: 改前（stars 整数 / del 布尔 / 状态字符串） }
         to: { nullable: true, description: 改后 }
-        by: { type: string, nullable: true, description: "me | link:<别名> | ai:<模型> | job:<id>" }
+        by: { type: string, nullable: true, description: "me | link:<批注人> | ai:<模型> | job:<id>" }
         channel: { type: string, nullable: true }
         clientRef: { type: string, nullable: true }
         note: { type: string, nullable: true }
 
     InboundItem:
       type: object
-      description: 外部批注回流的一项；`by` 从 token 别名推、不由客户端给
+      description: 外部批注回流的一项；`by` 从 token 里的批注人推、不由客户端给
       required: [photoId]
       properties:
         photoId: { type: string }
         stars: { type: integer, minimum: 0, maximum: 5 }
         del: { type: boolean }
-        at: { type: string, format: date-time, description: 批注者那边标下的时刻；缺省用服务端时间 }
+        at: { type: string, format: date-time, description: 批注人那边标下的时刻；缺省用服务端时间 }
         clientRef: { type: string, description: 幂等键：同一条重复提交会被跳过（返回首次结果） }
 
     Artifact:
