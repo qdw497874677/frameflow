@@ -51,6 +51,15 @@ cd server && ./tools/dev.sh start                # 扫描 + 托管 web/dist + �
 也可以用环境变量指定别的文件：`ARTWORKS_CONFIG=/path/to/cfg.yaml ./tools/dev.sh start`
 （优先级：`--config=` > `ARTWORKS_CONFIG` > `artworks.config.local.yaml` > `artworks.config.yaml`）。
 
+## 测试
+
+```bash
+cd server && node tools/e2e-api.mjs         # 后端全链路（真写 .xmp、真搬回收站 —— 只对测试库跑）
+cd server && node tools/e2e-cold-start.mjs  # 冷启动回归：重启后先吃索引缓存，扫描没跑完就能出列表
+```
+
+测试库可以用 `node server/tools/make-fixture.mjs` 现场造一份。
+
 ## 规划
 
 当前路线与已定决策：`wayfinder/map.md`；票（tickets）在 `wayfinder/tickets/`，研究笔记在 `wayfinder/research/`。

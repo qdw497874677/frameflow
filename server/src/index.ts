@@ -25,6 +25,15 @@ app.log.info(
   'art-workspace server 已启动',
 );
 
+// 冷启动先吃上次的索引：列表立刻能服务，随后 refresh() 在后台把盘上的变化扫进来
+const cached = lib.restoredFromCache;
+if (cached) {
+  app.log.info(
+    { photos: cached.photos, savedAt: cached.savedAt },
+    '索引缓存已就绪：先按上次扫描的列表服务，后台补扫中',
+  );
+}
+
 void lib
   .refresh()
   .then((r) => app.log.info({ photos: r.photos, files: r.files, ms: r.ms, errors: r.errors.length }, '首次扫描完成'))

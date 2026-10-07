@@ -1,7 +1,8 @@
 # server（后端）
 
-**状态：未实现。语言已定：TypeScript（Node 22 LTS+），见 [ADR 0005](../docs/adr/0005-typescript-backend.md)。**
-运行与部署形态（systemd / Docker / 反代）仍见 `wayfinder/tickets/005-stack-deployment.md`（待定）。
+**状态：已实现并在用（TypeScript / Node 22 LTS+，见 [ADR 0005](../docs/adr/0005-typescript-backend.md)）。**
+已落地：扫描 + RAW/JPEG 配对、两档缩略图（含视频抽帧封面）、XMP 星标/待删 + `marks.jsonl`、回收站、索引缓存、认证三凭据（session/Bearer/链接 token）、`/capabilities`、`/api-tokens`。
+未落地：`/jobs*`、`/channels*`（契约里 `x-implemented: false`）；运行与部署形态（systemd / Docker / 反代）仍见 `wayfinder/tickets/005-stack-deployment.md`（待定）。
 本文件先固定**模块边界**与职责，避免前端/后端职责漂移。
 
 ## 职责边界
@@ -75,6 +76,16 @@ export const handler: JobHandler<ExportParams> = { validate, plan, apply, undo }
 
 `jobs/registry.ts` / `channels/registry.ts` 汇总所有模块；`GET /capabilities` 就是这张表去掉实现细节后的投影。
 **新增能力 = 新增一个文件 + 注册一行**；前端与 AI 客户端读 `/capabilities` 自适应，不需要改代码。
+
+## 索引缓存与冷启动（2026-10-06）
+
+启动顺序不变（**先监听、再后台扫描**），但列表不必等扫描：`dataDir/index.json` 里除了 `metaCache`（EXIF：mtime+size 没变就跳过 exiftool），还存了上次扫描的 `records`/目录树/root 在线态（`version: 2`）。
+
+- `Library.loadIndex()` 恢复完就是可服务状态，`refresh()` 随后在后台校正；`/capabilities.library.scanning` 为 `true` 时前端展示的是「先用缓存，补扫中」。
+- **启动不碰文件系统**：`roots()` 优先用缓存里的 `online`，避免对可能挂死的挂载点做 `existsSync`（票 011 的方向）。
+- 星标/待删不依赖扫描：`MarksStore` 启动即读 `marks.jsonl`，DTO 里的 `stars`/`del` 以它为准（XMP 只是种子）。
+- 失效即重建：版本号不符、JSON 坏了、`records` 为空 → 当没有缓存，照旧全量扫描覆盖。
+- 回归：`node tools/e2e-cold-start.mjs`（重启后断言「扫描还没跑完就能出照片」+ 日志里的「索引缓存已就绪」）。
 
 ## 不变式
 

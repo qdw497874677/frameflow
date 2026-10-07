@@ -32,3 +32,5 @@ blocked-by: []
 - 视频目录快速滚动时 ffmpeg 并发数受控（日志/`ps` 可验证），单张失败不影响其它封面。
 
 （来源：2026-10-06 挂载事故；恢复手法见当次会话记录 —— `pkill -9 -f "[g]vfsd-fuse"` 让服务脱离 D 状态，`fusermount3 -uz /run/user/1000/gvfs` + 重启 `gvfs-daemon.service` 重建挂载点。）
+
+- 2026-10-06（第二条已部分落地）：**索引持久化** —— `dataDir/index.json` 现在连上次扫描的 `records`/目录树/root 在线态一起存（`version: 2`，`server/src/core/library.ts` 的 `loadIndex`/`saveIndex`），冷启动不再需要碰文件系统就能列出照片（`roots()` 优先用缓存里的 `online`，顺带免掉一次对挂载点的 `existsSync`）。回归脚本 `server/tools/e2e-cold-start.mjs`：重启后 673ms 就在 `scanning=true` 的窗口里列出了照片。**注意这不解决本票的正题** —— 扫描本身仍是同步 FS，挂载挂死时依旧会冻结整个进程；待办仍是 ① 扫描的每 root 超时/熔断、② ffmpeg 并发闸。

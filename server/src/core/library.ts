@@ -69,7 +69,36 @@ interface DirStat {
   children: Set<string>;
 }
 
-const INDEX_VERSION = 1;
+/**
+ * 索引文件版本。
+ * 1 → 只存 `metaCache`（EXIF 缓存），照片列表靠每次启动重扫；
+ * 2 → 连 `records` 一起存，冷启动可以**不碰文件系统**先把列表端出来（随后后台扫描校正）。
+ */
+const INDEX_VERSION = 2;
+
+/** `index.json` 的形状。缓存坏了、版本不认，就当没有 —— 扫描能重建一切。 */
+interface IndexFile {
+  version?: number;
+  savedAt?: string;
+  lastScanAt?: string | null;
+  fileCount?: number;
+  online?: Record<string, boolean>;
+  records?: PhotoRecord[];
+  metaCache?: Record<string, CachedMeta>;
+}
+
+/** 反序列化的最小校验：缺胳膊少腿的记录宁可丢掉，不能让它带坏整棵目录树。 */
+function isPhotoRecord(v: unknown): v is PhotoRecord {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Partial<PhotoRecord>;
+  return (
+    typeof r.id === 'string' &&
+    typeof r.rootId === 'string' &&
+    typeof r.relDir === 'string' &&
+    typeof r.previewPath === 'string' &&
+    (r.kind === 'photo' || r.kind === 'video')
+  );
+}
 
 export class Library {
   readonly thumbs: Thumbs;
@@ -90,6 +119,8 @@ export class Library {
   private lastScanAt: string | null = null;
   private lastErrors: string[] = [];
   private fileCount = 0;
+  /** 冷启动从 index.json 恢复到的内容（非 null = 启动日志里说一句「先吃缓存，后台补扫」） */
+  private restored: { photos: number; savedAt: string | null } | null = null;
 
   constructor(cfg: Config) {
     this.cfg = cfg;
@@ -618,20 +649,33 @@ export class Library {
 
   private loadIndex(): void {
     if (!existsSync(this.indexFile)) return;
+    let raw: IndexFile | null = null;
     try {
-      const raw = JSON.parse(readFileSync(this.indexFile, 'utf8')) as {
-        version?: number;
-        metaCache?: Record<string, CachedMeta>;
-      };
-      if (raw.version !== INDEX_VERSION || !raw.metaCache) return;
-      for (const [path, entry] of Object.entries(raw.metaCache)) {
-        if (entry && typeof entry.mtimeMs === 'number' && typeof entry.size === 'number') {
-          this.metaCache.set(path, entry);
-        }
-      }
+      raw = JSON.parse(readFileSync(this.indexFile, 'utf8')) as IndexFile;
     } catch {
-      // 索引坏了不是问题：下次扫描会重建
+      return; // 索引坏了不是问题：下次扫描会重建
     }
+    if (raw?.version !== INDEX_VERSION) return; // 老版本（或将来更新的）一律丢掉重扫
+    for (const [path, entry] of Object.entries(raw.metaCache ?? {})) {
+      if (entry && typeof entry.mtimeMs === 'number' && typeof entry.size === 'number') {
+        this.metaCache.set(path, entry);
+      }
+    }
+    // 照片列表也恢复：重启后第一眼不用等扫描（尤其是库在 NAS 上时）；后台扫描照旧跑，扫完覆盖
+    const records = (raw.records ?? []).filter(isPhotoRecord);
+    if (!records.length) return;
+    this.records = new Map(records.map((r) => [r.id, r]));
+    this.reindex();
+    this.rebuildTrashed();
+    this.fileCount = typeof raw.fileCount === 'number' ? raw.fileCount : records.length;
+    this.lastScanAt = raw.lastScanAt ?? null;
+    this.online = new Map(Object.entries(raw.online ?? {}));
+    this.restored = { photos: records.length, savedAt: raw.savedAt ?? null };
+  }
+
+  /** 冷启动时从 index.json 恢复的照片数（null = 没有可用缓存）。 */
+  get restoredFromCache(): { photos: number; savedAt: string | null } | null {
+    return this.restored;
   }
 
   private saveIndex(): void {
@@ -642,7 +686,19 @@ export class Library {
       if (entry) metaCache[rec.previewPath] = entry;
     }
     try {
-      writeFileSync(this.indexFile, JSON.stringify({ version: INDEX_VERSION, savedAt: new Date().toISOString(), metaCache }), 'utf8');
+      writeFileSync(
+        this.indexFile,
+        JSON.stringify({
+          version: INDEX_VERSION,
+          savedAt: new Date().toISOString(),
+          lastScanAt: this.lastScanAt,
+          fileCount: this.fileCount,
+          online: Object.fromEntries(this.online),
+          records: [...this.records.values()],
+          metaCache,
+        }),
+        'utf8',
+      );
     } catch {
       // 写不动就算了
     }
