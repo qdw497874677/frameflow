@@ -110,25 +110,35 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     const path = req.url.split('?')[0] ?? '';
     const q = req.query as Record<string, string> | undefined;
     const thumbMatch = /^\/api\/v1\/photos\/[^/]+\/thumb$/.test(path);
-    // `?t=` 只在两条路由上算凭据：读缩略图，以及在批注链接里往任务送回结果
+    // `?t=` 只在三条路由上算凭据：读缩略图、读**自己那一个**任务（批注页刷新后要能读回 items），
+    // 以及在批注链接里往任务送回结果
     const inboundMatch = /^\/api\/v1\/jobs\/[^/]+\/inbound$/.test(path);
+    const jobDetailMatch = /^\/api\/v1\/jobs\/[^/]+$/.test(path);
     const who = auth.identify({
       cookie: req.cookies?.[COOKIE],
       authorization: req.headers.authorization,
       // 两种 `?t=` 按路由分开：缩略图两条都收（只读链接 + 任务范围 token），回流**只收**任务范围 token
       linkToken: thumbMatch ? q?.['t'] : undefined,
-      rangeToken: thumbMatch || inboundMatch ? q?.['t'] : undefined,
+      rangeToken: thumbMatch || inboundMatch || jobDetailMatch ? q?.['t'] : undefined,
     });
     authInfo.set(req, who ?? { via: 'disabled' });
     if (who) authed.add(req);
     // 任务范围 token（批注链接）的作用域：只对它那个任务有效 —— 缩略图只看任务 items 里的照片，
-    // 回流只能回自己的任务；任务被取消/删掉则整条链接失效。别的路由一律不放行。
+    // 详情只读它自己那一个任务（列表/事件/取消/撤销一律不放行），回流只能回自己的任务；
+    // 任务被取消/删掉则整条链接失效。别的路由一律不放行。
     if (who?.via === 'annotate') {
       const jobId = who.jobId ?? '';
       if (!jobs.rangeTokenValid(jobId)) return reply.code(403).send({ error: '这个批注链接已经失效了（任务已取消或没了）' });
-      const thumbOf = thumbMatch ? decodeURIComponent(path.split('/')[4] ?? '') : null;
-      const inScope = thumbOf !== null ? jobs.hasItem(jobId, thumbOf) : path === `/api/v1/jobs/${jobId}/inbound`;
-      if (!inScope) return reply.code(404).send({ error: '这个批注链接只对它那个任务里的照片有效' });
+      const seg = decodeURIComponent(path.split('/')[4] ?? '');
+      const thumbOf = thumbMatch ? seg : null;
+      const detailOf = jobDetailMatch ? seg : null;
+      const inScope =
+        thumbOf !== null
+          ? jobs.hasItem(jobId, thumbOf)
+          : detailOf !== null
+            ? detailOf === jobId
+            : path === `/api/v1/jobs/${jobId}/inbound`;
+      if (!inScope) return reply.code(404).send({ error: '这个批注链接只对它那个任务有效' });
       return;
     }
     if (!auth.enabled) return; // 免认证：一律放行，但来源已经认过了

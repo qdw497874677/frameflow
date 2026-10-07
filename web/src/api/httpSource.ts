@@ -15,6 +15,7 @@ import type {
   TrashEntryDto,
 } from './contract';
 import type {
+  AnnotateSource,
   JobCreateInput,
   JobEventPage,
   JobSource,
@@ -29,6 +30,7 @@ import { selectionToQuery } from '../core/selection';
 import type {
   Folder,
   FolderListing,
+  InboundItem,
   Job,
   MarkChange,
   MarkInput,
@@ -363,6 +365,36 @@ export function createHttpJobSource(base = '/api/v1'): JobSource {
         label: c.label,
         enabled: c.enabled ?? true,
       }));
+    },
+  };
+}
+
+/* ── 批注页端口（/j?t=）───────────────────────────────────────────────
+ * 外部批注人只有一条范围 token：所有请求都把凭据放在 `?t=` 上（图像标签带不上 header）。
+ * 服务端只放行三件事：读它自己那个任务、读本任务 items 的缩略图、POST 回流。
+ */
+export function createHttpAnnotateSource(base = '/api/v1'): AnnotateSource {
+  const withToken = (path: string, token: string) =>
+    `${path}${path.includes('?') ? '&' : '?'}t=${encodeURIComponent(token)}`;
+
+  return {
+    kind: 'http',
+
+    async getJobForAnnotator(token: string, jobId: string): Promise<Job> {
+      return toJob(await request<JobDto>(base, withToken(`/jobs/${encodeURIComponent(jobId)}`, token)));
+    },
+
+    thumbUrlForAnnotator(photoId: string, token: string, size: 512 | 2048): string {
+      return `${base}${withToken(`/photos/${encodeURIComponent(photoId)}/thumb?size=${size}`, token)}`;
+    },
+
+    async submitInbound(token: string, jobId: string, items: InboundItem[]): Promise<MarkResult[]> {
+      const res = await request<{ results: MarkResultDto[] }>(
+        base,
+        withToken(`/jobs/${encodeURIComponent(jobId)}/inbound`, token),
+        { method: 'POST', body: JSON.stringify({ items }) },
+      );
+      return res.results.map((r) => ({ id: r.id, ok: r.ok, error: r.error ?? null }));
     },
   };
 }

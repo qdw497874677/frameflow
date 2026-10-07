@@ -2,7 +2,7 @@
 id: "016"
 title: 任务页与批注页（前端 UI）
 labels: [wayfinder:task]
-status: open
+status: closed
 assignee: ""
 blocked-by: []
 ---
@@ -31,3 +31,23 @@ blocked-by: []
 ## 进展
 
 - 2026-10-07 开票（014/015 落地后拆出界面部分）。
+- 2026-10-08 落地并验证，关闭本票（见 Resolution）。
+
+## Resolution（2026-10-08）
+
+**两张脸 + 一个入口**：
+
+- 任务页（工作区 → 任务）：左列表（`all|active|done|ended` 客户端筛、每 4s 拉 `GET /jobs?limit=100`、默认选最新一条或 `?job=` 深链、进度条）+ 右详情（`GET /jobs/{id}` + `GET /jobs/{id}/events?since=` 每 2.5s 用 `nextSince` 当游标增量拉、进度、取消/撤销按状态与 `reversible` 置灰、产物链接可复制/打开、items 快照网格、事件流水倒序）。服务端的中文 409 直接显示给人看。手机先给列表，点进去才有详情（顶栏 `aria-label="回到列表"` 返回）。
+- 批注页（`/j?t=<范围 token>`）：`main.tsx` 按 pathname 分流，整页独立于 App 外壳（没有侧栏、目录树、管理入口），免登录 —— 凭据就是 URL 里那条 token。缩略图 `<img src="…?size=512&t=…">`（图像标签带不上 header）；点开看大图（2048）逐张给星级/待删，每点一下立刻 `POST /jobs/{id}/inbound`，`clientRef = <photoId>:<stars>:<del>` 让同一意图重发幂等、不同意图是新 ref；发不出去的进队列、顶部「N 条没发出去 + 重发」；刷新时从任务 items 读回已经标过的项。
+- 入口：挑片页底部「派发批注」→ 对话框（批注人别名 + `mode:'plan'` 预演张数与前 12 张缩略图）→ 派发。`selection` 直接复用 store 里那份（前端不重写谓词），补两件事：绑当前项目、选择集为空时用「眼前这批」的 id 清单。
+
+**过程中改到的服务端**：范围 token 新增放行 `GET /jobs/{id}`，但只放行 token 里那一个 id（列表/事件/取消/撤销仍 401）—— 批注页刷新要能读回 items；`e2e-annotate` 补 4 条断言（80/0）。
+
+**两个实现教训**（都写进了代码注释）：
+
+- `POST /jobs`（apply）是异步的：立刻回 `state:'queued'`、`artifacts: []`，链接由 handler 稍后才落进 artifacts —— 对话框必须盯着 `GET /jobs/{id}` 直到链接出现（否则用户拿到一条空产物，第一版就是这样）。
+- 手机不能一进任务页就自动选中最新一条：列表被顶掉、人不知道自己在哪。宽屏才默认选中。
+
+**验证**：真后端全链路（派发 7 张 → 链接 → 批注页标 ★4 → 挑片页计数变 1 → 任务页进度 1/7 + 事件流水 `写入标注 (stars:0,del:false → stars:4,del:false)`、`by = link:外部批注人`）；mock 数据源同样走通（预置 `demo` 任务 + `mock-` 前缀 token）；390px 手机视口下批注页网格 2 列、无横向溢出、星按钮与看大图按钮 44×44；`npx tsc --noEmit` 干净；`VITE_API_BASE=/api/v1 npm run build` 通过。
+
+**没做**（按票面）：出站通道的真投递（v1 只有 `inapp` 链接）、其他 kind 的 UI、通知提醒、权限分级。

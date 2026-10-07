@@ -1,6 +1,7 @@
 import type {
   Channel,
   FolderListing,
+  InboundItem,
   Job,
   JobEvent,
   JobState,
@@ -134,4 +135,21 @@ export interface JobSource {
   undoJob(id: string): Promise<Job>;
   /** 已配置的**出站**通道（回流不走通道，走 POST /jobs/{id}/inbound） */
   listChannels(): Promise<Channel[]>;
+}
+
+/* ── 批注页端口（外部批注人，手里只有一条 ?t= 范围 token）──────────────── */
+
+/**
+ * 批注页的数据口：外部批注人没有会话、没有 Bearer，只有任务签发的那条链接。
+ * 单独一个端口而不是塞进 JobSource —— JobSource 是「本人派发与追踪任务」的全面，
+ * 这里是「别人拿着链接来标注」的窄面：能做的事就三件（读自己那个任务、看它的缩略图、回写）。
+ */
+export interface AnnotateSource {
+  readonly kind: 'mock' | 'http';
+  /** 用范围 token 读它自己那个任务（服务端只放行 token 里绑定的那个 id） */
+  getJobForAnnotator(token: string, jobId: string): Promise<Job>;
+  /** 本任务 items 的缩略图：URL 自带凭据（图像标签带不上自定义 header） */
+  thumbUrlForAnnotator(photoId: string, token: string, size: 512 | 2048): string;
+  /** 回流：`by` 由服务端从 token 别名推；返回逐项结果（重复 clientRef 会返回首次结果） */
+  submitInbound(token: string, jobId: string, items: InboundItem[]): Promise<MarkResult[]>;
 }

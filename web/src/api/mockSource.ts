@@ -1,10 +1,18 @@
-import type { JobCreateInput, JobSource, ListPhotosOptions, PhotoPage, PhotoSource } from './source';
+import type {
+  AnnotateSource,
+  JobCreateInput,
+  JobSource,
+  ListPhotosOptions,
+  PhotoPage,
+  PhotoSource,
+} from './source';
 import type { FsBrowseDto } from './contract';
 import { matchesSelection } from '../core/selection';
 import { PALETTES, mulberry, renderMockPhoto, type FocusKind, type MockSpec } from './mock/render';
 import type {
   Channel,
   FolderListing,
+  InboundItem,
   Job,
   JobEvent,
   JobItem,
@@ -26,6 +34,11 @@ import type {
 
 const CAMS = ['Sony A7M4 · 24-70', 'Fuji X-T5 · 35 1.4', 'Ricoh GR3', 'iPhone 15 Pro'];
 const COUNT = 60;
+
+/** mock 的范围 token：`mock-<jobId>`（真后端是 HMAC 签的 `annotate|…`） */
+function jobIdOfMockToken(token: string): string {
+  return token.startsWith('mock-') ? token.slice(5) : '';
+}
 
 interface MockRecord extends MockSpec {
   id: string;
@@ -100,7 +113,7 @@ function toPhoto(rec: MockRecord): Photo {
   };
 }
 
-export function createMockSource(): PhotoSource & JobSource {
+export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
   const records = buildRecords(MOCK_ROOT);
   const byId = new Map(records.map((r) => [r.id, r]));
   const cache = new Map<string, string>();
@@ -159,7 +172,37 @@ export function createMockSource(): PhotoSource & JobSource {
   const rootsOf = (): Root[] => rootsState;
 
   // 内部互调用 api.*，不用 this —— 外部解构（const { planJob } = jobSource）也安全
-  let api: PhotoSource & JobSource;
+  let api: PhotoSource & JobSource & AnnotateSource;
+
+  // 批注页是整页加载（/j?t=…），mock 的内存态活不过导航 —— 预置一条演示任务，
+  // 让 `/j?t=mock-demo` 冷启动也能打开（真后端不靠这个：链接里带范围 token 自己就是凭据）。
+  {
+    const now = new Date().toISOString();
+    const demoItems: JobItem[] = records.slice(0, 12).map((rec) => ({
+      id: rec.id,
+      displayName: rec.displayName,
+      status: 'planned',
+    }));
+    jobs.set('demo', {
+      id: 'demo',
+      kind: 'annotate',
+      state: 'running',
+      selection: { project: 'photos' },
+      params: { channel: 'inapp', label: '外部批注人' },
+      channel: 'inapp',
+      dispatchedAt: now,
+      progress: { done: 0, total: demoItems.length },
+      items: demoItems,
+      artifacts: [{ kind: 'url', path: '/j?t=mock-demo' }],
+      error: null,
+      reversible: true,
+      createdAt: now,
+      startedAt: now,
+      finishedAt: null,
+    });
+    pushEvent('demo', { type: 'created', note: '（mock）演示任务：展开 12 张' });
+    pushEvent('demo', { type: 'dispatched', channel: 'inapp', note: '（mock）演示链接 /j?t=mock-demo' });
+  }
 
   return (api = {
     kind: 'mock',
@@ -419,6 +462,77 @@ export function createMockSource(): PhotoSource & JobSource {
         { id: 'inapp', kind: 'inapp', label: '应用内', enabled: true },
         { id: 'feishu', kind: 'feishu', label: '飞书（未配置）', enabled: false },
       ];
+    },
+
+    // ── 批注页（/j?t=）───────────────────────────────────────────
+    // mock 的范围 token 就写成 `mock-<jobId>`：离线开发/截图时能直接打开批注页。
+    // 语义对齐真后端：by 由链接别名推（外部批注人）、clientRef 幂等、回流推进 items 与进度。
+
+    async getJobForAnnotator(token: string, jobId: string): Promise<Job> {
+      return api.getJob(jobIdOfMockToken(token) || jobId);
+    },
+
+    thumbUrlForAnnotator(photoId: string, _token: string, size: 512 | 2048): string {
+      return thumbUrl(photoId, size);
+    },
+
+    async submitInbound(token: string, jobId: string, inbound: InboundItem[]): Promise<MarkResult[]> {
+      const id = jobIdOfMockToken(token) || jobId;
+      const job = await api.getJob(id);
+      const now = new Date().toISOString();
+      const by = 'link:外部批注人';
+      const results: MarkResult[] = [];
+      for (const entry of inbound) {
+        const item = job.items.find((i) => i.id === entry.photoId);
+        if (!item) {
+          results.push({ id: entry.photoId, ok: false, error: '这张不在任务里' });
+          continue;
+        }
+        // 幂等：同一个 clientRef 再来一次 = 跳过（与真后端一致：返回首次结果）
+        if (entry.clientRef && item.clientRef === entry.clientRef && item.status !== 'planned') {
+          pushEvent(id, { type: 'skipped', photoId: entry.photoId, clientRef: entry.clientRef, note: '（mock）重复提交，跳过' });
+          results.push({ id: entry.photoId, ok: true, error: null });
+          continue;
+        }
+        const prev = { stars: starsById.get(entry.photoId) ?? 0, del: delById.get(entry.photoId) ?? false };
+        const next = { stars: entry.stars ?? prev.stars, del: Boolean(entry.del ?? prev.del) };
+        if (next.stars > 0 && next.del) next.del = false;
+        (['stars', 'del'] as const).forEach((field) => {
+          if (prev[field] === next[field]) return;
+          changeLog.push({
+            photoId: entry.photoId,
+            displayName: byId.get(entry.photoId)?.displayName,
+            field,
+            from: prev[field],
+            to: next[field],
+            by,
+            channel: job.channel ?? 'inapp',
+            at: entry.at ?? now,
+          });
+        });
+        starsById.set(entry.photoId, next.stars);
+        delById.set(entry.photoId, next.del);
+        item.stars = next.stars;
+        item.del = next.del;
+        item.status = 'done';
+        item.clientRef = entry.clientRef ?? null;
+        item.at = entry.at ?? now;
+        job.progress = { done: job.items.filter((i) => i.status !== 'planned').length, total: job.items.length };
+        pushEvent(id, {
+          type: 'applied',
+          photoId: entry.photoId,
+          to: next.stars > 0 ? `★${next.stars}` : next.del ? '待删' : '取消标记',
+          by,
+          clientRef: entry.clientRef,
+        });
+        results.push({ id: entry.photoId, ok: true, error: null });
+      }
+      if (job.progress.done === job.progress.total && job.items.length > 0) {
+        job.state = 'done';
+        job.finishedAt = now;
+        pushEvent(id, { type: 'done', note: '（mock）items 全有终态' });
+      }
+      return results;
     },
 
     // mock 没有认证：开发时不必登录

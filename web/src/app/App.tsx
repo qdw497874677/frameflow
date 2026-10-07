@@ -12,6 +12,8 @@ import { Stage } from './Stage';
 import { LoginScreen } from '@/features/auth/LoginScreen';
 import { TrashPage } from '@/features/trash/TrashPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { TasksPage } from '@/features/jobs/TasksPage';
+import { DispatchAnnotateButton } from '@/features/jobs/DispatchAnnotate';
 
 /**
  * 应用外壳：左侧边栏导航（工作区 + 目录树），右侧是当前页面。
@@ -77,6 +79,8 @@ export function App() {
             <Stage />
           ) : view === 'trash' ? (
             <TrashPage />
+          ) : view === 'jobs' ? (
+            <TasksPage />
           ) : (
             <SettingsPage />
           )}
@@ -85,6 +89,8 @@ export function App() {
         {view === 'cull' && (
           <footer className="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 pb-[calc(env(safe-area-inset-bottom)+0.375rem)]">
             <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">Shift + ←/→ 变焦</span>
+            {/* 把眼前这批派给外部批注人：挑片页的选择集直接变成任务的范围 */}
+            <DispatchAnnotateButton />
             <ToggleGroup
               type="single"
               value={mode}

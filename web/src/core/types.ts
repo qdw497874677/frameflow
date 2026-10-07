@@ -144,7 +144,7 @@ export interface OpResult {
 export type ViewMode = 'a' | 'c';
 
 /** 侧边栏里可去的页面 */
-export type View = 'cull' | 'trash' | 'settings';
+export type View = 'cull' | 'trash' | 'jobs' | 'settings';
 
 /** 一个项目 = 映射进来的一个目录：磁盘上的入口，可以有多个（机身卡、移动硬盘、NAS） */
 export interface Root {
@@ -205,6 +205,16 @@ export interface JobItem {
   del?: boolean | null;
   clientRef?: string | null;
   at?: string | null;
+}
+
+/** 批注回流的一项：批注页给某一张的最终结论（`by` 不在里面 —— 由服务端从链接别名推） */
+export interface InboundItem {
+  photoId: string;
+  stars?: number;
+  del?: boolean;
+  at?: string;
+  /** 幂等键：同一项重发（断网重试）不会重复落标 */
+  clientRef?: string;
 }
 
 /** 任务的产物：批注任务是卡片/链接，导出是目录/文件 */

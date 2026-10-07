@@ -39,7 +39,8 @@ status: open
 - [部署形态（已收窄：只剩跑在哪 + 交付方式 + 缓存/HTTPS）](tickets/005-stack-deployment.md)：服务以后**直接连 NAS**但保持「根 = 目录路径」的挂载无关设计（本地盘 / NFS / SMB / USB 同一套代码）；交付**两条路都提供、最终 docker compose**（镜像带 node+sharp+ffmpeg+exiftool）；预览缓存 = 本地磁盘缓存（默认上限 8 GB、可配、启动按 atime LRU 淘汰到 90%），索引不设过期 + 上次扫描超 7 天启动自动补扫；只在局域网 / Tailscale，不加反代与证书。落地拆成 [012](tickets/012-deployment-artifacts.md)、[013](tickets/013-cache-policy.md)
 - [任务与外部批注的 API 形状](tickets/008-task-and-annotation-api.md)：`selection` 存谓词、`items[]` 存**创建时展开的快照**（粒度 = 照片配对组，`progress` 数 items）；v1 **不做**命名选择集（`POST /selections`）；回流端点为 **`POST /jobs/{id}/inbound`**（`/channels` 只出站，删掉 `/channels/{id}/inbound`），`by` 由 token 别名推 `link:<别名>`，幂等 = `clientRef`，冲突后写覆盖 + 历史留痕；身份 = 任务签发的**范围 token**（载荷 `annotate:<jobId>`，TTL 30 天、可撤销）；进度流 v1 = **增量轮询** `events?since=`（事件带单调递增 `seq`，将来可换 SSE）；`/trash` 保持同步、**不设** `kind:'trash'`。实现拆成 [014](tickets/014-jobs-core.md)（任务层核心）+ [015](tickets/015-annotate-dispatch.md)（批注派发与回流）
 - [任务层核心](tickets/014-jobs-core.md)：**已落地（2026-10-07）** —— `dataDir/jobs.jsonl`（一行一快照、同 id 后写覆盖先写）+ `dataDir/job-events.jsonl`（只追加、`seq` 全局单调）双日志，启动重放；状态机 `planned→queued→running→done|failed|cancelled`（+`interrupted`），非法迁移 409，重启把 `queued|running` 收敛为 `interrupted`；`JobHandler` 注册表（一个 kind 一文件，未注册 → 400）；`mode:'plan'` 只展开 items、不落库不签 token；进程内单 pump（不做 SSE / 调度器 / worker 池）；items 是创建那一刻的快照。回归 `server/tools/e2e-jobs.mjs`（81/0）
-- [批注派发与回流](tickets/015-annotate-dispatch.md)：**已落地（2026-10-07）** —— 第四种凭据「任务范围 token」（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，30 天 HMAC、不落 `tokens.json`）只放行本任务 items 的缩略图与 `POST /jobs/{id}/inbound`（其它路径 401、任务外照片 404、取消/撤销后 403；撤销签发 token 即失效，只读 linkToken 写回流 401）；回流 `by` 由别名推 `link:<别名>`、`channel` 取 `params.channel`、`clientRef` 幂等；全终态 → `done`；`undo` 按 `marks.jsonl` 里本任务最早的 `from` 回滚。v1 通道只做 `inapp`（链接进 artifacts，真投递另开票）；批注页/任务页界面拆到 [016](tickets/016-task-ui.md)。回归 `server/tools/e2e-annotate.mjs`（76/0）
+- [批注派发与回流](tickets/015-annotate-dispatch.md)：**已落地（2026-10-07）** —— 第四种凭据「任务范围 token」（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，30 天 HMAC、不落 `tokens.json`）只放行本任务 items 的缩略图与 `POST /jobs/{id}/inbound`（其它路径 401、任务外照片 404、取消/撤销后 403；撤销签发 token 即失效，只读 linkToken 写回流 401）；回流 `by` 由别名推 `link:<别名>`、`channel` 取 `params.channel`、`clientRef` 幂等；全终态 → `done`；`undo` 按 `marks.jsonl` 里本任务最早的 `from` 回滚。v1 通道只做 `inapp`（链接进 artifacts，真投递另开票）；批注页/任务页界面拆到 [016](tickets/016-task-ui.md)。回归 `server/tools/e2e-annotate.mjs`（80/0）
+- [任务页与批注页](tickets/016-task-ui.md)：**已落地（2026-10-08）** —— 任务页 = 左列表（按状态筛）+ 右详情（进度 / items 快照 / 产物链接 / 事件流水），数据只走 `GET /jobs`、`GET /jobs/{id}`、`GET /jobs/{id}/events?since=`（列表 4s、详情 2.5s 增量轮询，`nextSince` 当游标）；批注页 = `/j?t=` **整页独立**于 App 外壳、免登录（凭据只有 URL 里的范围 token，缩略图 `<img>` 也带 `?t=`），逐张标星级/待删、`clientRef` 幂等回流、发不出去可重发、刷新从 items 读回；入口在挑片页底部（直接复用 store 的 Selection + 绑项目，张数以服务端 `mode:'plan'` 预演为准，apply 异步所以盯 `GET /jobs/{id}` 直到链接出现）；手机先列表、宽屏才默认选中，批注页 390px 下触控目标 ≥44px。为此范围 token 新增放行 `GET /jobs/{id}`（只放行 token 里那一个 id）
 
 
 ## Not yet specified
@@ -53,8 +54,6 @@ status: open
 - 开源发布配套：License 选择（注意 AGPL 项目如 Immich/PhotoPrism 的代码传染性）、README、一键部署
 - AI 接入面的具体形态：先做 pull 还是 push、结果是否走「建议」层、MCP 是否必做、token 范围、领取机制 → [票 009](tickets/009-ai-access.md)
 - 插件扩展面：内置模块与第三方插件的分界、插件能贡献什么、权限等级、加载与隔离 → [票 010](tickets/010-plugins.md)；其中「虚拟目录 / Alcedo 式项目节点路径」是**默认关闭的可选插件**
-- 前端任务页 / 批注页的交互细节：任务层后端与批注往返已落地（[014](tickets/014-jobs-core.md)、[015](tickets/015-annotate-dispatch.md)）→ [016 任务页与批注页](tickets/016-task-ui.md)
-
 ## Out of scope
 
 - 素材导入（LR 式工作流）—— 用户判定多余：照片已经在磁盘上按项目分好了目录，导入要多一份与来源对账的状态（「导入后删来源」还引入不可逆的破坏性动作）。理由见 [ADR 0003](../docs/adr/0003-project-is-a-mapped-directory.md)；导出不在这里（推迟到后续，见 Not yet specified）

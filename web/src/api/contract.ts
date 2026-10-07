@@ -239,6 +239,15 @@ export interface JobEventPageDto {
   nextSince: number;
 }
 
+/** 批注回流的一项（`POST /jobs/{id}/inbound`）：`by` 由服务端从 token 别名推，请求体里没有这个字段 */
+export interface InboundItemDto {
+  photoId: string;
+  stars?: number;
+  del?: boolean;
+  at?: string;
+  clientRef?: string;
+}
+
 /** 出站投递通道（应用内 / 飞书 / webhook…）；回流不走通道，走 `POST /jobs/{id}/inbound` */
 export interface ChannelDto {
   id: string;

@@ -180,7 +180,7 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 1. **签发长期 Bearer token**：`POST /api-tokens`（列出 / 签发 / 撤销），明文只在签发响应里出现一次，服务端存哈希 + `label/lastUsedAt/scope`；agent 用 `Authorization: Bearer …` 调 API。
 2. **缩略图 URL 必须自认证**：`GET /photos/{id}/thumb?size=2048&t=<linkToken>`。原因很实在 —— agent 是把 URL 交给自己的图像加载器（甚至模型服务商）去取的，**带不上自定义 header**；URL 里必须自带凭据。
    已实现：签发 API token（`POST /api-tokens`）时响应里一并给出 `linkToken` 与 `thumbUrlTemplate`（把 `{id}` / `{size}` 填上即可）。签名载荷是 `link|<tokenId>|<exp>`（30 天）——绑的是**签发它的那条 API token**，不是单张照片，所以一个 linkToken 能取全库缩略图；撤销 API token 立刻失效。范围只有 `/thumb`：`?t=` 只在缩略图路由上被消费，写接口仍然只认 cookie / Bearer。
-范围受限的外部批注链接（`by: link:<别名>`）**已落地（2026-10-07，票 008/015）**：载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
+范围受限的外部批注链接（`by: link:<别名>`）**已落地（2026-10-07，票 008/015）**：载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图、`GET /jobs/{id}`（**只读 token 里那一个任务**：批注页刷新后靠它读回已经标过的 items）与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
 
 **权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
 

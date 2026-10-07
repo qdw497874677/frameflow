@@ -396,6 +396,8 @@ paths:
       description: |
         `items` 是创建时定下的那一批（manifest：每个单位的状态/最终标注），
         事件流水在 `/jobs/{id}/events`，标注变更对账在 `GET /marks/history?jobId=`。
+        批注页（`/j?t=`）用任务签发的范围 token 读**它自己那一个**任务的详情（刷新后能读回
+        已经标过的 items）；列表、事件、取消、撤销都不在范围 token 的放行范围内。
       x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -512,7 +514,7 @@ components:
       type: apiKey
       in: query
       name: t
-      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，`-` = 会话/免认证签发：只读该任务的选择集 + 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<别名>'`，撤销签发 token 即失效）共用这套签名原语，见 docs/core-model.md §11"
+      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，`-` = 会话/免认证签发：只读该任务的选择集（`GET /jobs/{id}` 只放行 token 里那个 id）+ 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<别名>'`，撤销签发 token 即失效）共用这套签名原语，见 docs/core-model.md §11"
   responses:
     Error:
       description: 错误

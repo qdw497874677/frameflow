@@ -344,6 +344,14 @@ const tokenHistory = await bare(`/marks/history?jobId=${jobId}&t=${encodeURIComp
 check(tokenHistory.status === 401, '范围 token 读标注历史 → 401', `status=${tokenHistory.status}`);
 const otherInbound = await bare(`/jobs/不存在的任务/inbound?t=${encodeURIComponent(token)}`, { method: 'POST', body: JSON.stringify({ items: [{ photoId: picks[0].id, stars: 5 }] }) });
 check([403, 404].includes(otherInbound.status), '拿这个 token 去写别人的任务 → 403/404', `status=${otherInbound.status}`);
+// 批注页刷新后要能读回「自己已经标过的 items」：范围 token 只放行它自己那一个任务的详情
+const ownJob = await bare(`/jobs/${jobId}?t=${encodeURIComponent(token)}`);
+check(ownJob.status === 200 && ownJob.body?.id === jobId, '范围 token 读自己那个任务的详情 → 200', `status=${ownJob.status} id=${ownJob.body?.id}`);
+check(Array.isArray(ownJob.body?.items) && ownJob.body.items.length === 3, '详情里带着 items（批注页靠它读回已标项）', `items=${ownJob.body?.items?.length}`);
+const otherJob = await bare(`/jobs/别的任务?t=${encodeURIComponent(token)}`);
+check([403, 404].includes(otherJob.status), '范围 token 读别的任务详情 → 403/404', `status=${otherJob.status}`);
+const tokenEvents = await bare(`/jobs/${jobId}/events?t=${encodeURIComponent(token)}`);
+check(tokenEvents.status === 401, '范围 token 读事件流 → 401（范围外）', `status=${tokenEvents.status}`);
 
 // ── 3. 回流：by 由 token 推，写进 marks.jsonl，主凭据能对账 ────────────────
 console.log('\n── 回流（?t=，免登录）──');
