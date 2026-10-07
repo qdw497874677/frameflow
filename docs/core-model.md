@@ -106,19 +106,19 @@ server/
 新增（任务层，先写进契约、后实现）：
 
 ```
-POST /jobs                       { kind, selection, params, idempotencyKey? }
+POST /jobs                       { kind, selection, params, idempotencyKey? }（创建时把 selection 展开成 items 快照）
 GET  /jobs?state=&kind=&project=
 GET  /jobs/{id}                  状态 + 进度 + manifest + artifacts
-GET  /jobs/{id}/events           SSE 进度流
+GET  /jobs/{id}/events           增量事件日志（?since= 轮询，seq 游标；将来可换 SSE）
 POST /jobs/{id}/cancel
 POST /jobs/{id}/undo             handler 实现了 undo 才可用
-GET  /channels                   有哪些派发目标
-POST /channels/{id}/inbound      外部批注回流口（IM 回调 / 外部客户端）
-GET  /marks/history              标注变更流（按照片或时间）
-POST /selections                 可选：保存命名选择集（v1 只存不导）
+GET  /channels                   有哪些出站派发目标
+POST /jobs/{id}/inbound          外部批注回流口（IM 回调 / 外部客户端；by 由 token 别名推）
+GET  /marks/history              标注变更流（按照片 / 时间 / 任务）
+POST /selections                 可选：保存命名选择集（v1 不做 —— 快照由任务的 items 解决）
 ```
 
-`/trash` 系列**保留为同步便捷入口**（等价于 `kind: 'trash'` 的即时任务）：小事不该被异步化，点一下就该看到结果。
+`/trash` 系列**保留为同步便捷入口**（不是 `kind:'trash'` 任务）：同步、单工作单位、没有进度的事不异步化，点一下就该看到结果。
 
 ## 8. 扩展配方（验证抽象够不够）
 
@@ -126,7 +126,7 @@ POST /selections                 可选：保存命名选择集（v1 只存不�
 |---|---|---|
 | **导出**（挑好的照片交到别处） | `jobs/export.ts`：`plan` 展开目标路径 + 冲突处理，`apply` 复制 + 写 manifest，`params.recipe` | 任务页 + 一个「导出」入口 |
 | **滤镜 / 处理** | 就是 export 的 **recipe 参数**（`{filters: [...], resize: {...}, format}`），不是新管线 | 同上 |
-| **推送到飞书批注** | `jobs/annotate.ts` + `channels/feishu.ts`：推送选择集为卡片，回执经 `/channels/feishu/inbound` 写成标注 | 任务页显示「待外部批注」 |
+| **推送到飞书批注** | `jobs/annotate.ts` + `channels/feishu.ts`：推送选择集为卡片（先展开 `items` 快照），回执经 `POST /jobs/{id}/inbound` 写成标注（`by: 'link:<别名>'`） | 任务页显示「待外部批注」 |
 | **AI 自动挑选** | 一个 `annotate` 任务的执行者（产出标注，`by: 'ai'`），不是新架构 | 无 |
 | **定时任务**（每周导出四星） | `selection` + `schedule` 两个字段，加一个 cron 触发；**调度器最后做** | 无 |
 

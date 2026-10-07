@@ -215,6 +215,7 @@ paths:
         后端落 `marks.jsonl`（追加型，不重写历史）。
       parameters:
         - { name: photoId, in: query, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string }, description: 只看某个任务引起的变更（批注回流对账） }
         - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 1000 } }
       responses:
         "200":
@@ -275,7 +276,12 @@ paths:
   /jobs:
     post:
       summary: （预留，未实现）创建一个任务：选择集 + 操作 + 参数
-      description: 任务是最小可追踪单位（导出/删除/处理/推送批注）。先 `plan`，人看过再 `apply`。
+      description: |
+        任务是最小可追踪单位（推送批注 / 导出 / 处理…）。先 `plan`，人看过再 `apply`。
+        创建时服务端把 `selection` 谓词**展开成 `items` 快照** —— 派发出去的那一批必须是稳定的；
+        谓词本身仍留在 `selection` 里作为「怎么选出来的」凭据（见 contracts/selection.md）。
+        第一个 kind 是 `annotate`：`params: { channel, label }` —— `channel` 是投递通道（飞书…），
+        `label` 是批注者别名（回流记 `by: 'link:<label>'`）。
       x-implemented: false
       requestBody:
         required: true
@@ -295,7 +301,10 @@ paths:
 
   /jobs/{id}:
     get:
-      summary: （预留，未实现）任务详情（含 manifest：每个单位做了什么）
+      summary: （预留，未实现）任务详情（含 items 快照与进度）
+      description: |
+        `items` 是创建时定下的那一批（manifest：每个单位的状态/最终标注），
+        事件流水在 `/jobs/{id}/events`，标注变更对账在 `GET /marks/history?jobId=`。
       x-implemented: false
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -305,15 +314,58 @@ paths:
 
   /jobs/{id}/events:
     get:
-      summary: （预留，未实现）任务进度事件流（SSE）
+      summary: （预留，未实现）任务事件日志（增量轮询）
       description: |
-        `text/event-stream`。支持 `Last-Event-ID` 重连补发（事件是追加日志，可重放）。
-        单用户单进程：没有消息队列，事件日志代替事件总线。
+        追加型事件日志，每条带**单调递增 `seq`**；`since` 之后的事件按序返回，`nextSince` 当游标。
+        v1 用轮询（单用户单进程，任务页只看进度与「谁改了什么」）；
+        将来要实时推送时可在同一形状上加 SSE —— `Last-Event-ID` = `seq`，日志本身可重放。
       x-implemented: false
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: since, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
       responses:
-        "200": { description: SSE 流, content: { text/event-stream: { schema: { type: string } } } }
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextSince]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/JobEvent" } }
+                  nextSince: { type: integer }
+
+  /jobs/{id}/inbound:
+    post:
+      summary: （预留，未实现）外部批注回流入口
+      description: |
+        批注者（拿着任务签发的范围 token，`annotate:<jobId>`）把结果送回**任务**；
+        通道只负责出站投递，回流一律落在这里。
+        `by` **不由请求体决定** —— 从 token 的别名推出 `by: 'link:<别名>'`（避免伪造）；
+        只能写这个任务 items 里的照片，写别的返回 404。
+        幂等：每条可带 `clientRef`，重复提交同一条会跳过并返回首次结果（外部系统会整批重发）。
+        冲突：后写覆盖 + 历史留痕（`GET /marks/history?jobId=` 与任务事件流都能对账）。
+      x-implemented: false
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items: { type: array, minItems: 1, items: { $ref: "#/components/schemas/InboundItem" } }
+      responses:
+        "200":
+          description: 写入结果（逐项；重复的 clientRef 返回首次结果）
+          content:
+            application/json:
+              schema: { type: object, required: [results], properties: { results: { type: array, items: { $ref: "#/components/schemas/MarkResult" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
   /jobs/{id}/cancel:
     post:
@@ -335,28 +387,12 @@ paths:
 
   /channels:
     get:
-      summary: （预留，未实现）已接入的批注通道（应用内、飞书、其他客户端）
+      summary: （预留，未实现）已配置的**出站**投递通道（应用内、飞书、webhook…）
+      description: |
+        通道只管「怎么把一批照片发出去」；批注回流一律走 `POST /jobs/{id}/inbound`。
       x-implemented: false
       responses:
         "200": { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Channel" } } } } } } }
-
-  /channels/{id}/inbound:
-    post:
-      summary: （预留，未实现）外部批注回流入口
-      description: |
-        外部渠道（飞书回调、链接 token 的页面）把批注结果送回这里。
-        鉴权：任务签发的范围受限 token（只能写这一批的标注），不建账号体系。
-        `by` 记 `link:<别名>`；冲突以 `at` 较晚者为准，平局以服务端接收顺序为准。
-      x-implemented: false
-      parameters:
-        - { name: id, in: path, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, required: [items], properties: { token: { type: string }, items: { type: array, items: { $ref: "#/components/schemas/MarkInput" } } } }
-      responses:
-        "200": { description: ok, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: "#/components/schemas/MarkResult" } } } } } } }
 
 components:
   securitySchemes:
@@ -373,7 +409,7 @@ components:
       type: apiKey
       in: query
       name: t
-      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；当前范围是只读缩略图，绑定签发它的 API token（撤销即失效）。范围受限的外部批注链接（只读一批 + 只写标注，记 by: link:<别名>）是后续形态，见 docs/core-model.md §11"
+      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate:<jobId>`：只读该任务的选择集 + 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<别名>'`）共用这套签名原语，见 docs/core-model.md §11"
   responses:
     Error:
       description: 错误
@@ -513,6 +549,7 @@ components:
       description: |
         选择集：可序列化的谓词（不是 id 清单）。任务是「选择集 + 操作 + 参数」。
         GET /photos 的 `sel` 查询参数是它的紧凑字符串形式，语义完全一致（见 contracts/selection.md）。
+        创建任务时服务端会把谓词**展开成 `items` 快照**（派发那一批必须稳定），谓词留在 `selection` 里当凭据。
       properties:
         project: { type: string, description: 项目（映射的目录）；省略 = 当前目录 }
         where:
@@ -528,6 +565,7 @@ components:
                 eq: { type: integer, minimum: 0, maximum: 5 }
             del: { type: boolean }
             marked: { type: boolean, description: 是否打过星（stars > 0） }
+            by: { type: string, description: "最后一次标注变更的来源前缀：me | link:<别名> | ai:<模型>（从未标注过的不匹配）；服务端由 marks.jsonl 推导，前端 matchesSelection 暂不支持" }
             folder: { type: string, description: 目录包含匹配，大小写不敏感 }
             camera: { type: string, description: 机身包含匹配，大小写不敏感 }
             taken:
@@ -543,7 +581,7 @@ components:
 
     JobItem:
       type: object
-      description: manifest 的一行——「这个单位被怎么处理了」
+      description: manifest 的一行 ——「这个单位被怎么处理了」；对 annotate 就是「这张被标成了什么」
       required: [id, status]
       properties:
         id: { type: string, description: 照片 id 或组 id }
@@ -552,6 +590,39 @@ components:
         from: { type: string }
         to: { type: string }
         note: { type: string }
+        stars: { type: integer, nullable: true, description: annotate：外部/执行者给的最终星数 }
+        del: { type: boolean, nullable: true, description: annotate：是否标了待删 }
+        clientRef: { type: string, nullable: true, description: 回流幂等键（外部系统重发整批时用来去重） }
+        at: { type: string, format: date-time, nullable: true, description: 最后一次变更的时刻 }
+
+    JobEvent:
+      type: object
+      description: 任务事件日志的一行（追加型，不回改；`seq` 单调递增，可当轮询游标）
+      required: [seq, at, type]
+      properties:
+        seq: { type: integer }
+        at: { type: string, format: date-time }
+        type:
+          type: string
+          description: "created | dispatched | inbound | applied | skipped | conflict | failed | cancelled | undone | done | note"
+        photoId: { type: string, nullable: true }
+        from: { nullable: true, description: 改前（stars 整数 / del 布尔 / 状态字符串） }
+        to: { nullable: true, description: 改后 }
+        by: { type: string, nullable: true, description: "me | link:<别名> | ai:<模型> | job:<id>" }
+        channel: { type: string, nullable: true }
+        clientRef: { type: string, nullable: true }
+        note: { type: string, nullable: true }
+
+    InboundItem:
+      type: object
+      description: 外部批注回流的一项；`by` 从 token 别名推、不由客户端给
+      required: [photoId]
+      properties:
+        photoId: { type: string }
+        stars: { type: integer, minimum: 0, maximum: 5 }
+        del: { type: boolean }
+        at: { type: string, format: date-time, description: 批注者那边标下的时刻；缺省用服务端时间 }
+        clientRef: { type: string, description: 幂等键：同一条重复提交会被跳过（返回首次结果） }
 
     Artifact:
       type: object
@@ -566,13 +637,15 @@ components:
       required: [id, kind, state, selection, createdAt]
       properties:
         id: { type: string }
-        kind: { type: string, description: "能力名：export | trash | process | annotate | …（一个 kind 一个 handler）" }
+        kind: { type: string, description: "能力名：annotate | export | process | …（一个 kind 一个 handler）" }
         state: { $ref: "#/components/schemas/JobState" }
         selection: { $ref: "#/components/schemas/Selection" }
-        params: { type: object, additionalProperties: true }
+        params: { type: object, additionalProperties: true, description: "handler 参数；annotate：{ channel, label }" }
+        channel: { type: string, nullable: true, description: 派发用的出站通道 id（没有派发则为 null） }
+        dispatchedAt: { type: string, format: date-time, nullable: true }
         progress: { type: object, properties: { done: { type: integer }, total: { type: integer } } }
-        items: { type: array, items: { $ref: "#/components/schemas/JobItem" } }
-        artifacts: { type: array, items: { $ref: "#/components/schemas/Artifact" } }
+        items: { type: array, items: { $ref: "#/components/schemas/JobItem" }, description: 创建时展开的快照（那一批就是这些） }
+        artifacts: { type: array, items: { $ref: "#/components/schemas/Artifact" }, description: "annotate：发出去的卡片/链接（kind: message | url）；export：目录/文件" }
         error: { type: string, nullable: true }
         reversible: { type: boolean, description: handler 是否声明可撤销 }
         createdAt: { type: string, format: date-time }
@@ -585,17 +658,17 @@ components:
       properties:
         kind: { type: string }
         selection: { $ref: "#/components/schemas/Selection" }
-        params: { type: object, additionalProperties: true }
-        mode: { type: string, enum: [plan, apply], default: plan, description: plan 只读预演；apply 真干 }
+        params: { type: object, additionalProperties: true, description: "annotate：{ channel: 'feishu', label: '老婆' }" }
+        mode: { type: string, enum: [plan, apply], default: plan, description: plan 只读预演（展开 items 不落库）；apply 真干 }
 
     Channel:
       type: object
       required: [id, kind, label]
+      description: 出站投递通道（应用内 / 飞书 / webhook…）；回流不走通道，走 `POST /jobs/{id}/inbound`
       properties:
         id: { type: string }
         kind: { type: string, description: "inapp | feishu | webhook | …" }
         label: { type: string }
-        inbound: { type: boolean, description: 是否支持批注回流 }
         enabled: { type: boolean }
 
     Error:
