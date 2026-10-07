@@ -206,7 +206,11 @@ export function DirPicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="font-sans max-h-[85vh] gap-0 p-0 sm:max-w-md">
+      <DialogContent
+        className="font-sans max-h-[85vh] gap-0 p-0 sm:max-w-md"
+        // 不让 Radix 自动把焦点丢给第一个快捷按钮：那圈 focus 环看着像「已经选中了 /mnt」
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader className="border-b border-border px-4 py-3">
           <DialogTitle className="flex items-center gap-2 text-sm">
             <FolderOpen className="size-4 text-muted-foreground" />
