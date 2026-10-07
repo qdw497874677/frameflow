@@ -12,7 +12,8 @@
  *   ① 挂死根卡住的那几秒里，`/health`、`/roots`、`/photos` 仍然秒回（服务没被冻住）；
  *   ② 挂死根的扫描按超时收场（`library.scanning` 会回到 false，不会永远 scanning）；
  *   ③ 该根被标成 offline + `lastError` 说清是超时，**另一个根照常在线、照样有照片**；
- *   ④ 冷却期生效：排队补扫会跳过刚超时的根（毫秒级，而不是再等一个超时）。
+ *   ④ 冷却期生效：排队补扫会跳过刚超时的根（毫秒级，而不是再等一个超时）；
+ *   ⑤ 路径整个不在了的根（挂载被卸掉）：`/roots` 也得报 offline + `lastError`，不能装在线。
  *
  * 环境变量：ARTWORKS_TEST_ROOT（默认 /home/qdw/Pictures/artworks-test）、HANG_TEST_PORT（默认 8788）。
  */
@@ -28,6 +29,8 @@ const FIXTURE = process.env.ARTWORKS_TEST_ROOT ?? '/home/qdw/Pictures/artworks-t
 const PORT = Number(process.env.HANG_TEST_PORT ?? 8788);
 const BASE = `http://127.0.0.1:${PORT}/api/v1`;
 const CFG = '/tmp/artworks-hang-test.yaml';
+/** 故意不存在的根：路径没了（gvfs 挂载被卸掉）也得报离线，不能装在线 */
+const GONE = `/tmp/artworks-gone-${process.pid}`;
 const DATA_DIR = '/tmp/artworks-hang-data';
 const LOG = '/tmp/artworks-hang-server.log';
 const ROOT_TIMEOUT_MS = 3000;
@@ -140,6 +143,9 @@ writeFileSync(
     '  - id: hang',
     '    label: 失联盘',
     `    path: ${FIXTURE}`,
+    '  - id: gone',
+    '    label: 路径不在了',
+    `    path: ${GONE}`,
     'scan:',
     '  maxDepth: 8',
     `  rootTimeoutMs: ${ROOT_TIMEOUT_MS}`,
@@ -164,6 +170,12 @@ const warmBefore = (await req('/capabilities')).body?.library?.lastScanAt ?? nul
 await req('/scan', { method: 'POST' });
 const warm = await waitLastScanChange(warmBefore);
 check(warm !== null, '预热扫描跑完（索引已就绪）', warm ? `${warm.ms}ms` : '');
+const warmRoots = (await req('/roots')).body?.roots ?? [];
+const warmGone = warmRoots.find((r) => r.id === 'gone');
+const warmTest = warmRoots.find((r) => r.id === 'test');
+check(warmGone?.online === false, '路径不在了的根报 offline（不装在线）', `online=${String(warmGone?.online)}`);
+check(typeof warmGone?.lastError === 'string' && warmGone.lastError.includes('读不了目录'), '它的 lastError 说清楚读不了（ENOENT）', String(warmGone?.lastError ?? '').slice(0, 90));
+check(warmTest?.online === true && warmTest.photoCount > 0, '别的根不受影响：照样在线、有照片', `online=${String(warmTest?.online)} n=${warmTest?.photoCount}`);
 await stopServer(child);
 
 // ── 2. 挂死轮：启动即扫，hang 根永远不返回 ─────────────────────────────

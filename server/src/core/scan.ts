@@ -126,7 +126,10 @@ async function scanRoot(root: RootCfg, opts: ScanOptions): Promise<RootScanOut> 
     try {
       entries = await readdir(cur.abs, { withFileTypes: true });
     } catch (err) {
-      errors.push(`读不了目录 ${cur.abs}: ${err instanceof Error ? err.message : String(err)}`);
+      const text = `读不了目录 ${cur.abs}: ${err instanceof Error ? err.message : String(err)}`;
+      // 根目录自己读不了 = 这个项目整个离线（挂载没了/路径挪了）；往下某层读不了只是局部坏点，不影响根的状态
+      if (cur.depth === 0) throw new Error(text);
+      errors.push(text);
       continue;
     }
 
