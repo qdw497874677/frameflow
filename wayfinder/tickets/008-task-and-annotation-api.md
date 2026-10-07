@@ -4,7 +4,7 @@ title: 任务与外部批注的 API 形状
 labels: [wayfinder:grilling]
 status: open
 assignee: ""
-blocked-by: ["004"]
+blocked-by: []
 ---
 
 ## Question

@@ -34,6 +34,7 @@ status: open
 - [RAW 预览与 RAW+JPEG 配对方案](tickets/001-raw-preview-pairing.md)：服务端分层预览管线（外部 JPEG 优先→内嵌提取→LibRaw 兑底）；同目录同名配对；pair 为一等实体，打星/待删/归档成对原子处理，星级写 XMP。详见 [研究报告](research/001-raw-preview-pairing.md)
 - [挑选交互原型（星级+滑动）](tickets/002-culling-interaction-prototype.md)：一份数据两种焦距（卡片流 ⇄ 网格，变焦飞行切换）；右滑加星·下压连加·左滑待删，星与待删互斥；键盘 1–5/0/←→/X/空格/Ctrl+Z；双击放大 2.5× 带小地图；RAW+JPEG 始终成对。已演化为正式前端 `web/`
 - [叠卡与滑动手势的可借鉴开源实现](tickets/006-swipe-stack-libs.md)：不整体换库，按 Swing 的物理参数模型升级手写叠卡（拖动耦合后排 + 速度参与的弹簧松手 + 交接曲线连续）；Swiper `effect:'cards'` 作为 B 计划。详见 [研究报告](research/006-swipe-stack-options.md)
+- [产品骨架决策（已收窄：只剩「标注任务」骨架）](tickets/004-product-skeleton.md)：前五条（映射机制 / 回收站 / XMP 存储 / 访问控制 / 显示名）已在实现里落地；标注任务**复用 `/jobs`**（`kind: 'annotate'`：selection = 范围、manifest = 派发记录、events = 回流流水，通道只是投递方式）；外部批注者用**带 scope 的链接 token**（`annotate:<jobId>`，只读该任务选择集 + 缩略图、只写标注、可撤销、有有效期，回流记 `by: 'link:<别名>'`）；回流**直接落** XMP + `marks.jsonl`（不做建议层），冲突后写覆盖 + 历史留痕，乐观并发以后再说
 - [网络挂载挂死时的服务健壮性](tickets/011-hung-mount-robustness.md)：**只让出问题的根不可用，不让进程陪葬** —— 扫描路径全异步（XMP 读写、缓存探测）+ 每根 20s 超时（`scan.rootTimeoutMs`）+ 超时后 10 分钟冷却（手动 `POST /scan` 可强制重试）+ 启动 3s 探测；ffmpeg 抽封面全局并发 2、连败 3 次熔断 5 分钟；`GET /roots` 新增 `lastError`（前端显示「未连接 + 原因」）。回归 `server/tools/e2e-hung-mount.mjs`（18/0，用 `ARTWORKS_TEST_HANG_ROOT` 模拟挂死）
 
 
