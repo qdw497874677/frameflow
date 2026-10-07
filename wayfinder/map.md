@@ -36,6 +36,7 @@ status: open
 - [叠卡与滑动手势的可借鉴开源实现](tickets/006-swipe-stack-libs.md)：不整体换库，按 Swing 的物理参数模型升级手写叠卡（拖动耦合后排 + 速度参与的弹簧松手 + 交接曲线连续）；Swiper `effect:'cards'` 作为 B 计划。详见 [研究报告](research/006-swipe-stack-options.md)
 - [产品骨架决策（已收窄：只剩「标注任务」骨架）](tickets/004-product-skeleton.md)：前五条（映射机制 / 回收站 / XMP 存储 / 访问控制 / 显示名）已在实现里落地；标注任务**复用 `/jobs`**（`kind: 'annotate'`：selection = 范围、manifest = 派发记录、events = 回流流水，通道只是投递方式）；外部批注者用**带 scope 的链接 token**（`annotate:<jobId>`，只读该任务选择集 + 缩略图、只写标注、可撤销、有有效期，回流记 `by: 'link:<别名>'`）；回流**直接落** XMP + `marks.jsonl`（不做建议层），冲突后写覆盖 + 历史留痕，乐观并发以后再说
 - [网络挂载挂死时的服务健壮性](tickets/011-hung-mount-robustness.md)：**只让出问题的根不可用，不让进程陪葬** —— 扫描路径全异步（XMP 读写、缓存探测）+ 每根 20s 超时（`scan.rootTimeoutMs`）+ 超时后 10 分钟冷却（手动 `POST /scan` 可强制重试）+ 启动 3s 探测；ffmpeg 抽封面全局并发 2、连败 3 次熔断 5 分钟；`GET /roots` 新增 `lastError`（前端显示「未连接 + 原因」）。回归 `server/tools/e2e-hung-mount.mjs`（18/0，用 `ARTWORKS_TEST_HANG_ROOT` 模拟挂死）
+- [部署形态（已收窄：只剩跑在哪 + 交付方式 + 缓存/HTTPS）](tickets/005-stack-deployment.md)：服务以后**直接连 NAS**但保持「根 = 目录路径」的挂载无关设计（本地盘 / NFS / SMB / USB 同一套代码）；交付**两条路都提供、最终 docker compose**（镜像带 node+sharp+ffmpeg+exiftool）；预览缓存 = 本地磁盘缓存（默认上限 8 GB、可配、启动按 atime LRU 淘汰到 90%），索引不设过期 + 上次扫描超 7 天启动自动补扫；只在局域网 / Tailscale，不加反代与证书。落地拆成 [012](tickets/012-deployment-artifacts.md)、[013](tickets/013-cache-policy.md)
 
 
 ## Not yet specified
