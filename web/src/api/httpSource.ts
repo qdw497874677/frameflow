@@ -90,6 +90,7 @@ export function toRoot(dto: RootDto): Root {
     label: dto.label || dto.path,
     photoCount: dto.photoCount,
     online: dto.online !== false,
+    lastError: dto.lastError ?? null,
   };
 }
 

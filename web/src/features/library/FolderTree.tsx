@@ -29,7 +29,11 @@ export function FolderTree() {
         />
       ))}
       {offline.map((root) => (
-        <div key={root.path} className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground/60">
+        <div
+          key={root.path}
+          title={root.lastError ?? undefined}
+          className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground/60"
+        >
           <Folder className="size-3.5" />
           <span className="truncate">{root.label}</span>
           <span className="ml-auto shrink-0 text-[10px]">未连接</span>

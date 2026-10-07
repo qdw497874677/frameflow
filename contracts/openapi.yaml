@@ -503,6 +503,10 @@ components:
         label: { type: string }
         photoCount: { type: integer }
         online: { type: boolean, description: false = 当前不可访问（未挂载/未插） }
+        lastError:
+          type: string
+          nullable: true
+          description: 上一次访问这个根失败的原因（扫描超时/挂载没挂上）；正常时为 null
 
     Selection:
       type: object

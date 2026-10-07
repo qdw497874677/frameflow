@@ -39,6 +39,8 @@ export interface RootDto {
   label: string;
   photoCount?: number;
   online?: boolean;
+  /** 判离线的原因（挂载失联、目录不存在……）；在线时为 null */
+  lastError?: string | null;
 }
 
 export interface FolderDto {

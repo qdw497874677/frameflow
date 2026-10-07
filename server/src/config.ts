@@ -20,7 +20,12 @@ export interface Config {
   /** 空字符串 = 免认证（只在本机开发时这么用） */
   password: string;
   roots: RootCfg[];
-  scan: { maxDepth: number; ignore: string[] };
+  scan: {
+    maxDepth: number;
+    ignore: string[];
+    /** 单个根目录的扫描超时（毫秒）。网络挂载失联时 FS 调用永不返回，没有这道闸就把服务拖住 */
+    rootTimeoutMs: number;
+  };
   logLevel: string;
 }
 
@@ -46,7 +51,7 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
   );
 
   const defaultDataDir = resolve(homedir(), '.local/share/artworks');
-  const scanRaw = (raw['scan'] as { maxDepth?: number; ignore?: string[] }) ?? {};
+  const scanRaw = (raw['scan'] as { maxDepth?: number; ignore?: string[]; rootTimeoutMs?: number }) ?? {};
 
   return {
     host: String(raw['host'] ?? process.env['ARTWORKS_HOST'] ?? '127.0.0.1'),
@@ -57,6 +62,7 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
     scan: {
       maxDepth: Number(scanRaw.maxDepth ?? 8),
       ignore: [...DEFAULT_IGNORE_DIRS, ...(scanRaw.ignore ?? [])],
+      rootTimeoutMs: Number(scanRaw.rootTimeoutMs ?? process.env['ARTWORKS_SCAN_TIMEOUT_MS'] ?? 20_000),
     },
     logLevel: String(raw['logLevel'] ?? process.env['ARTWORKS_LOG_LEVEL'] ?? 'info'),
   };

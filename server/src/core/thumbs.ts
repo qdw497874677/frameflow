@@ -14,6 +14,7 @@
  */
 
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
@@ -30,6 +31,46 @@ export class PreviewUnavailable extends Error {
   constructor(photoId: string, reason?: string) {
     super(reason ?? '无法生成预览：没有外拍 JPEG，也抽不出内嵌 JPEG');
     this.photoId = photoId;
+  }
+}
+
+/**
+ * 一次最多几个 ffmpeg 抽帧。
+ * 挂载失联时每个抽帧都会卡到超时：没有闸，进一次网格就会同时起几十个卡死的子进程（票 011 现场是 4 个）。
+ */
+const FFMPEG_CONCURRENCY = 2;
+/** 连续失败这么多次就暂时不再抽：源大概整体不可用，别一个个等到超时 */
+const POSTER_BREAKER_FAILURES = 3;
+const POSTER_BREAKER_MS = 5 * 60_000;
+
+/** 简单的并发闸：超出 limit 的排队，先到先服务 */
+class Gate {
+  private readonly limit: number;
+  private active = 0;
+  private readonly waiting: (() => void)[] = [];
+
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) await new Promise<void>((resume) => this.waiting.push(resume));
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      this.waiting.shift()?.();
+    }
+  }
+}
+
+/** 存在性检查走异步：照片目录可能在网络挂载上，同步检查撞上挂死的挂载会冻住事件循环 */
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
   }
 }
 
@@ -55,6 +96,10 @@ export class Thumbs {
   private readonly thumbDir: string;
   /** 正在抽的视频封面：同一个视频的并发请求共用一次 ffmpeg */
   private readonly posters = new Map<string, Promise<{ path: string; source: PreviewSource }>>();
+  private readonly ffmpegGate = new Gate(FFMPEG_CONCURRENCY);
+  /** 连续抽帧失败计数 + 熔断到什么时候 */
+  private posterFailures = 0;
+  private posterBlockedUntil = 0;
 
   constructor(dataDir: string) {
     this.previewDir = join(dataDir, 'previews');
@@ -85,7 +130,7 @@ export class Thumbs {
     // 视频：没有 raw/jpeg，封面由 ffmpeg 抽帧（缓存到 dataDir，不写回照片目录）
     if (rec.kind === 'video' || (!rec.jpeg && !rec.raw && rec.video)) return this.poster(rec);
     // 外拍 JPEG：最清晰也最便宜 —— 但只有 sharp 真能解的那种才直接给它
-    if (rec.jpeg && existsSync(rec.jpeg.path) && directlyDecodable(rec.jpeg.path)) {
+    if (rec.jpeg && directlyDecodable(rec.jpeg.path) && (await isFile(rec.jpeg.path))) {
       return { path: rec.jpeg.path, source: 'external_jpeg' };
     }
 
@@ -107,6 +152,9 @@ export class Thumbs {
   private async poster(rec: PhotoRecord): Promise<{ path: string; source: PreviewSource }> {
     const cached = this.previewCachePath(this.absStemOf(rec), this.sourceSig(rec));
     if (existsSync(cached)) return { path: cached, source: 'video_poster' };
+    if (Date.now() < this.posterBlockedUntil) {
+      throw new PreviewUnavailable(rec.id, '视频封面暂缓：源挂载似乎不可用，稍后自动重试');
+    }
     const inflight = this.posters.get(cached);
     if (inflight) return inflight;
     const job = this.makePoster(rec, cached).finally(() => this.posters.delete(cached));
@@ -124,25 +172,37 @@ export class Thumbs {
         // 上一轮没产物
       }
       try {
-        await run(
-          'ffmpeg',
-          [
-            '-hide_banner', '-loglevel', 'error', '-nostdin', ...seek,
-            '-i', rec.previewPath,
-            '-frames:v', '1', '-an', '-vf', 'scale=min(2048\\,iw):-2', '-q:v', '4',
-            '-f', 'mjpeg', '-y', tmp,
-          ],
-          { timeout: 120_000 },
+        await this.ffmpegGate.run(() =>
+          run(
+            'ffmpeg',
+            [
+              '-hide_banner', '-loglevel', 'error', '-nostdin', ...seek,
+              '-i', rec.previewPath,
+              '-frames:v', '1', '-an', '-vf', 'scale=min(2048\\,iw):-2', '-q:v', '4',
+              '-f', 'mjpeg', '-y', tmp,
+            ],
+            { timeout: 120_000 },
+          ),
         );
         if (existsSync(tmp) && statSync(tmp).size > 0) {
           renameSync(tmp, cached);
+          this.posterFailures = 0;
           return { path: cached, source: 'video_poster' };
         }
       } catch (err) {
         lastErr = err;
       }
     }
+    this.notePosterFailure();
     throw new PreviewUnavailable(rec.id, `视频封面抽帧失败：${lastErr instanceof Error ? lastErr.message : 'ffmpeg 没给出帧'}`);
+  }
+
+  /** 连续失败到阈值就熔断几分钟：整库不可用时不该逐个请求去等超时 */
+  private notePosterFailure(): void {
+    if (++this.posterFailures >= POSTER_BREAKER_FAILURES) {
+      this.posterBlockedUntil = Date.now() + POSTER_BREAKER_MS;
+      this.posterFailures = 0;
+    }
   }
 
   async thumb(rec: PhotoRecord, size: 512 | 2048): Promise<{ path: string; etag: string; source: PreviewSource }> {

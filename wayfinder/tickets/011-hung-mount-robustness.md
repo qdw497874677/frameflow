@@ -2,7 +2,7 @@
 id: "011"
 title: 网络挂载挂死时的服务健壮性：同步扫描会冻结整个服务、封面抽帧无并发上限
 labels: [wayfinder:task]
-status: open
+status: closed
 assignee: ""
 blocked-by: []
 ---
@@ -34,3 +34,11 @@ blocked-by: []
 （来源：2026-10-06 挂载事故；恢复手法见当次会话记录 —— `pkill -9 -f "[g]vfsd-fuse"` 让服务脱离 D 状态，`fusermount3 -uz /run/user/1000/gvfs` + 重启 `gvfs-daemon.service` 重建挂载点。）
 
 - 2026-10-06（第二条已部分落地）：**索引持久化** —— `dataDir/index.json` 现在连上次扫描的 `records`/目录树/root 在线态一起存（`version: 2`，`server/src/core/library.ts` 的 `loadIndex`/`saveIndex`），冷启动不再需要碰文件系统就能列出照片（`roots()` 优先用缓存里的 `online`，顺带免掉一次对挂载点的 `existsSync`）。回归脚本 `server/tools/e2e-cold-start.mjs`：重启后 673ms 就在 `scanning=true` 的窗口里列出了照片。**注意这不解决本票的正题** —— 扫描本身仍是同步 FS，挂载挂死时依旧会冻结整个进程；待办仍是 ① 扫描的每 root 超时/熔断、② ffmpeg 并发闸。
+
+## Resolution（2026-10-06）
+
+- ① **扫描路径不再有同步 FS**：`core/xmp.ts` 全异步（`readFile`/`writeFile`/`rename`），`scan.ts` 去掉 `existsSync`；热路径上「每张照片读一次 XMP」与「探测缓存是否已抽过图」都不再阻塞事件循环。**并加每根超时闸**：`scanRootIsolated()` 用 `Promise.race` 把单个根的扫描包起来（`scan.rootTimeoutMs`，默认 20s），超时 → 该根 `online:false` + `lastError`，其余根继续扫完；`exiftool` 批次另有 120s 上限。
+- ② **ffmpeg 并发受控**：`thumbs.ts` 的 `Gate(2)` 包住 `makePoster()`；连续失败 3 次熔断 5 分钟（错误文案 `视频封面暂缓：源挂载似乎不可用，稍后自动重试`）。实测：清空预览缓存后，对视频目录里 20 条并发请求封面，`pgrep -c -x ffmpeg` 峰值 **2**，20 张全部 200（单张失败也不影响其它）。
+- ③ **根级熔断**：超时的根进入 10 分钟冷却（`HUNG_COOLDOWN_MS`），期间的自动/排队扫描直接跳过并记 `跳过 <rootId>：…`；手动 `POST /scan` 清冷却强制重试；启动 `probeRoots()` 3s 探测不阻塞服务；`GET /roots` 新增 `lastError`（契约 + `web/src` 侧边栏/设置页已同步）。
+- 验收：`node tools/e2e-hung-mount.mjs` → **18 通过 / 0 失败**（挂死期间四个端点 1–3ms 响应；超时根 offline + 原因；另一个根 11 张照常；排队补扫 502ms 跳过）；`e2e-api.mjs` 98/0、`e2e-cold-start.mjs` 6/0 全绿。
+- 遗留（不在本票验收内）：超时后被放弃的那次扫描仍会占住一个 libuv 线程池线程，直到挂载自己返回；真要连这个也解决，得把 FS 访问挪进 worker/子进程（当时的取舍见票内「待定」）。

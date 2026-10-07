@@ -154,6 +154,8 @@ export interface Root {
   photoCount?: number;
   /** 盘没插上时 false —— 侧边栏要看得见但不可点 */
   online: boolean;
+  /** 上一次访问失败的原因（扫描超时、挂载没挂上）；正常时为 null */
+  lastError?: string | null;
 }
 
 /** 回收站条目：以配对为单位（RAW+JPEG 一起进、一起出） */

@@ -106,6 +106,7 @@ export interface RootDto {
   label: string;
   photoCount?: number;
   online?: boolean;
+  lastError?: string | null;
 }
 
 export interface TrashEntryDto {

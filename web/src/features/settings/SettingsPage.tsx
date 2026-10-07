@@ -41,9 +41,16 @@ export function SettingsPage() {
                 </Badge>
               )}
               {!r.online && (
-                <Badge variant="outline" className="ml-auto shrink-0">
-                  未连接
-                </Badge>
+                <>
+                  {r.lastError && (
+                    <span className="truncate text-muted-foreground/70" title={r.lastError}>
+                      {r.lastError}
+                    </span>
+                  )}
+                  <Badge variant="outline" className="ml-auto shrink-0">
+                    未连接
+                  </Badge>
+                </>
               )}
             </div>
           ))}

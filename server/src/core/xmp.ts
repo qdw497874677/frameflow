@@ -16,7 +16,7 @@
  * 显影参数（`crs:*`）与历史一概不动。落盘用 同目录 tmp + rename（网络共享上也是原子的）。
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 
 const RATING_ATTR = /\bxmp:Rating\s*=\s*"(-1|[0-5])"/;
 const RATING_EL = /<xmp:Rating>\s*(-1|[0-5])\s*<\/xmp:Rating>/;
@@ -34,13 +34,16 @@ export function ratingOf(marks: { stars: number; del: boolean }): number {
   return Math.max(0, Math.min(5, Math.trunc(marks.stars)));
 }
 
-export function readXmpMarks(sidecarPath: string): XmpMarks | null {
-  if (!existsSync(sidecarPath)) return null;
+/**
+ * 读 sidecar。**全异步**：照片目录可能在网络挂载上，同步 FS 一旦撞上挂死的挂载
+ * 会把整个进程（事件循环）冻住 —— 票 011 的事故就是这么来的。
+ */
+export async function readXmpMarks(sidecarPath: string): Promise<XmpMarks | null> {
   let xml: string;
   try {
-    xml = readFileSync(sidecarPath, 'utf8');
+    xml = await readFile(sidecarPath, 'utf8');
   } catch {
-    return null; // 读不动就当没有：XMP 不是唯一真相，日志与内存状态还在
+    return null; // 不存在 / 读不动就当没有：XMP 不是唯一真相，日志与内存状态还在
   }
   const out: XmpMarks = {};
   const rating = RATING_ATTR.exec(xml) ?? RATING_EL.exec(xml);
@@ -65,21 +68,19 @@ export type SidecarWrite = 'created' | 'updated' | 'unchanged';
  * 把 `{stars, del}` 写进 sidecar。抛错表示写不进去（只读共享、权限、盘掉了），
  * 调用方据此把状态退回本地日志（见 marks.ts），不把它当致命错误。
  */
-export function writeXmpMarks(sidecarPath: string, marks: { stars: number; del: boolean }): SidecarWrite {
+export async function writeXmpMarks(sidecarPath: string, marks: { stars: number; del: boolean }): Promise<SidecarWrite> {
   const rating = ratingOf(marks);
   let existing: string | null = null;
-  if (existsSync(sidecarPath)) {
-    try {
-      existing = readFileSync(sidecarPath, 'utf8');
-    } catch {
-      existing = null; // 读不动但可能写得动 —— 继续，按新建处理
-    }
+  try {
+    existing = await readFile(sidecarPath, 'utf8');
+  } catch {
+    existing = null; // 不存在 / 读不动但可能写得动 —— 继续，按新建处理
   }
   if (existing !== null && currentRating(existing) === rating) return 'unchanged';
   const xml = existing === null ? packet(rating) : upsertRating(existing, rating);
   const tmp = `${sidecarPath}.aw-${process.pid}.tmp`;
-  writeFileSync(tmp, xml, 'utf8');
-  renameSync(tmp, sidecarPath);
+  await writeFile(tmp, xml, 'utf8');
+  await rename(tmp, sidecarPath);
   return existing === null ? 'created' : 'updated';
 }
 

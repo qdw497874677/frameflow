@@ -170,7 +170,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     if (!items.length) return reply.code(400).send({ error: 'items 不能为空' });
     const info = infoOf(req);
     const by = info.via === 'bearer' ? `ai:${info.token?.label ?? 'token'}` : info.via === 'link' ? 'link:external' : 'me';
-    const results = lib.applyMarks(items.map((i) => ({ ...i, by: i.by ?? by, channel: i.channel ?? (info.via === 'link' ? 'link' : info.via === 'bearer' ? 'api' : 'inapp') })));
+    const results = await lib.applyMarks(items.map((i) => ({ ...i, by: i.by ?? by, channel: i.channel ?? (info.via === 'link' ? 'link' : info.via === 'bearer' ? 'api' : 'inapp') })));
     const failed = results.filter((r) => !r.ok);
     if (failed.length === results.length) return reply.code(409).send({ error: failed[0]?.error ?? '全部失败', results });
     return { results };
@@ -188,7 +188,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   app.post('/api/v1/trash', async (req, reply) => {
     const ids = idsOf(req.body);
     if (!ids.length) return reply.code(400).send({ error: 'ids 不能为空' });
-    const res = lib.moveToTrash(ids);
+    const res = await lib.moveToTrash(ids);
     return res.ok ? res : reply.code(409).send({ ...res, error: res.failed[0]?.error ?? '全部失败' });
   });
 
@@ -232,9 +232,9 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     return reply.code(204).send();
   });
 
-  // 让用户手动触发一次重扫（外部工具改了盘上的照片之后）
+  // 让用户手动触发一次重扫（外部工具改了盘上的照片之后）。force：连失联的挂载也立刻重试一次
   app.post('/api/v1/scan', async (_req, reply) => {
-    const r = lib.requestRefresh();
+    const r = lib.requestRefresh({ force: true });
     return reply.code(202).send(r.started ? { started: true } : { started: false, queued: r.queued, reason: r.queued ? '已有扫描在进行中：已排队补扫一次' : '已有扫描在进行中' });
   });
 

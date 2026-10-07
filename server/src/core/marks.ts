@@ -152,7 +152,7 @@ export class MarksStore {
    * 先落状态与日志（内存 + jsonl），再尽力回写 XMP —— 顺序不能反：
    * 盘上写失败时，日志里必须有。
    */
-  apply(items: MarkInput[], lookup: (photoId: string) => MarkTarget | null): MarkResultDto[] {
+  async apply(items: MarkInput[], lookup: (photoId: string) => MarkTarget | null): Promise<MarkResultDto[]> {
     const now = new Date().toISOString();
     const results: MarkResultDto[] = [];
     const lines: string[] = [];
@@ -202,11 +202,12 @@ export class MarksStore {
       }
     }
 
-    // 回写 XMP：失败不改状态（日志已经是真相），只在结果里说一声
+    // 回写 XMP：失败不改状态（日志已经是真相），只在结果里说一声。
+    // 异步：侧车在照片目录里，而照片目录可能在网络挂载上（同步写会把事件循环冻住）
     const failed = new Map<string, string>();
     for (const job of xmpJobs) {
       try {
-        writeXmpMarks(job.sidecarPath, { stars: job.stars, del: job.del });
+        await writeXmpMarks(job.sidecarPath, { stars: job.stars, del: job.del });
       } catch (err) {
         failed.set(job.sidecarPath, String(err));
       }

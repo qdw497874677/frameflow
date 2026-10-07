@@ -87,6 +87,19 @@ export const handler: JobHandler<ExportParams> = { validate, plan, apply, undo }
 - 失效即重建：版本号不符、JSON 坏了、`records` 为空 → 当没有缓存，照旧全量扫描覆盖。
 - 回归：`node tools/e2e-cold-start.mjs`（重启后断言「扫描还没跑完就能出照片」+ 日志里的「索引缓存已就绪」）。
 
+## 挂载失联时的行为（2026-10-06，票 011）
+
+网络挂载（NAS / gvfs）会在没有征兆的情况下挂死：`stat`/`read` 永远不返回。策略是「**只让出问题的根不可用，不让整个进程陪葬**」：
+
+- **挂载路径上不留同步 FS**：扫描走 `node:fs/promises`；照片旁的 XMP 读写（`core/xmp.ts`）与视频封面探测（`core/thumbs.ts`）都已异步化 —— 同步调用会占死事件循环，请求连 `/health` 都不再应答（2026-10-06 现场就是如此）。
+- **每个根一个超时闸**：`scan.rootTimeoutMs`（默认 20s，可用 `ARTWORKS_SCAN_TIMEOUT_MS` 覆盖）—— 超时的根当轮放弃，标 `online: false` + `lastError: 扫描超时：…`，其余根照常扫完；`exiftool` 批次另有 120s 上限（超时先用缓存/空元数据）。
+- **冷却熔断**：刚超时的根 10 分钟内不再重试（避免每次重扫都白等一个超时、还占住一个 libuv 线程）；扫描进行中再点「重扫」只排队一次；手动 `POST /scan` 会强制重试一次（清冷却）。
+- **启动探测**：`probeRoots()` 用 3s 超时试一下每个根，不阻塞监听与「先吃索引缓存」的服务。
+- **ffmpeg 并发闸**：抽视频封面全局最多 2 个并发（`Gate`）；连续失败 3 次熔断 5 分钟（`视频封面暂缓：源挂载似乎不可用，稍后自动重试`），免得一次滚动就把线程池和挂载压死。
+- `GET /roots` 的 `lastError` 说明原因，前端侧边栏与设置页显示「未连接 + 原因」。
+
+回归：`node tools/e2e-hung-mount.mjs` —— 在独立端口起一个实例（独立 `dataDir`），用 `ARTWORKS_TEST_HANG_ROOT=<rootId>` 让某个根永远不返回，断言挂死期间 `/health`、`/roots`、`/photos` 秒回，该根超时后 offline + 原因、其余根照常，冷却期内的排队补扫跳过它。
+
 ## 不变式
 
 1. **磁盘是真相**：不建媒体库、不复制导入；数据库（若有）只是索引/缓存，永远可重建。

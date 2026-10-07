@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import type { Config } from '../config.ts';
 import { extOf, IMAGE_EXTS, RAW_EXTS } from './exts.ts';
@@ -76,6 +77,9 @@ interface DirStat {
  */
 const INDEX_VERSION = 2;
 
+/** 扫描超时过的根，多久之内不再去碰（熔断）。手动「重扫」会立即重试。 */
+const HUNG_COOLDOWN_MS = 10 * 60_000;
+
 /** `index.json` 的形状。缓存坏了、版本不认，就当没有 —— 扫描能重建一切。 */
 interface IndexFile {
   version?: number;
@@ -83,6 +87,8 @@ interface IndexFile {
   lastScanAt?: string | null;
   fileCount?: number;
   online?: Record<string, boolean>;
+  /** 每个根上次判离线的原因（给 `/roots` 的 `lastError`） */
+  rootErrors?: Record<string, string>;
   records?: PhotoRecord[];
   metaCache?: Record<string, CachedMeta>;
 }
@@ -113,6 +119,10 @@ export class Library {
   private dirs = new Map<string, DirStat>();
   private metaCache = new Map<string, CachedMeta>();
   private online = new Map<string, boolean>();
+  /** 每个根上一次判离线的原因（`/roots` 的 `lastError`） */
+  private rootErrors = new Map<string, string>();
+  /** 扫描超时过的根 → 冷却到什么时候（票 011 的熔断：挂死的挂载不反复去碰） */
+  private hungUntil = new Map<string, number>();
   scanning = false;
   /** 扫描进行中又被要求扫一次 → 记下来，扫完立刻补一遍（外部工具改盘常常赶在扫描中途） */
   private rescanQueued = false;
@@ -141,19 +151,37 @@ export class Library {
     this.scanning = true;
     const t0 = Date.now();
     try {
+      // 熔断：刚超时过的根在冷却期内不再去碰 —— 挂死的挂载上每次重试都要等一个超时，
+      // 还会占住一个 libuv 线程。手动「重扫」可强制重试（见 requestRefresh）。
+      const prevErrors = this.rootErrors;
+      const now = Date.now();
+      const skipped = this.cfg.roots.filter((r) => (this.hungUntil.get(r.id) ?? 0) > now);
+      const roots = this.cfg.roots.filter((r) => !skipped.includes(r));
       const res = await scanLibrary({
-        roots: this.cfg.roots,
+        roots,
         ignore: this.cfg.scan.ignore,
         maxDepth: this.cfg.scan.maxDepth,
         metaCache: this.metaCache,
+        rootTimeoutMs: this.cfg.scan.rootTimeoutMs,
         hasExtractedPreview: ({ absStem, sig }) => existsSync(this.thumbs.previewCachePath(absStem, sig)),
-        onError: (message, err) => {
-          const text = `${message}: ${err instanceof Error ? err.message : String(err)}`;
+        onError: (text) => {
           if (!this.lastErrors.includes(text)) this.lastErrors.push(text);
         },
       });
       this.metaCache = res.metaCache;
       this.online = res.online;
+      this.rootErrors = new Map();
+      for (const [id, st] of res.rootStates) {
+        if (st.error) this.rootErrors.set(id, st.error);
+        if (st.timedOut) this.hungUntil.set(id, Date.now() + HUNG_COOLDOWN_MS);
+        else if (st.online) this.hungUntil.delete(id);
+      }
+      for (const r of skipped) {
+        const reason = prevErrors.get(r.id) ?? '上次扫描超时：冷却中，点「重扫」可立即重试';
+        this.online.set(r.id, false);
+        this.rootErrors.set(r.id, reason);
+        res.errors.push(`跳过 ${r.id}：${reason}`);
+      }
       this.lastErrors = res.errors.slice(0, 50);
       this.fileCount = res.fileCount;
       this.records = new Map(res.records.map((r) => [r.id, r]));
@@ -179,13 +207,38 @@ export class Library {
    * 「现在扫一遍，扫不了就排队补扫一次」。
    * 扫描进行中时新落的文件这一遍看不见 —— 排队补扫就不需要人再点一次。
    */
-  requestRefresh(): { started: boolean; queued: boolean } {
+  requestRefresh(opts: { force?: boolean } = {}): { started: boolean; queued: boolean } {
     if (this.scanning) {
+      // 排队的那次不继承 force：冷却期还是要守，不然连点两下就把失联的挂载又拖一遍
       this.rescanQueued = true;
       return { started: false, queued: true };
     }
+    if (opts.force) this.hungUntil.clear(); // 手动重扫 = 对失联的挂载也立刻重试一次
     void this.refresh().catch(() => undefined);
     return { started: true, queued: false };
+  }
+
+  /**
+   * 启动时探一下每个根的挂载在不在（`/roots` 的 online）。全异步 + 超时：
+   * 挂死的网络挂载上 `stat` 会永不返回，同步探一次就把事件循环堵死了（票 011）。
+   */
+  async probeRoots(timeoutMs = 3000): Promise<void> {
+    await Promise.all(
+      this.cfg.roots.map(async (r) => {
+        if (this.online.has(r.id)) return;
+        const ok = await Promise.race([
+          stat(resolvePath(r.path)).then(
+            () => true,
+            () => false,
+          ),
+          new Promise<boolean>((done) => {
+            setTimeout(() => done(false), timeoutMs).unref();
+          }),
+        ]);
+        this.online.set(r.id, ok);
+        if (!ok) this.rootErrors.set(r.id, '根目录暂时访问不到：挂载没挂上或已断开');
+      }),
+    );
   }
 
   get status(): LibraryStatus {
@@ -256,7 +309,9 @@ export class Library {
       label: r.label,
       diskPath: resolvePath(r.path),
       photoCount: this.dirs.get(`/${r.id}`)?.recursive ?? 0,
-      online: this.online.get(r.id) ?? existsSync(resolvePath(r.path)),
+      // 没探过的根先当在线（乐观）；probeRoots()/refresh() 几毫秒内就会给出真实状态
+      online: this.online.get(r.id) ?? true,
+      lastError: this.rootErrors.get(r.id) ?? null,
     }));
   }
 
@@ -396,7 +451,7 @@ export class Library {
    * 移入回收站：成对搬走（RAW/JPEG/侧车一起进 `<照片目录>/.trash/<显示名>/`）。
    * 之所以不搞一个统一的库外回收站：`rename` 只在同一个文件系统里原子，NAS 上尤其如此。
    */
-  moveToTrash(ids: string[]): OpResultDto {
+  async moveToTrash(ids: string[]): Promise<OpResultDto> {
     const failed: OpFailureDto[] = [];
     let ok = 0;
     for (const id of ids) {
@@ -406,7 +461,7 @@ export class Library {
         continue;
       }
       try {
-        this.trashOne(rec);
+        await this.trashOne(rec);
         ok++;
       } catch (err) {
         failed.push({ id, error: err instanceof Error ? err.message : String(err) });
@@ -416,7 +471,7 @@ export class Library {
     return { ok, failed };
   }
 
-  private trashOne(rec: PhotoRecord): void {
+  private async trashOne(rec: PhotoRecord): Promise<void> {
     const main = rec.jpeg ?? rec.raw;
     if (!main) throw new Error('这张没有可搬的文件');
     const fromDirAbs = dirname(main.path);
@@ -443,7 +498,7 @@ export class Library {
     // 先清标记（回到「未标」）：趁侧车还在原位，XMP 才写得进去。
     // 不清的话，还原之后这张会带着「待删」标记回来 —— 而挑片视图默认隐藏待删，照片就「消失」了。
     if (stars !== 0 || this.marks.delOf(rec.id)) {
-      this.applyMarks([{ id: rec.id, stars: 0, del: false, by: 'me', channel: 'trash' }]);
+      await this.applyMarks([{ id: rec.id, stars: 0, del: false, by: 'me', channel: 'trash' }]);
     }
 
     const done: TrashFileMove[] = [];
@@ -621,8 +676,8 @@ export class Library {
 
   // ── 标注 ────────────────────────────────────────────────────────────────
 
-  applyMarks(items: MarkInput[]): MarkResultDto[] {
-    const results = this.marks.apply(items, (id) => {
+  async applyMarks(items: MarkInput[]): Promise<MarkResultDto[]> {
+    const results = await this.marks.apply(items, (id) => {
       const rec = this.records.get(id);
       if (!rec) return null;
       return { displayName: rec.displayName, sidecarPath: this.sidecarPath(rec) };
@@ -670,6 +725,7 @@ export class Library {
     this.fileCount = typeof raw.fileCount === 'number' ? raw.fileCount : records.length;
     this.lastScanAt = raw.lastScanAt ?? null;
     this.online = new Map(Object.entries(raw.online ?? {}));
+    this.rootErrors = new Map(Object.entries(raw.rootErrors ?? {}));
     this.restored = { photos: records.length, savedAt: raw.savedAt ?? null };
   }
 
@@ -694,6 +750,7 @@ export class Library {
           lastScanAt: this.lastScanAt,
           fileCount: this.fileCount,
           online: Object.fromEntries(this.online),
+          rootErrors: Object.fromEntries(this.rootErrors),
           records: [...this.records.values()],
           metaCache,
         }),

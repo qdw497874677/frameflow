@@ -34,6 +34,9 @@ if (cached) {
   );
 }
 
+// 根目录在不在：异步探一次（挂死的挂载也不能堵住事件循环），随后 refresh() 会再校正
+void lib.probeRoots().catch(() => undefined);
+
 void lib
   .refresh()
   .then((r) => app.log.info({ photos: r.photos, files: r.files, ms: r.ms, errors: r.errors.length }, '首次扫描完成'))
