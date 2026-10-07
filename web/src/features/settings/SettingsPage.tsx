@@ -1,18 +1,40 @@
-import { Check, Cloud, HardDrive, ListChecks, Server, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Cloud, FolderMinus, FolderOpen, FolderPlus, HardDrive, ListChecks, Pencil, Server, TriangleAlert } from 'lucide-react';
 import { source } from '@/api';
 import { store, useAppState } from '@/core/store';
+import { DirPicker } from '@/components/DirPicker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 
 /**
- * 设置：根目录、数据源、后端状态。
+ * 设置：项目、数据源、后端状态。
  * 这一页有意保持「薄」—— 真正要改的东西（后端地址、密码、缓存上限）多数在后端配置里，
  * 前端只显示现状 + 能做的动作。
  */
 export function SettingsPage() {
   const { roots, dir, history, busy, authEnabled } = useAppState();
+  const [newPath, setNewPath] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameLabel, setRenameLabel] = useState('');
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const submitAdd = async () => {
+    if (!newPath.trim() || adding) return;
+    setAdding(true);
+    try {
+      await store.addRoot(newPath.trim(), newLabel.trim() || undefined);
+      setNewPath('');
+      setNewLabel('');
+    } finally {
+      setAdding(false);
+    }
+  };
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
@@ -20,42 +42,122 @@ export function SettingsPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm">
             <HardDrive className="size-4 text-muted-foreground" />
-            根目录
+            项目
           </CardTitle>
           <CardDescription className="text-xs">
-            文件夹就是真相：这些是磁盘上被管理的入口，不做导入、不改目录结构 —— 应用只写标记。
+            一个项目 = 映射进来的一个磁盘目录（本地盘、移动硬盘、NAS 都一样）。不做导入、不改目录结构 —— 应用只写标记。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-xs">
-          {roots.length === 0 && <div className="text-muted-foreground">还没读到根目录。</div>}
+          {roots.length === 0 && <div className="text-muted-foreground">还没读到项目。</div>}
           {roots.map((r) => (
-            <div key={r.id} className="flex items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5">
-              <span className={r.online ? 'text-ok' : 'text-muted-foreground/50'}>
-                {r.online ? <Check className="size-3.5" /> : <TriangleAlert className="size-3.5" />}
-              </span>
-              <span className="font-mono">{r.path}</span>
-              <span className="truncate text-muted-foreground">{r.label}</span>
-              {typeof r.photoCount === 'number' && (
-                <Badge variant="secondary" className="ml-auto shrink-0 tabular-nums">
-                  {r.photoCount}
-                </Badge>
-              )}
-              {!r.online && (
-                <>
-                  {r.lastError && (
-                    <span className="truncate text-muted-foreground/70" title={r.lastError}>
-                      {r.lastError}
-                    </span>
-                  )}
-                  <Badge variant="outline" className="ml-auto shrink-0">
-                    未连接
+            <div key={r.id} className="space-y-1 rounded-lg border border-border/60 px-2 py-1.5">
+              <div className="flex items-center gap-2">
+                <span className={r.online ? 'text-ok' : 'text-muted-foreground/50'}>
+                  {r.online ? <Check className="size-3.5" /> : <TriangleAlert className="size-3.5" />}
+                </span>
+                <span className="truncate font-medium">{r.label}</span>
+                <span className="truncate font-mono text-muted-foreground" title={r.diskPath ?? r.path}>
+                  {r.diskPath ?? r.path}
+                </span>
+                {typeof r.photoCount === 'number' && (
+                  <Badge variant="secondary" className="ml-auto shrink-0 tabular-nums">
+                    {r.photoCount}
                   </Badge>
-                </>
+                )}
+                {!r.online && <Badge variant="outline" className="ml-auto shrink-0">未连接</Badge>}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-6 shrink-0"
+                  title="改显示名"
+                  onClick={() => {
+                    setRenamingId(renamingId === r.id ? null : r.id);
+                    setRenameLabel(r.label);
+                  }}
+                >
+                  <Pencil className="size-3" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-6 shrink-0 text-danger"
+                  title="移除这个项目（只解除映射，盘上文件不动）"
+                  onClick={() => setConfirmRemoveId(confirmRemoveId === r.id ? null : r.id)}
+                >
+                  <FolderMinus className="size-3" />
+                </Button>
+              </div>
+              {renamingId === r.id && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    autoFocus
+                    value={renameLabel}
+                    onChange={(e) => setRenameLabel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && renameLabel.trim()) void store.renameRoot(r.id, renameLabel.trim()).then(() => setRenamingId(null));
+                      if (e.key === 'Escape') setRenamingId(null);
+                    }}
+                    placeholder="新显示名"
+                    className="h-7 text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-7"
+                    disabled={!renameLabel.trim() || renameLabel.trim() === r.label}
+                    onClick={() => void store.renameRoot(r.id, renameLabel.trim()).then(() => setRenamingId(null))}
+                  >
+                    改名
+                  </Button>
+                </div>
+              )}
+              {confirmRemoveId === r.id && (
+                <div className="flex items-center gap-2 text-danger">
+                  <span className="flex-1">
+                    移除「{r.label}」？盘上的文件不会被删；重新添加 {r.diskPath ?? r.path} 即可找回。
+                  </span>
+                  <Button size="sm" variant="destructive" className="h-7" onClick={() => { setConfirmRemoveId(null); void store.removeRoot(r.id); }}>
+                    确认移除
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7" onClick={() => setConfirmRemoveId(null)}>
+                    取消
+                  </Button>
+                </div>
               )}
             </div>
           ))}
           <div className="pt-1 text-[11px] text-muted-foreground/70">
             当前目录：<span className="font-mono">{dir}</span>
+          </div>
+          <Separator />
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <FolderPlus className="size-3.5 shrink-0 text-muted-foreground" />
+            <Input
+              value={newPath}
+              onChange={(e) => setNewPath(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void submitAdd()}
+              placeholder="/home/qdw/Pictures/新目录 或 ~/nfs/... 挂载点"
+              className="h-7 min-w-40 flex-1 font-mono text-xs"
+              spellCheck={false}
+            />
+            <Input
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void submitAdd()}
+              placeholder="显示名（可空）"
+              className="h-7 w-32 text-xs"
+            />
+            <Button size="sm" variant="outline" className="h-7" onClick={() => setPickerOpen(true)}>
+              <FolderOpen className="mr-1 size-3.5" />
+              浏览…
+            </Button>
+            <Button size="sm" className="h-7" disabled={!newPath.trim() || adding} onClick={() => void submitAdd()}>
+              {adding ? '添加中…' : '添加'}
+            </Button>
+          </div>
+          <DirPicker open={pickerOpen} onOpenChange={setPickerOpen} onPick={(p) => setNewPath(p)} />
+          <div className="text-[11px] text-muted-foreground/70">
+            添加后立即生效并写回后端配置（重启不丢），子目录会出现在左侧目录树；网络挂载路径最多等 3 秒探活。
           </div>
         </CardContent>
       </Card>
@@ -133,7 +235,7 @@ export function SettingsPage() {
           <p>前端是纯客户端，不碰磁盘；只有后端进程读写文件。</p>
           <div className="flex gap-2 pt-1">
             <Button size="sm" variant="outline" onClick={() => void store.loadRoots()}>
-              重新读取根目录
+              重新读取项目
             </Button>
             <Button size="sm" variant="outline" onClick={() => void store.loadTrash()}>
               刷新回收站

@@ -1,4 +1,5 @@
-import { Aperture, Images, RotateCcw, Settings, Star, Trash2, Undo2 } from 'lucide-react';
+import { useState } from 'react';
+import { Aperture, FolderOpen, FolderPlus, Images, RotateCcw, Settings, Star, Trash2, Undo2, X } from 'lucide-react';
 import { counts, store, useAppState } from '@/core/store';
 import type { View } from '@/core/types';
 import {
@@ -18,6 +19,8 @@ import {
 } from '@/components/ui/sidebar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DirPicker } from '@/components/DirPicker';
+import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { FolderTree } from '@/features/library/FolderTree';
 
@@ -29,10 +32,20 @@ export const NAV: { id: View; label: string; icon: typeof Images }[] = [
 ];
 
 export function AppSidebar() {
-  const { view, items, trash, pendingTrash, roots, canUndo } = useAppState();
+  const { view, items, trash, pendingTrash, canUndo } = useAppState();
   const c = counts(items);
   const trashCount = pendingTrash.length + trash.length;
-  const rootLabel = roots.find((r) => r.online)?.label ?? '照片库';
+  // 就地添加项目：点 + 打开「选目录」（下钻选，或展开一行手输路径）；名字自动用路径末段，想自定义去设置页
+  const [addingAt, setAddingAt] = useState(false);
+  const [addingPath, setAddingPath] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const submitAdd = async () => {
+    const p = addingPath.trim();
+    if (!p) return setAddingAt(false);
+    setAddingAt(false);
+    setAddingPath('');
+    await store.addRoot(p);
+  };
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -82,7 +95,50 @@ export function AppSidebar() {
         <SidebarSeparator />
 
         <SidebarGroup>
-          <SidebarGroupLabel>{rootLabel}</SidebarGroupLabel>
+          <SidebarGroupLabel className="flex items-center justify-between gap-2">
+            <span className="truncate" title="下面的每个条目是一个项目（映射进来的目录，可改名/移除，见设置页）">
+              项目
+            </span>
+            <button
+              type="button"
+              aria-label="浏览添加项目"
+              title="从文件系统选一个目录挂进左侧树（也可展开手输路径）"
+              className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setPickerOpen(true)}
+            >
+              <FolderOpen className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="手输路径添加项目"
+              title="手动输入绝对路径添加"
+              className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setAddingAt((v) => !v)}
+            >
+              {addingAt ? <X className="size-3.5" /> : <FolderPlus className="size-3.5" />}
+            </button>
+          </SidebarGroupLabel>
+          <DirPicker
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            onPick={(p) => void store.addRoot(p)}
+          />
+          {addingAt && (
+            <div className="flex items-center gap-1 px-2 pb-1.5">
+              <Input
+                autoFocus
+                value={addingPath}
+                onChange={(e) => setAddingPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitAdd();
+                  if (e.key === 'Escape') setAddingAt(false);
+                }}
+                placeholder="绝对路径，回车添加"
+                className="h-7 border-dashed bg-transparent font-mono text-xs"
+                spellCheck={false}
+              />
+            </div>
+          )}
           <SidebarGroupContent>
             <SidebarMenu className="gap-0">
               <FolderTree />

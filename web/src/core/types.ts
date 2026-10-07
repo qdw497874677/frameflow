@@ -146,10 +146,12 @@ export type ViewMode = 'a' | 'c';
 /** 侧边栏里可去的页面 */
 export type View = 'cull' | 'trash' | 'settings';
 
-/** 一个照片根目录：磁盘上的入口。可以有多个（机身卡、移动硬盘、NAS） */
+/** 一个项目 = 映射进来的一个目录：磁盘上的入口，可以有多个（机身卡、移动硬盘、NAS） */
 export interface Root {
   id: string;
   path: string;
+  /** 磁盘绝对路径 —— 侧边栏直接展示，让用户知道这次导的是哪个目录 */
+  diskPath?: string;
   label: string;
   photoCount?: number;
   /** 盘没插上时 false —— 侧边栏要看得见但不可点 */
@@ -173,5 +175,99 @@ export interface TrashEntry {
   hasRaw: boolean;
   hasJpeg: boolean;
   sizeBytes?: number;
+}
+
+/* ── 任务（动作层）：状态层之外的「有进度、有产物、可撤销」的事 ─────────
+ * 扫描/浏览/标记是状态（同步、即时落盘）；派发批注、导出、批处理是动作 ——
+ * 它们要么长跑、要么要派人、要么产出文件，所以要能被追踪、取消、撤销。
+ * 一个任务 = 选择集（怎么选出来的）+ kind（干什么）+ 参数 + 展开好的 items 快照。
+ */
+
+export type JobState =
+  | 'planned'
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+
+/** manifest 的一行：「这个单位被怎么处理了」；粒度是照片配对组（RAW+JPEG 一起走） */
+export interface JobItem {
+  id: string;
+  displayName?: string;
+  status: 'planned' | 'done' | 'skipped' | 'failed';
+  from?: string;
+  to?: string;
+  note?: string;
+  /** annotate：外部/执行者给的最终星数 */
+  stars?: number | null;
+  del?: boolean | null;
+  clientRef?: string | null;
+  at?: string | null;
+}
+
+/** 任务的产物：批注任务是卡片/链接，导出是目录/文件 */
+export interface Artifact {
+  kind: 'file' | 'dir' | 'url' | 'message';
+  path: string;
+  bytes?: number;
+}
+
+export type JobEventType =
+  | 'created'
+  | 'dispatched'
+  | 'inbound'
+  | 'applied'
+  | 'skipped'
+  | 'conflict'
+  | 'failed'
+  | 'cancelled'
+  | 'undone'
+  | 'done'
+  | 'note';
+
+/** 任务事件日志的一行：追加型、不回改，`seq` 单调递增（轮询游标，将来当 SSE 的 Last-Event-ID） */
+export interface JobEvent {
+  seq: number;
+  at: string;
+  type: JobEventType;
+  photoId?: string | null;
+  from?: number | boolean | string | null;
+  to?: number | boolean | string | null;
+  /** me | link:<别名> | ai:<模型> | job:<id> */
+  by?: string | null;
+  channel?: string | null;
+  clientRef?: string | null;
+  note?: string | null;
+}
+
+export interface Job {
+  id: string;
+  /** 能力名：annotate | export | process | … */
+  kind: string;
+  state: JobState;
+  selection: Selection;
+  params?: Record<string, unknown>;
+  channel?: string | null;
+  dispatchedAt?: string | null;
+  /** 数的是 items；total 在创建展开时就定了 */
+  progress: { done: number; total: number };
+  /** 创建时展开的快照 —— 派发出去的那一批必须是稳定的 */
+  items: JobItem[];
+  artifacts: Artifact[];
+  error?: string | null;
+  reversible: boolean;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+/** 出站投递通道：只管「怎么把一批照片发出去」；回流一律走任务 */
+export interface Channel {
+  id: string;
+  kind: string;
+  label: string;
+  enabled: boolean;
 }
 

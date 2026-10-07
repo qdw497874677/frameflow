@@ -5,22 +5,34 @@
 
 import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { createReadStream, existsSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createReadStream, existsSync, type Dirent } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import type { Config } from '../config.ts';
+import { JobError, JobsStore, type JobProblem } from '../core/jobs.ts';
 import type { Library } from '../core/library.ts';
 import type { MarkInput } from '../core/marks.ts';
-import { selectionFromLegacyFilter, selectionFromQuery } from '../core/selection.ts';
+import { selectionFromLegacyFilter, selectionFromQuery, type Selection } from '../core/selection.ts';
 import { PreviewUnavailable } from '../core/thumbs.ts';
+import { listChannels } from '../jobs/channels.ts';
+import { getHandler, jobKinds, registry } from '../jobs/registry.ts';
+import type { InboundInput } from '../jobs/registry.ts';
+import { JobsService } from '../jobs/service.ts';
 import { Auth, type ApiTokenMeta } from './auth.ts';
 
 const VERSION = '0.1.0';
 const COOKIE = 'artworks_session';
 
+/** 「选择目录」接口的最小目录项 */
+type DirEntry = { name: string; path: string };
+
 interface AuthInfo {
-  via: 'disabled' | 'session' | 'bearer' | 'link';
+  via: 'disabled' | 'session' | 'bearer' | 'link' | 'annotate';
   token?: ApiTokenMeta;
+  /** `via='annotate'`：任务范围 token（批注链接）里的任务 id 与批注者别名 */
+  jobId?: string;
+  alias?: string;
 }
 
 const authInfo = new WeakMap<FastifyRequest, AuthInfo>();
@@ -37,9 +49,59 @@ function idsOf(body: unknown): string[] {
   return Array.isArray(raw.ids) ? raw.ids.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
 }
 
+/**
+ * 回流项：手写校验（这个仓没有 Fastify schema）。`by` 不在这里 —— 它由凭据推（见 POST /jobs/:id/inbound）。
+ */
+function inboundItemsOf(body: unknown): InboundInput[] {
+  const raw = (body ?? {}) as { items?: unknown };
+  if (!Array.isArray(raw.items)) return [];
+  const out: InboundInput[] = [];
+  for (const entry of raw.items) {
+    if (!entry || typeof entry !== 'object') continue;
+    const it = entry as Record<string, unknown>;
+    if (typeof it['photoId'] !== 'string' || !it['photoId']) continue;
+    const item: InboundInput = { photoId: it['photoId'] };
+    if (typeof it['stars'] === 'number' && Number.isFinite(it['stars'])) {
+      item.stars = Math.max(0, Math.min(5, Math.round(it['stars'])));
+    }
+    if (typeof it['del'] === 'boolean') item.del = it['del'];
+    if (typeof it['at'] === 'string' && it['at']) item.at = it['at'];
+    if (typeof it['clientRef'] === 'string' && it['clientRef']) item.clientRef = it['clientRef'];
+    out.push(item);
+  }
+  return out;
+}
+
+/** 这次请求是谁在操作（标注的 `by` 来源）：会话/免认证 = 本人，bearer = AI，链接 = 外部 */
+function byOf(req: FastifyRequest): string {
+  const info = infoOf(req);
+  if (info.via === 'bearer') return `ai:${info.token?.label ?? 'token'}`;
+  if (info.via === 'link') return 'link:external';
+  if (info.via === 'annotate') return `link:${info.alias ?? 'external'}`;
+  return 'me';
+}
+
+/** 任务层的业务错误对 HTTP：语义在 core/jobs.ts（JobError.code），映射只在这里 */
+function jobError(reply: FastifyReply, err: unknown): FastifyReply {
+  if (err instanceof JobError) {
+    const status = { invalid: 400, notfound: 404, conflict: 409, forbidden: 403 }[err.code];
+    const body: { error: string; detail?: { problems: JobProblem[] } } = { error: err.message };
+    if (err.problems?.length) body.detail = { problems: err.problems };
+    return reply.code(status).send(body);
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return reply.code(500).send({ error: msg });
+}
+
 export async function buildServer(cfg: Config, lib: Library): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: cfg.logLevel }, bodyLimit: 8 * 1024 * 1024 });
   const auth = new Auth(cfg.dataDir, cfg.password);
+  // 任务层：磁盘上两份追加日志（core/jobs.ts），执行由进程内一个队列兜（jobs/service.ts）。
+  // 签发批注链接的能力在这里注入，handler 自己不碰 auth。
+  const jobs = new JobsService(new JobsStore(cfg.dataDir), registry, {
+    lib,
+    signRangeToken: (jobId, alias, tokenId) => auth.issueRangeToken(jobId, alias, tokenId),
+  });
   await app.register(cookie);
 
   // ── 认证：一条密码，三种凭据（见 api/auth.ts）──────────────────────────
@@ -48,15 +110,32 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     const path = req.url.split('?')[0] ?? '';
     const q = req.query as Record<string, string> | undefined;
     const thumbMatch = /^\/api\/v1\/photos\/[^/]+\/thumb$/.test(path);
+    // `?t=` 只在两条路由上算凭据：读缩略图，以及在批注链接里往任务送回结果
+    const inboundMatch = /^\/api\/v1\/jobs\/[^/]+\/inbound$/.test(path);
     const who = auth.identify({
       cookie: req.cookies?.[COOKIE],
       authorization: req.headers.authorization,
-      // `?t=` 只在缩略图路由上算凭据：链接 token 的范围就是「看预览」，不碰写接口
-      thumbToken: thumbMatch ? q?.['t'] : undefined,
+      // 两种 `?t=` 按路由分开：缩略图两条都收（只读链接 + 任务范围 token），回流**只收**任务范围 token
+      linkToken: thumbMatch ? q?.['t'] : undefined,
+      rangeToken: thumbMatch || inboundMatch ? q?.['t'] : undefined,
     });
     authInfo.set(req, who ?? { via: 'disabled' });
     if (who) authed.add(req);
+    // 任务范围 token（批注链接）的作用域：只对它那个任务有效 —— 缩略图只看任务 items 里的照片，
+    // 回流只能回自己的任务；任务被取消/删掉则整条链接失效。别的路由一律不放行。
+    if (who?.via === 'annotate') {
+      const jobId = who.jobId ?? '';
+      if (!jobs.rangeTokenValid(jobId)) return reply.code(403).send({ error: '这个批注链接已经失效了（任务已取消或没了）' });
+      const thumbOf = thumbMatch ? decodeURIComponent(path.split('/')[4] ?? '') : null;
+      const inScope = thumbOf !== null ? jobs.hasItem(jobId, thumbOf) : path === `/api/v1/jobs/${jobId}/inbound`;
+      if (!inScope) return reply.code(404).send({ error: '这个批注链接只对它那个任务里的照片有效' });
+      return;
+    }
     if (!auth.enabled) return; // 免认证：一律放行，但来源已经认过了
+    // 缩略图链接是只读凭据：认证开着时不能拿它去写回流（只有范围 token / Bearer / 会话能写）
+    if (inboundMatch && who?.via === 'link') {
+      return reply.code(403).send({ error: '这是缩略图链接，只能看；要写标注请用任务签发的批注链接' });
+    }
     // 静态前端（'/'、/assets/*、index.html 回落）不受认证门保护：应用壳里没有数据，
     // 数据全在 /api/ 后面。把壳也锁上的话，浏览器连登录页都拿不到（只能看到 401 的 JSON）。
     if (!path.startsWith('/api/')) return;
@@ -77,15 +156,19 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   }));
 
   app.get('/api/v1/capabilities', async () => ({
-    jobs: [],
-    channels: [],
+    // 注册表投影：新加一个 jobs/<kind>.ts 就会出现在这里，前端零改动
+    jobs: jobKinds().flatMap((kind) => {
+      const h = getHandler(kind);
+      return h ? [{ kind: h.kind, label: h.label, params: h.params, sideEffect: h.sideEffect, undoable: h.undoable }] : [];
+    }),
+    channels: listChannels(),
     executors: [
       { kind: 'ollama', model: '', local: true },
       { kind: 'openai', model: '', local: false },
       { kind: 'anthropic', model: '', local: false },
     ],
     library: lib.status,
-    notes: '任务层与通道未实现（见 docs/core-model.md §11/§12）；AI 客户端现在就能用 GET /photos + PUT /marks 取活干。',
+    notes: '任务层已开（POST /jobs 先 plan 再 apply；批注回流走 POST /jobs/{id}/inbound）；通道 v1 只有内置 inapp。AI 客户端现在就能用 GET /photos + PUT /marks 取活干。',
   }));
 
   // ── 会话 ───────────────────────────────────────────────────────────────
@@ -103,6 +186,76 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
 
   // ── 目录与照片 ─────────────────────────────────────────────────────────
   app.get('/api/v1/roots', async () => ({ roots: lib.roots() }));
+
+  // 「选择目录」的下钻数据源：真实文件系统，只列目录（含指向目录的符号链接，如 ~/nfs）。
+  app.get('/api/v1/fs/browse', async (req, reply) => {
+    const q = (req.query as { path?: string }).path;
+    const target = q?.trim() ? resolve(q.trim()) : homedir();
+    let entries: Dirent[];
+    try {
+      entries = await readdir(target, { withFileTypes: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(404).send({ error: `读不了这个目录：${target} —— ${msg}` });
+    }
+    const dirs = (
+      await Promise.all(
+        entries
+          .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || e.isSymbolicLink()))
+          .map(async (e): Promise<DirEntry | null> => {
+            const p = join(target, e.name);
+            if (e.isDirectory()) return { name: e.name, path: p };
+            try {
+              return (await stat(p)).isDirectory() ? { name: e.name, path: p } : null; // 符号链接指向目录才算
+            } catch {
+              return null; // 悬挂链接（gvfs 挂载断开时会这样）跳过，别让一个坏链接挂掉整个浏览
+            }
+          }),
+      )
+    )
+      .filter((d): d is DirEntry => d !== null)
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+    const parent = dirname(target) === target ? null : dirname(target);
+    return { path: target, parent, dirs };
+  });
+
+  // 添加项目：路径探不到 → 404；已在列表 → 400。成功 201 且回整棵 Root（前端马上刷新侧边栏）。
+  app.post('/api/v1/roots', async (req, reply) => {
+    const body = (req.body ?? {}) as { path?: string; label?: string };
+    if (!body.path?.trim()) return reply.code(400).send({ error: '要带 path（磁盘绝对路径）' });
+    try {
+      const root = await lib.addRoot({ path: body.path, label: body.label });
+      return reply.code(201).send({ root });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const notThere = msg.includes('访问不到');
+      return reply.code(notThere ? 404 : 400).send({ error: msg });
+    }
+  });
+
+  // 改根显示名 / 移除根。移除只解除映射：盘上文件一个不动，重新添加即找回。
+  app.patch('/api/v1/roots/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { label?: string };
+    try {
+      const root = lib.renameRoot(id, body.label ?? '');
+      return reply.send({ root });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(msg.includes('没有这个项目') ? 404 : 400).send({ error: msg });
+    }
+  });
+
+  app.delete('/api/v1/roots/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      lib.removeRoot(id);
+      return reply.code(204).send();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(404).send({ error: msg });
+    }
+  });
 
   app.get('/api/v1/folders', async (req, reply) => {
     const q = req.query as { path?: string };
@@ -177,8 +330,9 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   });
 
   app.get('/api/v1/marks/history', async (req) => {
-    const q = req.query as { photoId?: string; limit?: string };
-    return { items: lib.history(q.limit ? Number(q.limit) : undefined, q.photoId) };
+    const q = req.query as { photoId?: string; limit?: string; jobId?: string };
+    // 三种切法：某张照片的来龙去脉 / 最近若干条 / 某个任务写了什么（对账用）
+    return { items: lib.history(q.limit ? Number(q.limit) : undefined, q.photoId, q.jobId) };
   });
 
   // ── 回收站 ─────────────────────────────────────────────────────────────
@@ -231,6 +385,97 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     if (!auth.revokeToken(q.id)) return reply.code(404).send({ error: '没这个 token' });
     return reply.code(204).send();
   });
+
+  // ── 任务层（见 docs/core-model.md §7 与 server/src/jobs/）────────────────
+  // 一个任务 = 「把一批照片交给某个 kind 去办」。先 `mode:'plan'` 把选择集展开成 items 快照给你看
+  // （不落库、不签发任何东西），人点头了再 `mode:'apply'` 落库、入队、执行。
+
+  app.post('/api/v1/jobs', async (req, reply) => {
+    const body = (req.body ?? {}) as { kind?: unknown; selection?: unknown; params?: unknown; mode?: unknown };
+    if (body.mode !== undefined && body.mode !== 'plan' && body.mode !== 'apply') {
+      return reply.code(400).send({ error: `mode 只能是 plan / apply（收到 ${JSON.stringify(body.mode)}）` });
+    }
+    if (typeof body.kind !== 'string' || !body.kind.trim()) {
+      return reply.code(400).send({ error: `要带 kind（任务类型）。可用：${jobKinds().join(' / ')}` });
+    }
+    const params = body.params && typeof body.params === 'object' && !Array.isArray(body.params) ? (body.params as Record<string, unknown>) : {};
+    try {
+      const job = await jobs.create({
+        kind: body.kind.trim(),
+        selection: (body.selection ?? {}) as Selection,
+        params,
+        mode: body.mode === 'apply' ? 'apply' : 'plan',
+        by: byOf(req),
+        // 范围 token 绑在签发它的 API token 上（会话/免认证签发时为 null）：撤销那条 token 链接即失效
+        tokenId: infoOf(req).token?.id ?? null,
+      });
+      return reply.code(201).send(job);
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
+  app.get('/api/v1/jobs', async (req) => {
+    const q = req.query as { state?: string; limit?: string };
+    return { items: jobs.list({ state: q.state, limit: q.limit ? Number(q.limit) : undefined }) };
+  });
+
+  app.get('/api/v1/jobs/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      return jobs.get(id);
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
+  // 增量轮询用：since 之后的事件 + 下次带上的游标 nextSince（seq 全局单调）
+  app.get('/api/v1/jobs/:id/events', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { since?: string; limit?: string };
+    try {
+      return jobs.events(id, { since: q.since ? Number(q.since) : undefined, limit: q.limit ? Number(q.limit) : undefined });
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
+  // 外部批注的回流口：批注者带着任务范围 token（`?t=`）来，免登录。
+  // `by` 由凭据推（link:<别名>），请求体里就算带了也不采信；只能写这个任务 items 里的照片。
+  app.post('/api/v1/jobs/:id/inbound', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const items = inboundItemsOf(req.body);
+    if (!items.length) return reply.code(400).send({ error: 'items 不能为空：每项至少要有 photoId' });
+    const info = infoOf(req);
+    if (info.via === 'annotate' && info.jobId !== id) return reply.code(403).send({ error: '这个批注链接不是给这个任务的' });
+    try {
+      return { results: await jobs.inbound(id, items, byOf(req)) };
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
+  app.post('/api/v1/jobs/:id/cancel', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      return await jobs.cancel(id);
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
+  // 撤销：只有 reversible 的任务能撤（否则 409）。annotate 是用 marks.jsonl 里本任务写下的 from 回滚。
+  app.post('/api/v1/jobs/:id/undo', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      return await jobs.undo(id);
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
+  // ── 出站通道（回流不走这里，见 jobs/channels.ts）───────────────────────
+  app.get('/api/v1/channels', async () => ({ items: listChannels() }));
 
   // 让用户手动触发一次重扫（外部工具改了盘上的照片之后）。force：连失联的挂载也立刻重试一次
   app.post('/api/v1/scan', async (_req, reply) => {

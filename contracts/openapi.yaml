@@ -8,7 +8,7 @@ openapi: 3.1.0
 info:
   title: art-workspace API
   version: 0.1.0
-  description: 照片整理 web 应用：目录浏览、RAW+JPEG 配对、星级/待删标记、回收站；任务与外部批注通道为预留。
+  description: 照片整理 web 应用：目录浏览、RAW+JPEG 配对、星级/待删标记、回收站；任务层（annotate 批注往返）+ 内置应用内通道。
 servers:
   - url: /api/v1
     description: 前端经同源 /api/v1（Vite dev 代理或生产同域反向代理）
@@ -64,16 +64,100 @@ paths:
 
   /roots:
     get:
-      summary: 可浏览的根目录
-      description: 用户在设置里配置的一个或多个根（本地盘、挂载点）。`online=false` 表示当前不可访问（例如移动硬盘没插）。
+      summary: 已配置的项目
+      description: 用户在设置里配置的一个或多个项目：每个 = 映射进来的一个磁盘目录（本地盘、挂载点）。`online=false` 表示当前不可访问（例如移动硬盘没插）。
       responses:
         "200": { description: ok, content: { application/json: { schema: { type: object, required: [roots], properties: { roots: { type: array, items: { $ref: "#/components/schemas/Root" } } } } } } }
+    post:
+      summary: 添加一个项目
+      description: >
+        运行时添加（设置页「添加项目」）。后端先探路径可达（网络挂载 3s 超时保护），
+        通过后写回配置文件（重启后仍在）并立刻后台扫描 —— 侧边栏树马上能看到它的子目录。
+        id 由 label 或目录名派生，重复时自动加 -2/-3 后缀。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string, description: 磁盘绝对路径（本地目录或挂载点） }
+                label: { type: string, description: 显示名；缺省用目录名 }
+      responses:
+        "201":
+          description: 已添加
+          content:
+            application/json:
+              schema: { type: object, required: [root], properties: { root: { $ref: "#/components/schemas/Root" } } }
+        "400": { description: 路径为空 / 已存在同样的项目, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: 路径不存在或 3 秒内无响应（挂死的挂载）, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /fs/browse:
+    get:
+      summary: 列磁盘目录（供「选择目录」下钻，只列目录不列文件）
+      description: >
+        本地应用：后端就在用户的机器上，所以能浏览真实文件系统。
+        缺省从用户主目录开始；点子目录下钻、点 parent 上翻。指向目录的符号链接也算（如 ~/nfs → gvfs 挂载）。
+        隐藏目录（点开头）不列，减少噪声。
+      parameters:
+        - { name: path, in: query, schema: { type: string }, description: 磁盘绝对路径；缺省为主目录 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, parent, dirs]
+                properties:
+                  path: { type: string, description: 当前目录（绝对路径） }
+                  parent: { type: [string, "null"], description: 上一级；到根目录为 null }
+                  dirs:
+                    type: array
+                    description: 子目录（含指向目录的符号链接），按名称排序
+                    items:
+                      type: object
+                      required: [name, path]
+                      properties:
+                        name: { type: string }
+                        path: { type: string }
+        "404": { description: 目录不存在或读不了, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /roots/{rootId}:
+    patch:
+      summary: 改项目的显示名
+      description: 只改配置里的 label（侧边栏与设置页展示用）；id、路径、照片都不动。
+      parameters:
+        - { name: rootId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              properties:
+                label: { type: string, description: 新显示名（非空） }
+      responses:
+        "200": { description: 已改名, content: { application/json: { schema: { type: object, required: [root], properties: { root: { $ref: "#/components/schemas/Root" } } } } } }
+        "404": { description: 没有这个根, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      summary: 移除一个项目（只解除映射，绝不删盘上文件）
+      description: >
+        把这个项目从配置里移除：侧边栏不再显示，它的照片与标记从库里消失，但磁盘上的文件一个都不动。
+        想再要回来就重新添加同名路径（标记日志还在，历史不丢）。
+      parameters:
+        - { name: rootId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: 已移除 }
+        "404": { description: 没有这个根, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /folders:
     get:
       summary: 列出一个目录（下钻/上翻），并返回该目录可见照片数
       parameters:
-        - { name: path, in: query, schema: { type: string }, description: 绝对路径；省略则返回已配置的根目录 }
+        - { name: path, in: query, schema: { type: string }, description: 绝对路径；省略则返回已配置的项目 }
       responses:
         "200":
           description: ok
@@ -271,18 +355,25 @@ paths:
       responses:
         "204": { description: 已撤销 }
 
-  # ── 以下为**预留**端点：契约先定形状，后端实现见 docs/core-model.md ──────────
+  # ── 任务层与通道：状态机在 server/src/core/jobs.ts，handler 在 server/src/jobs/ ──
 
   /jobs:
     post:
-      summary: （预留，未实现）创建一个任务：选择集 + 操作 + 参数
+      summary: 创建一个任务：选择集 + 操作 + 参数
       description: |
         任务是最小可追踪单位（推送批注 / 导出 / 处理…）。先 `plan`，人看过再 `apply`。
         创建时服务端把 `selection` 谓词**展开成 `items` 快照** —— 派发出去的那一批必须是稳定的；
         谓词本身仍留在 `selection` 里作为「怎么选出来的」凭据（见 contracts/selection.md）。
-        第一个 kind 是 `annotate`：`params: { channel, label }` —— `channel` 是投递通道（飞书…），
+        第一个 kind 是 `annotate`：`params: { channel, label }` —— `channel` 是投递通道（v1 只有 `inapp`），
         `label` 是批注者别名（回流记 `by: 'link:<label>'`）。
-      x-implemented: false
+
+        `mode: 'plan'` **不落库、不签发任何东西**：返回的 `Job` 只是预览，`id` 固定为 `"plan"`（不是真任务，
+        `GET /jobs/{id}` 查不到）；`mode: 'apply'` 才落库并把状态推到 `queued` → `running`。
+        执行在后台：201 返回的那一刻 `artifacts` 可能还是空的（`annotate` 的批次链接要等 handler 跑完），
+        所以要看进度/链接就轮询 `GET /jobs/{id}`（v1 用轮询，见 `/jobs/{id}/events`）。
+        状态机：`planned → queued → running → done | failed | cancelled`；重启时 `queued`/`running` 收敛为
+        `interrupted`（没有执行者了，可 `undo` 或收新回流时接着跑）；非法迁移 / 已收摊的任务再取消 → 409。
+      x-implemented: true
       requestBody:
         required: true
         content:
@@ -291,8 +382,8 @@ paths:
       responses:
         "201": { description: 已创建（状态为 planned 或 queued）, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
     get:
-      summary: （预留，未实现）任务列表
-      x-implemented: false
+      summary: 任务列表
+      x-implemented: true
       parameters:
         - { name: state, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 50 } }
@@ -301,11 +392,11 @@ paths:
 
   /jobs/{id}:
     get:
-      summary: （预留，未实现）任务详情（含 items 快照与进度）
+      summary: 任务详情（含 items 快照与进度）
       description: |
         `items` 是创建时定下的那一批（manifest：每个单位的状态/最终标注），
         事件流水在 `/jobs/{id}/events`，标注变更对账在 `GET /marks/history?jobId=`。
-      x-implemented: false
+      x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -314,12 +405,12 @@ paths:
 
   /jobs/{id}/events:
     get:
-      summary: （预留，未实现）任务事件日志（增量轮询）
+      summary: 任务事件日志（增量轮询）
       description: |
         追加型事件日志，每条带**单调递增 `seq`**；`since` 之后的事件按序返回，`nextSince` 当游标。
         v1 用轮询（单用户单进程，任务页只看进度与「谁改了什么」）；
         将来要实时推送时可在同一形状上加 SSE —— `Last-Event-ID` = `seq`，日志本身可重放。
-      x-implemented: false
+      x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
         - { name: since, in: query, schema: { type: integer, minimum: 0, default: 0 } }
@@ -338,15 +429,18 @@ paths:
 
   /jobs/{id}/inbound:
     post:
-      summary: （预留，未实现）外部批注回流入口
+      summary: 外部批注回流入口
       description: |
         批注者（拿着任务签发的范围 token，`annotate:<jobId>`）把结果送回**任务**；
         通道只负责出站投递，回流一律落在这里。
         `by` **不由请求体决定** —— 从 token 的别名推出 `by: 'link:<别名>'`（避免伪造）；
         只能写这个任务 items 里的照片，写别的返回 404。
-        幂等：每条可带 `clientRef`，重复提交同一条会跳过并返回首次结果（外部系统会整批重发）。
+        幂等：每条可带 `clientRef`，重复提交同一条会跳过并返回首次结果（外部系统会整批重发）——
+        **整批都是老 `clientRef` 的重放**在任务已经 `done`/`cancelled` 时也照旧回 200（重发问的是「记下没有」）；
+        但在已收摊的任务里带**新的** `clientRef` → 409。
         冲突：后写覆盖 + 历史留痕（`GET /marks/history?jobId=` 与任务事件流都能对账）。
-      x-implemented: false
+        任务 `running` 且所有 items 都有终态 → `done`（跳过/失败也算有交代）。
+      x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -369,8 +463,12 @@ paths:
 
   /jobs/{id}/cancel:
     post:
-      summary: （预留，未实现）取消任务（已完成的部分回滚或保留，由 handler 的 undo 决定）
-      x-implemented: false
+      summary: 取消任务（已完成的部分回滚或保留，由 handler 的 undo 决定）
+      description: |
+        取消只是把任务停在 `cancelled` 并**断掉它签发的范围 token**（批注链接当场失效）；
+        已经写下的标注**不会被回滚** —— 要退回标注请显式调 `/jobs/{id}/undo`。
+        已是 `done` / `failed` / `cancelled` 的任务不能再取消（409）。
+      x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -378,8 +476,12 @@ paths:
 
   /jobs/{id}/undo:
     post:
-      summary: （预留，未实现）撤销任务（只有 handler 声明可以撤销时才可调用）
-      x-implemented: false
+      summary: 撤销任务（只有 handler 声明可以撤销时才可调用）
+      description: |
+        `handler.undoable` 为真才能撤（否则 409），同一个任务只能撤一次。
+        `annotate` 的 undo = 按 `marks.jsonl` 里**本任务写下的最早 `from` 值**把标注回滚（记录为
+        `channel: 'undo'`, `by: 'me'`），撤销后任务落在 `cancelled`（终态语义：不要再等它回流）。
+      x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -387,10 +489,11 @@ paths:
 
   /channels:
     get:
-      summary: （预留，未实现）已配置的**出站**投递通道（应用内、飞书、webhook…）
+      summary: 已配置的**出站**投递通道（应用内、飞书、webhook…）
       description: |
         通道只管「怎么把一批照片发出去」；批注回流一律走 `POST /jobs/{id}/inbound`。
-      x-implemented: false
+        v1 只有内置的应用内通道（`inapp`）：它不发消息，只签发一条批次链接（URL 在任务的 artifacts 里）。
+      x-implemented: true
       responses:
         "200": { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Channel" } } } } } } }
 
@@ -409,7 +512,7 @@ components:
       type: apiKey
       in: query
       name: t
-      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate:<jobId>`：只读该任务的选择集 + 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<别名>'`）共用这套签名原语，见 docs/core-model.md §11"
+      description: "自认证链接 token：签发 API token 时随响应给出（`linkToken`）；v1 范围是只读缩略图，绑定签发它的 API token（撤销即失效）。任务签发的**范围 token**（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，`-` = 会话/免认证签发：只读该任务的选择集 + 缩略图、只能 POST `/jobs/{id}/inbound`、记 `by: 'link:<别名>'`，撤销签发 token 即失效）共用这套签名原语，见 docs/core-model.md §11"
   responses:
     Error:
       description: 错误
@@ -422,7 +525,7 @@ components:
       properties:
         ok: { type: boolean }
         version: { type: string }
-        roots: { type: array, items: { type: string }, description: 已配置的可浏览根目录 }
+        roots: { type: array, items: { type: string }, description: 已配置的可浏览项目 }
         authRequired:
           type: boolean
           description: 后端是否启用了密码（`password` 非空）；前端据此决定要不要显示登录页
@@ -535,7 +638,8 @@ components:
       required: [id, path, label]
       properties:
         id: { type: string }
-        path: { type: string }
+        path: { type: string, description: 虚拟路径（/<id> 开头），API 与前端路由用这个 }
+        diskPath: { type: string, description: 这个根对应的磁盘绝对路径（挂载在哪、导的是哪个目录，侧边栏直接展示给用户看） }
         label: { type: string }
         photoCount: { type: integer }
         online: { type: boolean, description: false = 当前不可访问（未挂载/未插） }

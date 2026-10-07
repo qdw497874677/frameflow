@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { GalleryVerticalEnd, LayoutGrid } from 'lucide-react';
 import { store, useAppState } from '@/core/store';
+import type { Root } from '@/core/types';
 import type { View } from '@/core/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toaster } from '@/components/ui/sonner';
@@ -17,16 +18,17 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
  * 挑片页保留自己的顶栏（这一批的账 + 撤销/重置）和底栏（一个看 ⇄ 批量扫 的变焦切换）。
  */
 export function App() {
-  const { dir, view, mode, notice, error, auth } = useAppState();
+  const { dir, view, mode, notice, error, auth, roots } = useAppState();
 
-  // 首次进入：载入根目录并落到第一个有照片的目录；支持 ?dir=/?mode=a|c、?view= 与 ?sel= 深链（截图与分享都靠它）
+  // 首次进入：载入项目并落到第一个有照片的目录；支持 ?dir=/?mode=a|c、?view= 与 ?sel= 深链（截图与分享都靠它）
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    void store.boot(params.get('dir') ?? undefined);
     const wantedMode = params.get('mode');
     if (wantedMode === 'a' || wantedMode === 'c') store.setMode(wantedMode);
     const wantedView = params.get('view') as View | null;
-    if (wantedView && NAV.some((n) => n.id === wantedView)) store.setView(wantedView);
+    const view = wantedView && NAV.some((n) => n.id === wantedView) ? wantedView : undefined;
+    if (view) store.setView(view);
+    void store.boot(params.get('dir') ?? undefined, view);
     // 只跑一次：目录/页面切换都由交互显式触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -65,7 +67,9 @@ export function App() {
         <header className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 pt-[calc(env(safe-area-inset-top)+0.375rem)]">
           <SidebarTrigger className="text-muted-foreground" />
           <span className="text-sm font-medium">{title}</span>
-          <span className="ml-auto hidden truncate text-xs text-muted-foreground sm:block">{dir}</span>
+          {/* 现在在哪个目录：库名 + 相对子路径。手机也显示（原来 hidden sm:block 手机上完全看不到自己在哪）。
+              根的虚拟路径是 /<id>/…，id 是拼音/英文不好认，换成用户超的 label 更直观；悬停吐原始虚拟路径。 */}
+          {dir && <DirBadge dir={dir} roots={roots} />}
         </header>
 
         <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -107,5 +111,18 @@ export function App() {
         <Toaster theme="dark" position="top-center" />
       </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+/** 顶栏的「现在在哪个目录」：/test/2026…/原照片 → 「本地文件 / 2026…/原照片」，一眼知道是哪个库的哪层 */
+function DirBadge({ dir, roots }: { dir: string; roots: Root[] }) {
+  const rootId = dir.split('/')[1] ?? '';
+  const root = roots.find((r) => r.id === rootId);
+  const rest = dir.split('/').slice(2).join('/');
+  const text = root ? `${root.label}${rest ? ' / ' + rest : ''}` : dir;
+  return (
+    <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground" title={dir}>
+      {text}
+    </span>
   );
 }

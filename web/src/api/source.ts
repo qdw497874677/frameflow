@@ -1,5 +1,9 @@
 import type {
+  Channel,
   FolderListing,
+  Job,
+  JobEvent,
+  JobState,
   MarkChange,
   MarkInput,
   MarkResult,
@@ -9,6 +13,7 @@ import type {
   Selection,
   TrashEntry,
 } from '../core/types';
+import type { FsBrowseDto } from './contract';
 
 export interface ListPhotosOptions {
   dir: string;
@@ -53,8 +58,16 @@ export class AuthRequiredError extends Error {
  */
 export interface PhotoSource {
   readonly kind: 'mock' | 'http';
-  /** 有哪些根目录可管 */
+  /** 有哪些项目可管 */
   listRoots(): Promise<Root[]>;
+  /** 添加一个项目（设置页「添加项目」）：后端探路径可达后入列并后台扫描，重启不丢 */
+  addRoot(input: { path: string; label?: string }): Promise<Root>;
+  /** 改显示名：只动配置里的 label，id/路径/照片都不动 */
+  renameRoot(id: string, label: string): Promise<Root>;
+  /** 移除根：只解除映射，盘上文件一个不动；重新添加同名路径即找回 */
+  removeRoot(id: string): Promise<void>;
+  /** 「选择目录」下钻：列磁盘目录（后端在用户机器上，能看真实文件系统）；缺省主目录 */
+  browseFs(path?: string): Promise<FsBrowseDto>;
   listFolders(path?: string): Promise<FolderListing>;
   listPhotos(opts: ListPhotosOptions): Promise<PhotoPage>;
   /** 缩略图 URL：mock 返回 data URL；http 返回后端 URL */
@@ -73,4 +86,52 @@ export interface PhotoSource {
   /** 密码换会话 cookie（单用户）；密码不对时抛错 */
   login(password: string): Promise<void>;
   logout(): Promise<void>;
+}
+
+/* ── 任务（动作层）端口 ─────────────────────────────────────────────── */
+
+export interface JobCreateInput {
+  kind: string;
+  selection: Selection;
+  params?: Record<string, unknown>;
+  /** plan = 只预演（把选择集展开成 items 给你看，不落库）；apply = 真建。缺省 plan */
+  mode?: 'plan' | 'apply';
+}
+
+export interface ListJobsOptions {
+  state?: JobState;
+  limit?: number;
+}
+
+export interface JobEventPage {
+  items: JobEvent[];
+  nextSince: number;
+}
+
+/**
+ * 任务端口：与 PhotoSource 分开 —— ADR 0004 说 PhotoSource 将来要拆成
+ * LibrarySource（读库 / 改标注 / 回收站）与 JobSource（派发与追踪）。
+ * 先拆出任务这一半：状态层和动作层是两种东西，凑在一个接口里会让 UI 以为
+ * 「派发批注」和「点一颗星」是同一类操作。
+ */
+export interface JobSource {
+  readonly kind: 'mock' | 'http';
+  /** 建任务：服务端把选择集展开成 items 快照（那一批就是这些），返回任务 */
+  createJob(input: JobCreateInput): Promise<Job>;
+  /** 便利写法 = createJob({ ...input, mode: 'plan' })：先预演给人看，再 apply */
+  planJob(input: JobCreateInput): Promise<Job>;
+  /** 任务列表（最新的在前） */
+  listJobs(opts?: ListJobsOptions): Promise<Job[]>;
+  getJob(id: string): Promise<Job>;
+  /**
+   * 增量事件：`since` 传上次拿到的 `nextSince`。
+   * v1 是轮询（单用户单进程，任务页只看进度与「谁改了什么」）；
+   * 形状与将来的 SSE 一致 —— 换传输不改调用方。
+   */
+  jobEvents(id: string, opts?: { since?: number; limit?: number }): Promise<JobEventPage>;
+  cancelJob(id: string): Promise<Job>;
+  /** 撤销：只有 handler 声明 reversible 的任务才能撤销，否则抛错 */
+  undoJob(id: string): Promise<Job>;
+  /** 已配置的**出站**通道（回流不走通道，走 POST /jobs/{id}/inbound） */
+  listChannels(): Promise<Channel[]>;
 }

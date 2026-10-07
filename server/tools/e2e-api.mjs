@@ -66,6 +66,40 @@ const root = roots.body.roots[0];
 check(roots.status === 200 && root?.path?.startsWith('/'), 'GET /roots', `${root?.path} → ${root?.diskPath} n=${root?.photoCount} online=${root?.online}`);
 check(typeof root?.diskPath === 'string' && existsSync(root.diskPath), 'root.diskPath 指向真实磁盘路径', root?.diskPath);
 
+// 根目录的增/改/删 + 文件系统浏览（「选择目录」）
+{
+  const tmpRoot = '/tmp/aw-e2e-manage-root';
+  mkdirSync(tmpRoot, { recursive: true });
+  try {
+    const added = await req('/roots', { method: 'POST', ...json({ path: tmpRoot, label: 'e2e管理' }) });
+    check(added.status === 201 && added.body?.root?.label === 'e2e管理', 'POST /roots 添加', `id ${added.body?.root?.id}`);
+    const dup = await req('/roots', { method: 'POST', ...json({ path: tmpRoot }) });
+    check(dup.status === 400, '重复添加 → 400', dup.body?.error);
+    const badPath = await req('/roots', { method: 'POST', ...json({ path: '/nonexistent-xyz' }) });
+    check(badPath.status === 404, '不存在的路径 → 404', badPath.body?.error);
+
+    const renamed = await req(`/roots/${encodeURIComponent(added.body.root.id)}`, { method: 'PATCH', ...json({ label: 'e2e改名' }) });
+    check(renamed.status === 200 && renamed.body?.root?.label === 'e2e改名', 'PATCH /roots/{id} 改名', renamed.body?.root?.label);
+    const renMiss = await req('/roots/不存在的根', { method: 'PATCH', ...json({ label: 'x' }) });
+    check(renMiss.status === 404, '改名不存在的根 → 404', renMiss.body?.error);
+
+    const browse = await req(`/fs/browse?path=${encodeURIComponent(tmpRoot)}`);
+    check(browse.status === 200 && Array.isArray(browse.body?.dirs), 'GET /fs/browse 列目录', `parent ${browse.body?.parent}`);
+    const browseHome = await req('/fs/browse');
+    check(browseHome.status === 200 && browseHome.body?.path?.startsWith('/home') && Array.isArray(browseHome.body?.dirs), 'GET /fs/browse 缺省主目录', browseHome.body?.path);
+    const browseBad = await req('/fs/browse?path=/nonexistent-xyz');
+    check(browseBad.status === 404, '浏览不存在目录 → 404', browseBad.body?.error);
+
+    const rm = await req(`/roots/${encodeURIComponent(added.body.root.id)}`, { method: 'DELETE' });
+    check(rm.status === 204, 'DELETE /roots/{id} 移除');
+    const rmMiss = await req(`/roots/${encodeURIComponent(added.body.root.id)}`, { method: 'DELETE' });
+    check(rmMiss.status === 404, '移除不存在的根 → 404', rmMiss.body?.error);
+    check(existsSync(tmpRoot), '移除后盘上目录还在（只解除映射，不删文件）');
+  } finally {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
+}
+
 // ── 3. 目录树：从根一层层走到底，边走边验计数 ──────────────────────────
 async function walk(dir, depth = 0) {
   const { body } = await req(`/folders?path=${encodeURIComponent(dir)}`);

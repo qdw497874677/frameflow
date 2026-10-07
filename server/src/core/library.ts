@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
-import type { Config } from '../config.ts';
+import { persistRoots, type Config } from '../config.ts';
 import { extOf, IMAGE_EXTS, RAW_EXTS } from './exts.ts';
 import type { FileRef } from './photo.ts';
 import {
@@ -236,9 +236,76 @@ export class Library {
           }),
         ]);
         this.online.set(r.id, ok);
-        if (!ok) this.rootErrors.set(r.id, '根目录暂时访问不到：挂载没挂上或已断开');
+        if (!ok) this.rootErrors.set(r.id, '项目暂时访问不到：挂载没挂上或已断开');
       }),
     );
+  }
+
+  /**
+   * 运行时添加项目（设置页「添加项目」）：探路径可达 → 入列 → 写回配置 → 后台扫描。
+   * 探测沿用 probeRoots 的思路（超时闸）：挂死的网络挂载上 `stat` 永不返回，不能把请求也挂死。
+   */
+  async addRoot(input: { path: string; label?: string }): Promise<RootDto> {
+    const path = resolvePath(String(input.path ?? '').trim());
+    if (!input.path?.trim() || !path.startsWith('/')) throw new Error('要给一个绝对路径（以 / 开头）');
+    if (this.cfg.roots.some((r) => resolvePath(r.path) === path)) throw new Error(`这个目录已经是项目了：${path}`);
+    const reachable = await Promise.race([
+      stat(path).then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((done) => {
+        setTimeout(() => done(false), 3000).unref();
+      }),
+    ]);
+    if (!reachable) throw new Error(`路径访问不到（不存在，或挂载无响应）：${path}`);
+    const label = (input.label ?? '').trim() || basename(path);
+    // id 从 label 派生，撞了就加 -2/-3 —— 与 loadConfig.normalizeRoots 同一套规则
+    const baseId =
+      label
+        .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'root';
+    let id = baseId;
+    let n = 2;
+    while (this.cfg.roots.some((r) => r.id === id)) id = `${baseId}-${n++}`;
+    this.cfg.roots.push({ id, label, path });
+    persistRoots(this.cfg);
+    this.online.set(id, true);
+    this.rootErrors.delete(id);
+    // 新根的照片数还是 0：立即后台补扫，侧边栏树/计数随后到位（refresh 自己有并发闸）
+    void this.refresh().catch(() => undefined);
+    return this.roots().find((r) => r.id === id)!;
+  }
+
+  /** 改显示名：只动配置里的 label，id/路径/照片都不动 */
+  renameRoot(id: string, label: string): RootDto {
+    const root = this.cfg.roots.find((r) => r.id === id);
+    if (!root) throw new Error(`没有这个项目：${id}`);
+    const clean = label.trim();
+    if (!clean) throw new Error('显示名不能为空');
+    root.label = clean;
+    persistRoots(this.cfg);
+    return this.roots().find((r) => r.id === id)!;
+  }
+
+  /**
+   * 移除根：只解除映射 —— 配置里删掉、库里的照片/标记清掉，但盘上文件一个不动。
+   * （全库唯一的 rmSync 在回收站真删里，这里不碰文件。）
+   */
+  removeRoot(id: string): void {
+    const root = this.cfg.roots.find((r) => r.id === id);
+    if (!root) throw new Error(`没有这个项目：${id}`);
+    this.cfg.roots = this.cfg.roots.filter((r) => r.id !== id);
+    persistRoots(this.cfg);
+    this.online.delete(id);
+    this.rootErrors.delete(id);
+    this.hungUntil.delete(id);
+    for (const key of [...this.records.keys()]) {
+      if (this.records.get(key)?.rootId === id) this.records.delete(key);
+    }
+    this.reindex();
+    this.rebuildTrashed();
+    this.saveIndex();
   }
 
   get status(): LibraryStatus {
@@ -411,6 +478,23 @@ export class Library {
 
   get(id: string): PhotoRecord | undefined {
     return this.records.get(id) ?? this.trashedById.get(id);
+  }
+
+  /**
+   * 全局求值一个选择集（不按目录切页）—— 任务层把选择集展开成 items 快照就用它。
+   * 逐张规则与 listPhotos 一致（含「未显式 `where.del:true` 时待删照片不出现」），
+   * `selection.project` 只决定范围、不参与逐张求值。挑片视图请继续用 listPhotos（它管分页与目录）。
+   */
+  select(sel: Selection): PhotoRecord[] {
+    const wantDel = sel.where?.del;
+    const lastBy = (photoId: string): string | null => this.marks.lastBy(photoId);
+    const out: PhotoRecord[] = [];
+    for (const rec of this.records.values()) {
+      if (wantDel === true ? !this.marks.delOf(rec.id) : this.marks.delOf(rec.id)) continue;
+      if (!selectionIsEmpty(sel) && !matchesSelection(rec, sel, lastBy)) continue;
+      out.push(rec);
+    }
+    return out.sort(byName);
   }
 
   /** 把 id 解成磁盘上的绝对路径（`variant` 决定要 RAW 还是 JPEG） */
@@ -692,8 +776,23 @@ export class Library {
     return results;
   }
 
-  history(limit?: number, photoId?: string): MarkChange[] {
-    return this.marks.list({ limit, photoId });
+  history(limit?: number, photoId?: string, jobId?: string): MarkChange[] {
+    return this.marks.list({ limit, photoId, jobId });
+  }
+
+  /** 某个任务写下的全部标注变更（不限条数）：undo 要找「最早的 from」，截断会回滚错 */
+  historyForJob(jobId: string): MarkChange[] {
+    return this.marks.list({ limit: 0, jobId });
+  }
+
+  /**
+   * 一张照片当前的标注状态（任务层回流时算 from→to、判断是不是覆盖了别人的批注）。
+   * 不认识这张照片返回 null。
+   */
+  marksOf(photoId: string): { stars: number; del: boolean; by: string | null } | null {
+    const rec = this.records.get(photoId);
+    if (!rec) return null;
+    return { stars: this.marks.starsOf(photoId), del: this.marks.delOf(photoId), by: this.marks.lastBy(photoId) };
   }
 
   // ── 索引持久化（只为省冷启动的 exiftool；坏了删了都不致命）────────────

@@ -21,6 +21,8 @@ export interface MarkInput {
   at?: string;
   by?: string;
   channel?: string;
+  /** 这次变更由哪个任务引起（批注任务回流 / 撤销）；散手标注为 null */
+  jobId?: string | null;
 }
 
 export interface MarkChange {
@@ -136,11 +138,13 @@ export class MarksStore {
     return s.by || null;
   }
 
-  list(opts: { photoId?: string; limit?: number } = {}): MarkChange[] {
-    const limit = Math.max(1, Math.min(1000, opts.limit ?? 100));
+  list(opts: { photoId?: string; jobId?: string; limit?: number } = {}): MarkChange[] {
+    // limit: 0 = 不限（只给「按任务全量回滚」这种内部用途：changes 本来就在内存里）
+    const limit = opts.limit === 0 ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(1000, opts.limit ?? 100));
     const out: MarkChange[] = [];
     for (const ch of this.changes) {
       if (opts.photoId && ch.photoId !== opts.photoId) continue;
+      if (opts.jobId && ch.jobId !== opts.jobId) continue;
       out.push(ch);
       if (out.length >= limit) break;
     }
@@ -168,6 +172,7 @@ export class MarksStore {
       const by = item.by ?? 'me';
       const channel = item.channel ?? 'inapp';
       const at = item.at ?? now;
+      const jobId = item.jobId ?? null;
 
       let stars = clampStars(item.stars ?? prev?.stars ?? 0);
       let del = item.del ?? prev?.del ?? false;
@@ -178,10 +183,10 @@ export class MarksStore {
       const prevDel = prev?.del ?? false;
       const changed: MarkChange[] = [];
       if (stars !== prevStars) {
-        changed.push({ photoId: item.id, displayName: target.displayName, field: 'stars', from: prevStars, to: stars, by, channel, at });
+        changed.push({ photoId: item.id, displayName: target.displayName, field: 'stars', from: prevStars, to: stars, by, channel, at, jobId });
       }
       if (del !== prevDel) {
-        changed.push({ photoId: item.id, displayName: target.displayName, field: 'del', from: prevDel, to: del, by, channel, at });
+        changed.push({ photoId: item.id, displayName: target.displayName, field: 'del', from: prevDel, to: del, by, channel, at, jobId });
       }
 
       this.state.set(item.id, { stars, del, by, channel, at });

@@ -21,6 +21,7 @@ export function FolderTree() {
           key={root.path}
           path={root.path}
           name={root.label}
+          diskPath={root.diskPath}
           depth={0}
           isRoot
           active={view === 'cull' && dir === root.path}
@@ -29,14 +30,16 @@ export function FolderTree() {
         />
       ))}
       {offline.map((root) => (
-        <div
-          key={root.path}
-          title={root.lastError ?? undefined}
-          className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground/60"
-        >
-          <Folder className="size-3.5" />
-          <span className="truncate">{root.label}</span>
-          <span className="ml-auto shrink-0 text-[10px]">未连接</span>
+        <div key={root.path}>
+          <div
+            title={root.lastError ?? undefined}
+            className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground/60"
+          >
+            <Folder className="size-3.5" />
+            <span className="truncate">{root.label}</span>
+            <span className="ml-auto shrink-0 text-[10px]">未连接</span>
+          </div>
+          {root.diskPath && <PathLine path={root.diskPath} />}
         </div>
       ))}
     </>
@@ -46,6 +49,7 @@ export function FolderTree() {
 interface NodeProps {
   path: string;
   name: string;
+  diskPath?: string;
   depth: number;
   isRoot?: boolean;
   active: boolean;
@@ -53,7 +57,7 @@ interface NodeProps {
   expanded: Record<string, boolean>;
 }
 
-function Node({ path, name, depth, isRoot, active, tree, expanded }: NodeProps) {
+function Node({ path, name, diskPath, depth, isRoot, active, tree, expanded }: NodeProps) {
   const listing = tree[path];
   const isOpen = Boolean(expanded[path]);
   const children = listing?.folders ?? [];
@@ -89,6 +93,8 @@ function Node({ path, name, depth, isRoot, active, tree, expanded }: NodeProps) 
           )}
         </SidebarMenuSubButton>
       </SidebarMenuSubItem>
+      {/* 根的导入名称下面直接挂绝对路径：哪次导入、导的是哪个目录，不用点开就能看出来 */}
+      {isRoot && diskPath && <PathLine path={diskPath} />}
       {isOpen &&
         children.map((child) => (
           <Node
@@ -105,5 +111,14 @@ function Node({ path, name, depth, isRoot, active, tree, expanded }: NodeProps) 
         <div className="px-6 py-1 text-[11px] text-muted-foreground/60">（没有子目录）</div>
       )}
     </SidebarMenuSub>
+  );
+}
+
+/** 根节点下的绝对路径行：小号等宽字、淡色，不抢层级但一眼能对上盘 */
+function PathLine({ path }: { path: string }) {
+  return (
+    <div title={path} className="truncate px-7 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground/50">
+      {path}
+    </div>
   );
 }

@@ -1,8 +1,8 @@
 # server（后端）
 
 **状态：已实现并在用（TypeScript / Node 22 LTS+，见 [ADR 0005](../docs/adr/0005-typescript-backend.md)）。**
-已落地：扫描 + RAW/JPEG 配对、两档缩略图（含视频抽帧封面）、XMP 星标/待删 + `marks.jsonl`、回收站、索引缓存、认证三凭据（session/Bearer/链接 token）、`/capabilities`、`/api-tokens`。
-未落地：`/jobs*`、`/channels*`（契约里 `x-implemented: false`）；运行与部署形态（systemd / Docker / 反代）仍见 `wayfinder/tickets/005-stack-deployment.md`（待定）。
+已落地：扫描 + RAW/JPEG 配对、两档缩略图（含视频抽帧封面）、XMP 星标/待删 + `marks.jsonl`、回收站、索引缓存、认证四凭据（session/Bearer 链接 token/任务范围 token）、`/capabilities`、`/api-tokens`、任务层（`/jobs*`：计划/派发/事件流/取消/撤销/外部回流）与应用内通道（`/channels`）。
+未落地：`jobs/` 下的第二个 kind（导出、处理…）；运行与部署形态（systemd / Docker / 反代）仍见 `wayfinder/tickets/005-stack-deployment.md`（待定）。
 本文件先固定**模块边界**与职责，避免前端/后端职责漂移。
 
 ## 职责边界
@@ -16,7 +16,7 @@
 | `scan` | 目录遍历、照片发现、RAW+JPEG **配对** | 同目录 + stem 大小写不敏感相等 + 扩展名分类；多 RAW 取字母序最早；每次扫描重建配对（票 001） |
 | `preview` | 分层预览管线：外部 JPEG → 内嵌 JPEG 提取 → LibRaw 兜底 | 512 / 2048 两档缓存，缓存键 `path+mtime+size`；内嵌 JPEG 缺 Orientation 需回填（票 001） |
 | `marks` | 星级 / 待删的持久化，以及变更日志 | 星级写共享 XMP（`xmpDM:good`，与 LR/C1 互通）；pair 为一等实体，成对写入（票 001）；每个实际变化的字段追加一条 `marks.jsonl`（含 `by/at/channel/from→to`）—— 外部批注回流的对账凭据 |
-| `jobs` | 任务层：一个能力一个 handler | 契约 `validate → plan → apply → undo?`，只依赖 `core/`，handler 之间不互相 import；先预演再执行；每个任务落 manifest（做了什么）与事件日志（`jobs.jsonl`）；执行队列不持久化，重启把 `running` 标 `interrupted` |
+| `jobs` | 任务层：一个能力一个 handler（`core/jobs.ts` 状态机 + `jobs/registry.ts` + `jobs/service.ts`） | 契约 `validate → plan → apply → undo?`，只依赖 `core/`，handler 之间不互相 import；先预演再执行；每个任务落 `dataDir/jobs.jsonl`（一行一个快照，同 id 后写覆盖先写）+ `dataDir/job-events.jsonl`（追加型，`seq` 单调）；执行队列不持久化，重启把 `queued`/`running` 标 `interrupted`（收回流或 `undo` 都能接着走） |
 | `channels` | 出站投递通道（应用内 / 飞书 / webhook…） | 只负责「怎么把一批照片发出去」；批注回流不走通道，走 `POST /jobs/{id}/inbound`；v1 不建账号体系，用任务签发的范围受限链接 token（`annotate:<jobId>`），回流记 `by: 'link:<别名>'` |
 | `storage` | 状态与日志的落盘位置 | 索引/缓存可重建；事件日志与 manifest 不可重建，必须追加写（见 `docs/core-model.md` 不变量 6） |
 | `trash` | 逻辑删除区（产品回收站）—— 已实现 | 删除 = 移入产品回收站，可恢复；pair（含 `.xmp` 侧车）成对进出（票 001 + 用户决策）；搬走时**顺手把标记清掉**（`channel:'trash'`），否则还原后会带着「待删」回来，而挑片默认隐藏待删 —— 照片就像消失了；落地在 `<照片目录>/.trash/<显示名>/`，记录与日志在 `dataDir/trash.jsonl`（`{op:'in'|'out'}` 追加写，重启后按它重建回收站索引）；`dir/.trash` 下的文件**不参与扫描配对**；还原时同名文件排号（`名字 (2)`），绝不覆盖 |
@@ -34,23 +34,32 @@
 
 `GET /health`、`POST|DELETE /session`、`GET /roots`、`GET /folders`、`GET /photos`（选择集用 `?sel=`，语法见 `contracts/selection.md`）、`GET /photos/{id}/thumb|file`、`PUT /marks`、`GET /marks/history`、`GET|POST|DELETE /trash`、`POST /trash/restore`。
 
-`/jobs`、`/jobs/{id}/events|cancel|undo|inbound`、`/channels` 已在契约里**预留形状**（`x-implemented: false`），但前端暂不调用 —— 它们属于第一个异步能力（推送批注）落地时的事。
+`/jobs`、`/jobs/{id}/events|cancel|undo|inbound`、`/channels` 已经在后端落地（契约里 `x-implemented: true`），但前端暂不调用 —— 它们属于第一个异步能力（推送批注）的机器，UI 还没做。
 
-## 任务层的接缝（实现第一个异步能力时照这个来）
+## 任务层的接缝（加一个 kind 照这个来）
 
 ```ts
-// 每个能力一个文件：server/src/jobs/export.ts、trash.ts、process.ts、annotate.ts…
-interface JobHandler<P> {
-  kind: string;                                   // 'export' | 'trash' | 'process' | 'annotate'
-  validate(params: P, ctx: Core): void;           // 参数不对就在创建任务前就报错
-  plan(selection: Selection, params: P, ctx: Core): Promise<Plan>;   // 只读预演，产出 manifest 预览 + 体积/目录数
-  apply(plan: Plan, ctx: Core, report: Progress): Promise<Manifest>; // 真干，逐单位记 manifest
-  undo?(manifest: Manifest, ctx: Core): Promise<void>;               // 可选，声明了才是可撤销任务
+// 每个能力一个文件：server/src/jobs/annotate.ts、export.ts、trash.ts…，然后在 jobs/registry.ts 注册一行
+interface JobHandler {
+  kind: string;              // 'annotate' | 'export' | 'process'…
+  label: string;             // 人话标签（GET /capabilities 里给 UI 看）
+  params: Record<string, unknown>;   // params 的自描述（同上；运行时校验还是手写）
+  sideEffect: 'read' | 'mark' | 'file';
+  undoable: boolean;         // 声明了才能被 /undo
+  needsNetwork: boolean;
+  validate(draft: JobDraft, ctx: JobContext): JobProblem[];          // 参数不对：创建任务前就报错（400）
+  plan(draft: JobDraft, ctx: JobContext): JobItem[] | Promise<JobItem[]>;  // 只读预演：把选择集展开成 items 快照
+  apply(job: Job, ctx: JobContext, sink: JobSink): JobOutcome | Promise<JobOutcome>;   // 真干，边干边用 sink 记进度
+  inbound?(job: Job, items: InboundWrite[], ctx: JobContext, sink: JobSink): InboundOutcome | Promise<InboundOutcome>;  // 外部回流（可选）
+  undo?(job: Job, ctx: JobContext, sink: JobSink): JobOutcome | Promise<JobOutcome>;   // 用自己写下的历史回滚
 }
 ```
 
-handler 只依赖 `core/`（扫描、配对、XMP、路径、选择集求值），不 import 其它 handler；
-新增能力 = 新增一个 kind，`httpapi` 与前端零改动。第一个落地的是 **推送批注**（`annotate`：创建时展开 `items` 快照 + 签发范围 token `annotate:<jobId>` + 卡片投递 + `/jobs/{id}/inbound` 回流）；导出（只写新位置，不碰原片）紧随其后。
+`ctx` = 库（读照片/写标注）+ `signRangeToken`（签发任务范围 token）；`sink` = 往任务里写事件/items/artifacts（`event/item/artifact/patch/progress`）。
+handler 只依赖 `core/`（扫描、配对、XMP、路径、选择集求值），不 import 其它 handler、不 import `api/`；
+HTTP 语义（状态码）只在 `api/server.ts` 里映射（`JobError.code` → 400/403/404/409）。
+新增能力 = 新增一个 kind + 注册表一行，`httpapi` 与前端零改动（前端靠 `GET /capabilities` 发现）。
+已落地的是 **推送批注**（`annotate`：创建时展开 `items` 快照 + 签发范围 token `annotate:<jobId>` + artifacts 里一条 `/j?t=…` 链接 + `/jobs/{id}/inbound` 回流）；导出（只写新位置，不碰原片）紧随其后。
 
 三条后端必须自己保证的语义（前端已按此编写，且 mock 实现里可见）：
 
@@ -59,23 +68,25 @@ handler 只依赖 `core/`（扫描、配对、XMP、路径、选择集求值）�
 3. 应用不导入、不导出、不搬动照片：除了写星标与回收站操作，**不碰原文件**。
 4. `GET /photos?sel=` 的谓词求值语义见 `contracts/selection.md`（前端 `matchesSelection` 是参考实现）。
 
-## 模块注册与能力自描述（第一个模块落地时就这样写）
+## 模块注册与能力自描述（annotate 已按此落地）
 
 ```ts
 // server/src/jobs/<kind>.ts —— 每个能力一个文件
-export const manifest = {
-  kind: 'export',
-  label: '导出',
-  params: exportParamsSchema,            // zod / JSON Schema，供 /capabilities 与校验共用
-  sideEffect: 'newLocation' as const,    // readonly | mark | library | newLocation | originals
+export const annotate: JobHandler = {
+  kind: 'annotate',
+  label: '推一批照片给人批注',
+  params: { channel: { type: 'string', default: 'inapp', … }, label: { type: 'string', required: true, … } },  // 自描述，供 /capabilities
+  sideEffect: 'mark',       // v1：read | mark | file（导出类能力落地时再扩 newLocation / originals）
   undoable: true,
   needsNetwork: false,
+  validate, plan, apply, inbound, undo,
 };
-export const handler: JobHandler<ExportParams> = { validate, plan, apply, undo };
 ```
 
-`jobs/registry.ts` / `channels/registry.ts` 汇总所有模块；`GET /capabilities` 就是这张表去掉实现细节后的投影。
+`jobs/registry.ts` 汇总所有 kind（`GET /capabilities` 就是这张表的投影）；出站通道在 `jobs/channels.ts`（v1 只有内置 `inapp`，飞书/webhook 落地时再拆 registry）。
 **新增能力 = 新增一个文件 + 注册一行**；前端与 AI 客户端读 `/capabilities` 自适应，不需要改代码。
+任务状态机与事件日志在 `core/jobs.ts`（`jobs.jsonl` + `job-events.jsonl`），执行队列在 `jobs/service.ts`（进程内，不持久化）。
+回归：`node tools/e2e-jobs.mjs`（状态机/事件/取消/撤销/重启收敛）、`node tools/e2e-annotate.mjs`（范围 token → 回流 → 对账 → 撤销）。
 
 ## 索引缓存与冷启动（2026-10-06）
 

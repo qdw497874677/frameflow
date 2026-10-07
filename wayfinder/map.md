@@ -38,6 +38,8 @@ status: open
 - [网络挂载挂死时的服务健壮性](tickets/011-hung-mount-robustness.md)：**只让出问题的根不可用，不让进程陪葬** —— 扫描路径全异步（XMP 读写、缓存探测）+ 每根 20s 超时（`scan.rootTimeoutMs`）+ 超时后 10 分钟冷却（手动 `POST /scan` 可强制重试）+ 启动 3s 探测；ffmpeg 抽封面全局并发 2、连败 3 次熔断 5 分钟；`GET /roots` 新增 `lastError`（前端显示「未连接 + 原因」）。回归 `server/tools/e2e-hung-mount.mjs`（18/0，用 `ARTWORKS_TEST_HANG_ROOT` 模拟挂死）
 - [部署形态（已收窄：只剩跑在哪 + 交付方式 + 缓存/HTTPS）](tickets/005-stack-deployment.md)：服务以后**直接连 NAS**但保持「根 = 目录路径」的挂载无关设计（本地盘 / NFS / SMB / USB 同一套代码）；交付**两条路都提供、最终 docker compose**（镜像带 node+sharp+ffmpeg+exiftool）；预览缓存 = 本地磁盘缓存（默认上限 8 GB、可配、启动按 atime LRU 淘汰到 90%），索引不设过期 + 上次扫描超 7 天启动自动补扫；只在局域网 / Tailscale，不加反代与证书。落地拆成 [012](tickets/012-deployment-artifacts.md)、[013](tickets/013-cache-policy.md)
 - [任务与外部批注的 API 形状](tickets/008-task-and-annotation-api.md)：`selection` 存谓词、`items[]` 存**创建时展开的快照**（粒度 = 照片配对组，`progress` 数 items）；v1 **不做**命名选择集（`POST /selections`）；回流端点为 **`POST /jobs/{id}/inbound`**（`/channels` 只出站，删掉 `/channels/{id}/inbound`），`by` 由 token 别名推 `link:<别名>`，幂等 = `clientRef`，冲突后写覆盖 + 历史留痕；身份 = 任务签发的**范围 token**（载荷 `annotate:<jobId>`，TTL 30 天、可撤销）；进度流 v1 = **增量轮询** `events?since=`（事件带单调递增 `seq`，将来可换 SSE）；`/trash` 保持同步、**不设** `kind:'trash'`。实现拆成 [014](tickets/014-jobs-core.md)（任务层核心）+ [015](tickets/015-annotate-dispatch.md)（批注派发与回流）
+- [任务层核心](tickets/014-jobs-core.md)：**已落地（2026-10-07）** —— `dataDir/jobs.jsonl`（一行一快照、同 id 后写覆盖先写）+ `dataDir/job-events.jsonl`（只追加、`seq` 全局单调）双日志，启动重放；状态机 `planned→queued→running→done|failed|cancelled`（+`interrupted`），非法迁移 409，重启把 `queued|running` 收敛为 `interrupted`；`JobHandler` 注册表（一个 kind 一文件，未注册 → 400）；`mode:'plan'` 只展开 items、不落库不签 token；进程内单 pump（不做 SSE / 调度器 / worker 池）；items 是创建那一刻的快照。回归 `server/tools/e2e-jobs.mjs`（81/0）
+- [批注派发与回流](tickets/015-annotate-dispatch.md)：**已落地（2026-10-07）** —— 第四种凭据「任务范围 token」（载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`，第 5 段绑签发它的 API token，30 天 HMAC、不落 `tokens.json`）只放行本任务 items 的缩略图与 `POST /jobs/{id}/inbound`（其它路径 401、任务外照片 404、取消/撤销后 403；撤销签发 token 即失效，只读 linkToken 写回流 401）；回流 `by` 由别名推 `link:<别名>`、`channel` 取 `params.channel`、`clientRef` 幂等；全终态 → `done`；`undo` 按 `marks.jsonl` 里本任务最早的 `from` 回滚。v1 通道只做 `inapp`（链接进 artifacts，真投递另开票）；批注页/任务页界面拆到 [016](tickets/016-task-ui.md)。回归 `server/tools/e2e-annotate.mjs`（76/0）
 
 
 ## Not yet specified
@@ -51,7 +53,7 @@ status: open
 - 开源发布配套：License 选择（注意 AGPL 项目如 Immich/PhotoPrism 的代码传染性）、README、一键部署
 - AI 接入面的具体形态：先做 pull 还是 push、结果是否走「建议」层、MCP 是否必做、token 范围、领取机制 → [票 009](tickets/009-ai-access.md)
 - 插件扩展面：内置模块与第三方插件的分界、插件能贡献什么、权限等级、加载与隔离 → [票 010](tickets/010-plugins.md)；其中「虚拟目录 / Alcedo 式项目节点路径」是**默认关闭的可选插件**
-- 前端任务页 / 批注页的交互细节：任务层后端先落地（[014](tickets/014-jobs-core.md)、[015](tickets/015-annotate-dispatch.md)），界面另开票
+- 前端任务页 / 批注页的交互细节：任务层后端与批注往返已落地（[014](tickets/014-jobs-core.md)、[015](tickets/015-annotate-dispatch.md)）→ [016 任务页与批注页](tickets/016-task-ui.md)
 
 ## Out of scope
 

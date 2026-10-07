@@ -1,5 +1,5 @@
 /**
- * 单用户认证：一条密码，三种凭据。
+ * 单用户认证：一条密码，四种凭据。
  *
  *  - **会话 cookie**（`artworks_session`）：浏览器用；`POST /session` 用密码换，HMAC 签名，30 天。
  *  - **Bearer token**（`/api-tokens`）：AI agent / CLI / MCP 用，长期、可撤销、记 lastUsedAt。
@@ -7,6 +7,12 @@
  *  - **自认证链接 token**（`?t=`）：给「把图片 URL 交给自己的图像加载器」的客户端用
  *    （带不上自定义 header）。签发 API token 时一并给出（`linkToken`），签名里绑定那条 token 的
  *    id：撤销 API token = 链接立刻失效；范围只有读缩略图（`/thumb`）。
+ *  - **任务范围 token**（同样走 `?t=`）：批注任务签发给外部批注人，载荷绑定任务 id、批注者别名
+ *    与**签发它的 API token id**（`-` = 从会话/免认证签发，没有可撤销的 token）。撤销模型两条：
+ *    签发它的 API token 一撤销就失效（与 linkToken 同一套），任务本身被取消/删掉也失效（任务层判）。
+ *    范围只有「该任务 items 里的缩略图」与「POST /jobs/{id}/inbound」，回流记 `by: 'link:<别名>'`。
+ *    两种 `?t=` 凭据按路由分开消费：缩略图路由认 linkToken 与范围 token，回流路由**只认范围 token**
+ *    （缩略图链接是只读的，不能拿去写标注）。
  *
  * 签名密钥落在 `dataDir/secret`（0600）。密码为空 = 免认证，只在本机开发时这么用。
  */
@@ -23,12 +29,15 @@ export interface ApiTokenMeta {
   scope: string;
 }
 
-/** 凭据种类：浏览器会话 / 长期 bearer / 自认证链接 */
-export type CredentialVia = 'session' | 'bearer' | 'link';
+/** 凭据种类：浏览器会话 / 长期 bearer / 自认证链接 / 任务范围链接 */
+export type CredentialVia = 'session' | 'bearer' | 'link' | 'annotate';
 
 export interface Identity {
   via: CredentialVia;
   token?: ApiTokenMeta;
+  /** `via='annotate'`：任务范围 token 解析出的任务 id 与批注者别名 */
+  jobId?: string;
+  alias?: string;
 }
 
 interface ApiTokenRecord extends ApiTokenMeta {
@@ -37,6 +46,8 @@ interface ApiTokenRecord extends ApiTokenMeta {
 
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const LINK_TTL_MS = 30 * 24 * 3600 * 1000;
+/** 批注链接的有效期：比会话短一点（要发给别人）；过期后重发一次任务即可 */
+const RANGE_TTL_MS = 30 * 24 * 3600 * 1000;
 
 export class Auth {
   private readonly dataDir: string;
@@ -65,7 +76,10 @@ export class Auth {
   identify(input: {
     cookie?: string | undefined;
     authorization?: string | undefined;
-    thumbToken?: string | undefined;
+    /** 缩略图路由的自认证链接（`link|…`）：只读 */
+    linkToken?: string | undefined;
+    /** 任务回流路由的任务范围 token（`annotate|…`）：能读该任务缩略图 + 写回该任务 */
+    rangeToken?: string | undefined;
   }): Identity | null {
     // 注意：checkSession 在免认证模式下恒为 true，所以这里要先看 enabled
     if (this.enabled && this.checkSession(input.cookie)) return { via: 'session' };
@@ -74,8 +88,13 @@ export class Auth {
       const token = this.verifyToken(header.slice(7).trim());
       if (token) return { via: 'bearer', token };
     }
-    // `?t=` 只被缩略图路由消费（server.ts 的 thumbMatch），所以这里给的只读凭据走不到写接口
-    if (input.thumbToken && this.verifyLinkToken(input.thumbToken)) return { via: 'link' };
+    // `?t=` 分两种：缩略图路由收 linkToken（只读），回流路由只收任务范围 token。
+    // 调用方（server.ts）按路由把 `?t=` 填进对应的那个参数，所以一种凭据拿不到另一种路由的权限。
+    if (input.linkToken && this.verifyLinkToken(input.linkToken)) return { via: 'link' };
+    if (input.rangeToken) {
+      const range = this.verifyRangeToken(input.rangeToken);
+      if (range) return { via: 'annotate', jobId: range.jobId, alias: range.alias };
+    }
     return null;
   }
 
@@ -140,6 +159,30 @@ export class Auth {
     if (kind !== 'link' || !tokenId || !(Number(exp) > Date.now())) return null;
     // 撤销即失效：tokens.json 是唯一事实来源
     return this.tokens.some((t) => t.id === tokenId) ? { tokenId } : null;
+  }
+
+  // ── 任务范围 token（批注链接 `?t=`）──────────────────────────────
+
+  /**
+   * 给一个任务签发「范围受限的批注链接」：载荷 `annotate|<jobId>|<alias>|<exp>|<tokenId>`。
+   * 别名就是分发时填的批注者（回流记 `by: link:<alias>`），签名里绑 jobId —— 链接只能读
+   * 这个任务 items 里的缩略图、只能往这个任务回流。`tokenId` = 签发这条链接的 API token
+   * （会话/免认证签发时给 `-`）：撤销那条 token，链接立刻失效；任务被撤销/删掉也失效。
+   */
+  issueRangeToken(jobId: string, alias: string, tokenId?: string | null, ttlMs = RANGE_TTL_MS): { token: string; expiresAt: string } {
+    const exp = Date.now() + ttlMs;
+    return { token: this.sign(`annotate|${jobId}|${alias}|${exp}|${tokenId ?? '-'}`), expiresAt: new Date(exp).toISOString() };
+  }
+
+  /** 验签名、有效期与「签发它的 API token 还在不在」；「任务还在不在」由调用方（任务层）判 */
+  verifyRangeToken(token: string | undefined | null): { jobId: string; alias: string } | null {
+    const payload = this.verify(token);
+    if (!payload) return null;
+    const [kind, jobId, alias, exp, tokenId] = payload.split('|');
+    if (kind !== 'annotate' || !jobId || !alias || !(Number(exp) > Date.now())) return null;
+    // 撤销即失效：签它的时候如果用了某条 API token，那条 token 必须还在（`-` = 没绑）
+    if (tokenId && tokenId !== '-' && !this.tokens.some((t) => t.id === tokenId)) return null;
+    return { jobId, alias };
   }
 
   // ── API token ──────────────────────────────────────────────────────────
@@ -218,8 +261,12 @@ export class Auth {
     const body = value.slice(0, dot);
     const sig = value.slice(dot + 1);
     const expected = this.hmac(body);
-    if (sig.length !== expected.length) return null;
-    if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    // 先比 Buffer 的**字节**长度：字符串长度相同但字节长度不同时 timingSafeEqual 会抛 RangeError
+    // （那会把一个坏签名变成 500，而不是干净的 401）
+    const got = Buffer.from(sig);
+    const want = Buffer.from(expected);
+    if (got.length !== want.length) return null;
+    if (!timingSafeEqual(got, want)) return null;
     try {
       return Buffer.from(body, 'base64url').toString('utf8');
     } catch {

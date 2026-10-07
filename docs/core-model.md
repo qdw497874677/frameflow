@@ -101,9 +101,9 @@ server/
 
 ## 7. API 形状（接口即边界）
 
-现在（已实现）：`/health` `/session` `/roots` `/folders` `/photos` `/photos/{id}/thumb|file` `/marks` `/trash` `/trash/restore`。
+现在（已实现）：`/health` `/session` `/roots` `/folders` `/photos` `/photos/{id}/thumb|file` `/marks` `/marks/history` `/trash` `/trash/restore` `/jobs*` `/channels`（任务层 2026-10-07 落地；handler 接缝与「加一个 kind」的步骤见 `server/README.md`）。
 
-新增（任务层，先写进契约、后实现）：
+任务层（已实现，形状先由契约定）：
 
 ```
 POST /jobs                       { kind, selection, params, idempotencyKey? }（创建时把 selection 展开成 items 快照）
@@ -134,7 +134,7 @@ POST /selections                 可选：保存命名选择集（v1 不做 —�
 
 1. **标注带来源与时间**：`MarkInput` 带 `at/by/channel`，后端每个**实际变化**的字段追加一条 `MarkChange` 到 `marks.jsonl`（XMP 仍是当前状态的真相）。前端已实现：mock 的变更日志与 `GET /marks/history` 已可读，设置页显示最近 10 条。
 2. **筛选升级为 `Selection`**：store 里从零散 `filter` 字段变成可序列化对象，并且能在 URL 里表达（`?sel=stars>=3`）。规范：`contracts/selection.md`；实现：`web/src/core/selection.ts`（`matchesSelection` 是后端的参考实现）。
-3. **契约预留任务层**：`contracts/openapi.yaml` 写下 `/jobs`、`/channels` 的形状（`x-implemented: false`），`server/README.md` 记下 JobHandler 接缝。
+3. **契约预留任务层**：`contracts/openapi.yaml` 写下 `/jobs`、`/channels` 的形状（`x-implemented: false`），`server/README.md` 记下 JobHandler 接缝。**已落地（2026-10-07）**：`server/src/core/jobs.ts`（JSONL 双日志 + 状态机）+ `server/src/jobs/*`（registry/service/annotate/channels），契约全部 `x-implemented: true`，回归 `node tools/e2e-jobs.mjs`（81/0）与 `node tools/e2e-annotate.mjs`（76/0）。
 
 **明确不做**（省下的都是复杂度）：工作流引擎 / DAG、消息队列 / 事件总线、插件市场、账号与权限体系（RBAC）、cron 调度器、通用滤镜 DSL、把现在同步的动作异步化。
 
@@ -143,7 +143,7 @@ POST /selections                 可选：保存命名选择集（v1 不做 —�
 1. **标注要不要记「谁 / 什么时候」** → **要**，且最早加（成本极小，晚加要迁移历史）。
 2. **任务要不要持久化** → **最小持久化**（状态表 / JSONL），重启后历史可查；但**执行队列不持久化**，重启时把 `running` 标为 `interrupted` 让人重跑，别做断点续传。
 3. **外部批注者的身份** → **v1 不做账号体系**。一个任务签发一个**带权限范围的链接 token**（只读这一批 + 只能写标注），回填 `by: 'link:<别名>'`。
-4. **第一个落地的异步能力** → **导出**。它最安全（只写新位置，不碰原片）；飞书推送等 004（状态存哪 / 访问控制）与 005（技术栈）定了再做。
+4. **第一个落地的异步能力** → **导出**。它最安全（只写新位置，不碰原片）；飞书推送等 004（状态存哪 / 访问控制）与 005（技术栈）定了再做。**实际先落的是 `annotate`（推送批注，2026-10-07）**：004/008 定了任务骨架与范围 token 后，用户要求先把「推一批给人批注」跑通；导出仍是下一个 kind。
 
 ## 11. AI 接入面：AI 是最挑剔的客户端，不是特殊通道
 
@@ -180,7 +180,7 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 1. **签发长期 Bearer token**：`POST /api-tokens`（列出 / 签发 / 撤销），明文只在签发响应里出现一次，服务端存哈希 + `label/lastUsedAt/scope`；agent 用 `Authorization: Bearer …` 调 API。
 2. **缩略图 URL 必须自认证**：`GET /photos/{id}/thumb?size=2048&t=<linkToken>`。原因很实在 —— agent 是把 URL 交给自己的图像加载器（甚至模型服务商）去取的，**带不上自定义 header**；URL 里必须自带凭据。
    已实现：签发 API token（`POST /api-tokens`）时响应里一并给出 `linkToken` 与 `thumbUrlTemplate`（把 `{id}` / `{size}` 填上即可）。签名载荷是 `link|<tokenId>|<exp>`（30 天）——绑的是**签发它的那条 API token**，不是单张照片，所以一个 linkToken 能取全库缩略图；撤销 API token 立刻失效。范围只有 `/thumb`：`?t=` 只在缩略图路由上被消费，写接口仍然只认 cookie / Bearer。
-   范围受限的外部批注链接（`by: link:<别名>`，票 008）是后续形态，共用「链上签名」这套原语。
+范围受限的外部批注链接（`by: link:<别名>`）**已落地（2026-10-07，票 008/015）**：载荷 `annotate|<jobId>|<别名>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
 
 **权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
 

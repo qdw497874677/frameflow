@@ -75,7 +75,7 @@ export interface AppState {
   auth: 'checking' | 'ok' | 'required';
   /** 后端是否开着认证（设置页据此显示「退出登录」） */
   authEnabled: boolean;
-  /** 可管理的根目录 */
+  /** 可管理的项目（映射进来的目录） */
   roots: Root[];
   /** 侧边栏目录树：path → 它的子目录（懒加载） */
   tree: Record<string, FolderListing>;
@@ -272,7 +272,7 @@ class AppStore {
     }
   }
 
-  /** 载入根目录，并把第一个能用的根的子目录填进树里 */
+  /** 载入项目列表，并把第一个能用的项目的子目录填进树里 */
   async loadRoots() {
     try {
       const roots = await source.listRoots();
@@ -285,13 +285,63 @@ class AppStore {
   }
 
   /**
-   * 开箱落点：载入根目录 → 从第一个在线根往下找第一个**真有照片**的目录 →
+   * 设置页「添加项目」：添加成功后刷新项目列表，并把新根的子目录拉进侧边栏树（展开第一层）。
+   * 新根的照片数要等后台扫描，一开始是 0 —— 树先出现，计数随后到位。
+   */
+  async addRoot(path: string, label?: string) {
+    try {
+      const root = await source.addRoot({ path, label });
+      const roots = await source.listRoots();
+      this.patch({ roots, expanded: { ...this.state.expanded, [root.path]: true } });
+      await this.loadTree(root.path);
+      this.flash(`已添加「${root.label}」；子目录已进入左侧目录树`);
+    } catch (err) {
+      this.flash(`添加失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** 改根显示名（设置页） */
+  async renameRoot(id: string, label: string) {
+    try {
+      const root = await source.renameRoot(id, label);
+      this.patch({ roots: this.state.roots.map((r) => (r.id === id ? root : r)) });
+      this.flash(`已改名为「${root.label}」`);
+    } catch (err) {
+      this.flash(`改名失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * 移除根（设置页）：只解除映射，盘上文件不动。若当前正停在这个根里，
+   * 退回到第一个还在线的根，别让舞台停在已被移除的目录上。
+   */
+  async removeRoot(id: string) {
+    try {
+      await source.removeRoot(id);
+      const roots = await source.listRoots();
+      const gone = `/${id}`;
+      const tree = Object.fromEntries(Object.entries(this.state.tree).filter(([p]) => !p.startsWith(gone)));
+      const expanded = Object.fromEntries(Object.entries(this.state.expanded).filter(([p]) => !p.startsWith(gone)));
+      this.patch({ roots, tree, expanded });
+      if (this.state.dir.startsWith(gone)) {
+        const fallback = roots.find((r) => r.online);
+        if (fallback) await this.openFolder(fallback.path);
+        else this.patch({ items: [], listing: null, error: null });
+      }
+      this.flash('已移除（盘上文件未动；重新添加同名路径即可找回）');
+    } catch (err) {
+      this.flash(`移除失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * 开箱落点：载入项目 → 从第一个在线项目往下找第一个**真有照片**的目录 →
    * 把树展开到那一层 → 打开它。
    *
    * 为什么不直接打开根：库是按「项目/机身/原照片」分层的，根底下一般一张直属照片都没有，
    * 打开根就是一个空舞台（挑片页会显示「这一批挑完了」，让人以为库是空的）。
    */
-  async boot(preferredDir?: string) {
+  async boot(preferredDir?: string, preferredView?: View) {
     if (!(await this.checkAuth())) {
       this.patch({ auth: 'required' });
       return;
@@ -301,12 +351,12 @@ class AppStore {
       const roots = this.state.roots;
       const start = preferredDir ?? roots.find((r) => r.online)?.path ?? roots[0]?.path ?? '';
       if (!start) {
-        this.patch({ loading: false, error: '没有可用的照片库：先在 artworks.config.yaml 里加一个 roots' });
+        this.patch({ loading: false, error: '还没有项目：先在 artworks.config.yaml 里加一个 roots' });
         return;
       }
       const target = preferredDir ?? (await this.firstDirWithPhotos(start)) ?? start;
       await this.revealPath(target);
-      this.patch({ view: 'cull' });
+      this.patch({ view: preferredView ?? 'cull' });
       await this.open(target);
     } catch (err) {
       if (err instanceof AuthRequiredError) this.patch({ auth: 'required' });

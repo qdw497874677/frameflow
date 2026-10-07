@@ -5,10 +5,10 @@
  * 没有数据库要先装。库在哪（NAS 挂载点、移动硬盘、本地目录）是配置里的事，不写死在代码里。
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, resolve } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, parseDocument, Document } from 'yaml';
 import { DEFAULT_IGNORE_DIRS } from './core/exts.ts';
 import type { RootCfg } from './core/scan.ts';
 
@@ -27,6 +27,8 @@ export interface Config {
     rootTimeoutMs: number;
   };
   logLevel: string;
+  /** 配置是从哪个文件读的（运行时添加根目录要写回这里）；null = 没有配置文件（全默认/环境变量） */
+  sourceFile: string | null;
 }
 
 export function loadConfig(argv = process.argv.slice(2)): Config {
@@ -65,7 +67,29 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
       rootTimeoutMs: Number(scanRaw.rootTimeoutMs ?? process.env['ARTWORKS_SCAN_TIMEOUT_MS'] ?? 20_000),
     },
     logLevel: String(raw['logLevel'] ?? process.env['ARTWORKS_LOG_LEVEL'] ?? 'info'),
+    sourceFile: file ?? null,
   };
+}
+
+/**
+ * 运行时添加根目录后把 roots 写回配置文件（重启后仍在）。
+ * 用 yaml 的 Document API 保留人写的注释与顺序 —— 配置文件是用户手维护的东西，
+ * 不能因为应用写了一次就把注释全部吃掉。
+ */
+export function persistRoots(cfg: Config): void {
+  const file = cfg.sourceFile ?? resolve('artworks.config.local.yaml');
+  let doc;
+  if (cfg.sourceFile && existsSync(cfg.sourceFile)) {
+    doc = parseDocument(readFileSync(cfg.sourceFile, 'utf8'));
+  } else {
+    doc = new Document({});
+  }
+  doc.set(
+    'roots',
+    cfg.roots.map((r) => ({ id: r.id, label: r.label, path: r.path })),
+  );
+  writeFileSync(file, String(doc), 'utf8');
+  cfg.sourceFile = file;
 }
 
 function normalizeRoots(list: unknown[]): RootCfg[] {

@@ -1,5 +1,10 @@
 import type {
+  ChannelDto,
   FolderListingDto,
+  FsBrowseDto,
+  JobCreateDto,
+  JobDto,
+  JobEventPageDto,
   MarkChangeDto,
   MarkInputDto,
   MarkResultDto,
@@ -9,12 +14,22 @@ import type {
   RootDto,
   TrashEntryDto,
 } from './contract';
-import type { ListPhotosOptions, MarkHistoryOptions, PhotoPage, PhotoSource } from './source';
+import type {
+  JobCreateInput,
+  JobEventPage,
+  JobSource,
+  ListJobsOptions,
+  ListPhotosOptions,
+  MarkHistoryOptions,
+  PhotoPage,
+  PhotoSource,
+} from './source';
 import { AuthRequiredError } from './source';
 import { selectionToQuery } from '../core/selection';
 import type {
   Folder,
   FolderListing,
+  Job,
   MarkChange,
   MarkInput,
   MarkResult,
@@ -87,6 +102,7 @@ export function toRoot(dto: RootDto): Root {
   return {
     id: dto.id,
     path: dto.path,
+    diskPath: dto.diskPath ?? undefined,
     label: dto.label || dto.path,
     photoCount: dto.photoCount,
     online: dto.online !== false,
@@ -139,6 +155,31 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
     async listRoots() {
       const res = await request<{ roots: RootDto[] }>(base, '/roots');
       return res.roots.map(toRoot);
+    },
+
+    async addRoot(input: { path: string; label?: string }) {
+      const res = await request<{ root: RootDto }>(base, '/roots', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return toRoot(res.root);
+    },
+
+    async renameRoot(id: string, label: string) {
+      const res = await request<{ root: RootDto }>(base, `/roots/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ label }),
+      });
+      return toRoot(res.root);
+    },
+
+    async removeRoot(id: string) {
+      await request<void>(base, `/roots/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    async browseFs(path?: string) {
+      const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+      return request<FsBrowseDto>(base, `/fs/browse${qs}`);
     },
 
     async listFolders(path?: string) {
@@ -235,6 +276,93 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
       } catch {
         /* 后端没开认证时 DELETE /session 也可能返回 401/404：登出不该因此报错 */
       }
+    },
+  };
+}
+
+/* ── 任务端口（/jobs）─────────────────────────────────────────────────
+ * 与 PhotoSource 分开实现：状态层（读库/标记）和动作层（派发/导出）是两种东西。
+ */
+
+/** DTO → 领域：items / events 形状一一对应（直接浅拷）；progress 缺省按 items 数补 */
+function toJob(dto: JobDto): Job {
+  const items = (dto.items ?? []).map((i) => ({ ...i }));
+  return {
+    ...dto,
+    params: dto.params ?? {},
+    channel: dto.channel ?? null,
+    dispatchedAt: dto.dispatchedAt ?? null,
+    progress: { done: dto.progress?.done ?? 0, total: dto.progress?.total ?? items.length },
+    items,
+    artifacts: (dto.artifacts ?? []).map((a) => ({ ...a })),
+    error: dto.error ?? null,
+    reversible: Boolean(dto.reversible),
+    startedAt: dto.startedAt ?? null,
+    finishedAt: dto.finishedAt ?? null,
+  };
+}
+
+export function createHttpJobSource(base = '/api/v1'): JobSource {
+  const post = <T>(path: string, payload?: unknown) =>
+    request<T>(base, path, {
+      method: 'POST',
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+
+  return {
+    kind: 'http',
+
+    async createJob(input: JobCreateInput): Promise<Job> {
+      return toJob(await post<JobDto>('/jobs', input));
+    },
+
+    async planJob(input: JobCreateInput): Promise<Job> {
+      // 只读预演：服务端把选择集展开成 items 但不落库（人看过再 apply）
+      const payload: JobCreateDto = { ...input, mode: 'plan' };
+      return toJob(await post<JobDto>('/jobs', payload));
+    },
+
+    async listJobs(opts?: ListJobsOptions): Promise<Job[]> {
+      const params = new URLSearchParams();
+      if (opts?.state) params.set('state', opts.state);
+      if (opts?.limit) params.set('limit', String(opts.limit));
+      const q = params.toString();
+      const res = await request<{ items: JobDto[] }>(base, `/jobs${q ? `?${q}` : ''}`);
+      return res.items.map(toJob);
+    },
+
+    async getJob(id: string): Promise<Job> {
+      return toJob(await request<JobDto>(base, `/jobs/${encodeURIComponent(id)}`));
+    },
+
+    async jobEvents(id: string, opts?: { since?: number; limit?: number }): Promise<JobEventPage> {
+      const params = new URLSearchParams();
+      if (opts?.since) params.set('since', String(opts.since));
+      if (opts?.limit) params.set('limit', String(opts.limit));
+      const q = params.toString();
+      const res = await request<JobEventPageDto>(
+        base,
+        `/jobs/${encodeURIComponent(id)}/events${q ? `?${q}` : ''}`,
+      );
+      return { items: res.items.map((e) => ({ ...e })), nextSince: res.nextSince };
+    },
+
+    async cancelJob(id: string): Promise<Job> {
+      return toJob(await post<JobDto>(`/jobs/${encodeURIComponent(id)}/cancel`));
+    },
+
+    async undoJob(id: string): Promise<Job> {
+      return toJob(await post<JobDto>(`/jobs/${encodeURIComponent(id)}/undo`));
+    },
+
+    async listChannels() {
+      const res = await request<{ items: ChannelDto[] }>(base, '/channels');
+      return res.items.map((c) => ({
+        id: c.id,
+        kind: c.kind,
+        label: c.label,
+        enabled: c.enabled ?? true,
+      }));
     },
   };
 }

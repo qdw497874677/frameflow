@@ -41,6 +41,8 @@ export function matchesSelection(
   if (!w) return true;
 
   if (w.kind && rec.kind !== w.kind) return false;
+  // `project` = 根（项目）id：任务层的 items 快照会带选择集，不按项目过滤就会把别的项目也卷进来
+  if (sel.project && rec.rootId !== sel.project) return false;
   if (w.del !== undefined && rec.del !== w.del) return false;
   if (w.marked !== undefined && (rec.stars > 0) !== w.marked) return false;
 

@@ -193,7 +193,7 @@ async function scanRootIsolated(
     try {
       return { out: await work, state: { online: true, error: null, timedOut: false } };
     } catch (err) {
-      const text = `扫描根目录失败：${rootAbs} —— ${err instanceof Error ? err.message : String(err)}`;
+      const text = `扫描项目失败：${rootAbs} —— ${err instanceof Error ? err.message : String(err)}`;
       return { out: { records: [], fileCount: 0, errors: [text] }, state: { online: false, error: text, timedOut: false } };
     }
   }
@@ -210,7 +210,7 @@ async function scanRootIsolated(
       const text = `扫描超时：${Math.round(timeoutMs / 1000)} 秒没有响应，网络挂载可能已失联（${rootAbs}）`;
       return { out: { records: [], fileCount: 0, errors: [text] }, state: { online: false, error: text, timedOut: true } };
     }
-    const text = `扫描根目录失败：${rootAbs} —— ${err instanceof Error ? err.message : String(err)}`;
+    const text = `扫描项目失败：${rootAbs} —— ${err instanceof Error ? err.message : String(err)}`;
     return { out: { records: [], fileCount: 0, errors: [text] }, state: { online: false, error: text, timedOut: false } };
   } finally {
     clearTimeout(timer);

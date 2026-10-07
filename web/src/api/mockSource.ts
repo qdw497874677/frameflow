@@ -1,14 +1,20 @@
-import type { ListPhotosOptions, PhotoPage, PhotoSource } from './source';
+import type { JobCreateInput, JobSource, ListPhotosOptions, PhotoPage, PhotoSource } from './source';
+import type { FsBrowseDto } from './contract';
 import { matchesSelection } from '../core/selection';
 import { PALETTES, mulberry, renderMockPhoto, type FocusKind, type MockSpec } from './mock/render';
 import type {
+  Channel,
   FolderListing,
+  Job,
+  JobEvent,
+  JobItem,
   MarkChange,
   MarkInput,
   MarkResult,
   OpResult,
   Photo,
   Root,
+  Selection,
   TrashEntry,
 } from '../core/types';
 
@@ -94,7 +100,7 @@ function toPhoto(rec: MockRecord): Photo {
   };
 }
 
-export function createMockSource(): PhotoSource {
+export function createMockSource(): PhotoSource & JobSource {
   const records = buildRecords(MOCK_ROOT);
   const byId = new Map(records.map((r) => [r.id, r]));
   const cache = new Map<string, string>();
@@ -104,6 +110,35 @@ export function createMockSource(): PhotoSource {
   const delById = new Map<string, boolean>();
   /** 变更日志：真后端会追加落盘（marks.jsonl），mock 存内存，读回来的形状一样 */
   const changeLog: MarkChange[] = [];
+
+  // ── 任务（内存态）：形状与真后端一致 ──
+  // mock 不做真派发、也不模拟外部回流（那是后端 /jobs/{id}/inbound 的事）；
+  // 这里只把端口接通、形状摆对，让任务页能在没后端时开发得下去。
+  const jobs = new Map<string, Job>();
+  const jobEventLog = new Map<string, JobEvent[]>();
+  let jobCount = 0;
+  let eventSeq = 0;
+
+  const pushEvent = (jobId: string, ev: Omit<JobEvent, 'seq' | 'at'>): JobEvent => {
+    const full: JobEvent = { ...ev, seq: ++eventSeq, at: new Date().toISOString() };
+    const log = jobEventLog.get(jobId) ?? [];
+    log.push(full);
+    jobEventLog.set(jobId, log);
+    return full;
+  };
+
+  /** mock 的选择集求值：复用前端谓词求值器（真后端在服务端算同一套语义） */
+  const expandSelection = (sel: Selection): Photo[] =>
+    records
+      .filter((r) => !trashed.has(r.id))
+      .map((rec) => {
+        const photo = toPhoto(rec);
+        photo.mark.stars = starsById.get(rec.id) ?? 0;
+        photo.mark.del = delById.get(rec.id) ?? false;
+        return photo;
+      })
+      .filter((p) => matchesSelection(p, sel))
+      .slice(0, 40); // 演示用：最多 40 张，真后端不设这个上限
 
   const thumbUrl = (photoId: string, size: 512 | 2048) => {
     const rec = byId.get(photoId);
@@ -116,16 +151,63 @@ export function createMockSource(): PhotoSource {
     return url;
   };
 
-  const rootsOf = (): Root[] => [
-    { id: 'photos', path: '/photos', label: '照片库', photoCount: records.length - trashed.size, online: true },
-    { id: 'ssd', path: '/mnt/ssd', label: '移动硬盘', photoCount: undefined, online: false },
+  // mock 的根全部可增删改名（内存态，刷新即丢；真后端写回配置）
+  const rootsState: Root[] = [
+    { id: 'photos', path: '/photos', diskPath: '/home/qa/Pictures/photos', label: '照片库', photoCount: records.length - trashed.size, online: true },
+    { id: 'ssd', path: '/mnt/ssd', diskPath: '/mnt/ssd', label: '移动硬盘', photoCount: undefined, online: false },
   ];
+  const rootsOf = (): Root[] => rootsState;
 
-  return {
+  // 内部互调用 api.*，不用 this —— 外部解构（const { planJob } = jobSource）也安全
+  let api: PhotoSource & JobSource;
+
+  return (api = {
     kind: 'mock',
 
     async listRoots() {
       return rootsOf();
+    },
+
+    async addRoot(input: { path: string; label?: string }) {
+      const path = input.path.replace(/\/+$/, '');
+      if (rootsOf().some((r) => r.path === path)) throw new Error(`这个目录已经是项目了：${path}`);
+      const id = path.split('/').pop() || 'root';
+      const root: Root = { id, path, diskPath: path, label: input.label?.trim() || id, photoCount: 0, online: true };
+      rootsState.push(root);
+      return root;
+    },
+
+    async renameRoot(id: string, label: string) {
+      const root = rootsState.find((r) => r.id === id);
+      if (!root) throw new Error(`没有这个根：${id}`);
+      if (!label.trim()) throw new Error('显示名不能为空');
+      root.label = label.trim();
+      return root;
+    },
+
+    async removeRoot(id: string) {
+      const i = rootsState.findIndex((r) => r.id === id);
+      if (i < 0) throw new Error(`没有这个根：${id}`);
+      rootsState.splice(i, 1);
+    },
+
+    async browseFs(path?: string): Promise<FsBrowseDto> {
+      // mock：一小棵假目录树，够「选择目录」演示下钻/上翻
+      const FS: Record<string, string[]> = {
+        '/home/qa': ['Pictures', 'Projects', 'Downloads'],
+        '/home/qa/Pictures': ['2024', '2025'],
+        '/home/qa/Pictures/2024': ['0301-公园', '0712-海边'],
+        '/home/qa/Pictures/2025': ['0101-跨年'],
+        '/mnt': ['ssd'],
+      };
+      const cur = path ?? '/home/qa';
+      if (!(cur in FS)) throw new Error(`读不了这个目录：${cur}`);
+      const parent = cur === '/' ? null : cur.slice(0, cur.lastIndexOf('/')) || '/';
+      return {
+        path: cur,
+        parent,
+        dirs: FS[cur].map((name) => ({ name, path: `${cur === '/' ? '' : cur}/${name}` })).sort((a, b) => a.name.localeCompare(b.name, 'zh')),
+      };
     },
 
     async listFolders(path = '/photos'): Promise<FolderListing> {
@@ -253,11 +335,97 @@ export function createMockSource(): PhotoSource {
       return { ok: n, failed: [] };
     },
 
+    // ── 任务（动作层）──────────────────────────────────────────────
+
+    async createJob(input: JobCreateInput): Promise<Job> {
+      const mode = input.mode ?? 'plan';
+      const now = new Date().toISOString();
+      const items: JobItem[] = expandSelection(input.selection).map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        status: 'planned',
+      }));
+      const channel = typeof input.params?.channel === 'string' ? input.params.channel : null;
+      const id = `${mode === 'plan' ? 'plan' : 'job'}-${++jobCount}`;
+      const job: Job = {
+        id,
+        kind: input.kind,
+        state: mode === 'plan' ? 'planned' : 'running',
+        selection: input.selection,
+        params: input.params ?? {},
+        channel,
+        dispatchedAt: mode === 'apply' ? now : null,
+        progress: { done: 0, total: items.length },
+        items,
+        // annotate 的产物就是那张「打开就能批注」的卡片链接（真后端签范围 token）
+        artifacts: mode === 'apply' ? [{ kind: 'url', path: `/j?t=mock-${id}` }] : [],
+        error: null,
+        reversible: input.kind === 'annotate',
+        createdAt: now,
+        startedAt: mode === 'apply' ? now : null,
+        finishedAt: null,
+      };
+      if (mode === 'plan') return job; // 预演不落库
+      jobs.set(id, job);
+      pushEvent(id, { type: 'created', note: `展开 ${items.length} 张` });
+      pushEvent(id, { type: 'dispatched', channel, note: '（mock）已派发，等回流' });
+      return job;
+    },
+
+    async planJob(input: JobCreateInput): Promise<Job> {
+      return api.createJob({ ...input, mode: 'plan' });
+    },
+
+    async listJobs(opts) {
+      const all = [...jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const byState = opts?.state ? all.filter((j) => j.state === opts.state) : all;
+      return typeof opts?.limit === 'number' ? byState.slice(0, opts.limit) : byState;
+    },
+
+    async getJob(id: string): Promise<Job> {
+      const job = jobs.get(id);
+      if (!job) throw new Error(`没有这个任务：${id}`);
+      return job;
+    },
+
+    async jobEvents(id: string, opts?: { since?: number; limit?: number }) {
+      if (!jobs.has(id)) throw new Error(`没有这个任务：${id}`);
+      const since = opts?.since ?? 0;
+      const after = (jobEventLog.get(id) ?? []).filter((e) => e.seq > since);
+      const items = typeof opts?.limit === 'number' ? after.slice(0, opts.limit) : after;
+      return { items, nextSince: items.at(-1)?.seq ?? since };
+    },
+
+    async cancelJob(id: string): Promise<Job> {
+      const job = await api.getJob(id);
+      if (job.state === 'done' || job.state === 'cancelled') return job;
+      job.state = 'cancelled';
+      job.finishedAt = new Date().toISOString();
+      pushEvent(id, { type: 'cancelled', note: '取消（mock 不回滚已写入的标注）' });
+      return job;
+    },
+
+    async undoJob(id: string): Promise<Job> {
+      const job = await api.getJob(id);
+      if (!job.reversible) throw new Error('这个任务不可撤销');
+      job.state = 'cancelled';
+      job.finishedAt = new Date().toISOString();
+      pushEvent(id, { type: 'undone', note: '（mock）已撤销' });
+      return job;
+    },
+
+    async listChannels(): Promise<Channel[]> {
+      return [
+        { id: 'inapp', kind: 'inapp', label: '应用内', enabled: true },
+        { id: 'feishu', kind: 'feishu', label: '飞书（未配置）', enabled: false },
+      ];
+    },
+
     // mock 没有认证：开发时不必登录
     async authStatus() {
       return { required: false, authed: true };
     },
     async login() {},
     async logout() {},
-  };
+  });
 }
