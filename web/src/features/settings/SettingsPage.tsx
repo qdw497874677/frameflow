@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Check, Cloud, FolderMinus, FolderOpen, FolderPlus, HardDrive, ListChecks, Pencil, Server, TriangleAlert } from 'lucide-react';
 import { source } from '@/api';
 import { store, useAppState } from '@/core/store';
@@ -15,6 +16,23 @@ import { Separator } from '@/components/ui/separator';
  * 这一页有意保持「薄」—— 真正要改的东西（后端地址、密码、缓存上限）多数在后端配置里，
  * 前端只显示现状 + 能做的动作。
  */
+/**
+ * 部署/架构这类「给维护者看」的话折起来：设置页首先是给用的人看的。
+ * 需要时点开，不需要时不影响扫读。
+ */
+function DevDetails({ children, label = '技术细节' }: { children: ReactNode; label?: string }) {
+  return (
+    <details className="group">
+      <summary className="cursor-pointer select-none text-[11px] text-muted-foreground/70 transition-colors hover:text-foreground">
+        {label}
+      </summary>
+      <div className="mt-1.5 space-y-1 border-l border-border/60 pl-2 text-[11px] leading-relaxed text-muted-foreground/80">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 export function SettingsPage() {
   const { roots, dir, history, busy, authEnabled } = useAppState();
   const [newPath, setNewPath] = useState('');
@@ -182,15 +200,15 @@ export function SettingsPage() {
             </Badge>
             <span className="text-muted-foreground">
               {source.kind === 'http'
-                ? '通过 contracts/openapi.yaml 的 HTTP 接口访问磁盘'
+                ? '照片在磁盘上，应用只写星标与回收站记录，不动原片。'
                 : '浏览器内假照片：交互与手势能开发到位，接后端时设 VITE_API_BASE=/api/v1 即可切换'}
             </span>
           </div>
           <Separator />
-          <div className="space-y-1 text-muted-foreground">
+          <DevDetails>
             <p>后端模块（server/）：scan 扫描配对 · preview 预览分层 · marks 星级写 XMP · trash 回收站 · auth 鉴权 · httpapi 接口层。</p>
-            <p>不变式：磁盘是真相 · RAW+JPEG 成对原子 · 缓存可重建；应用只写星标（XMP）与回收站记录，不动原片。</p>
-          </div>
+            <p>契约：contracts/openapi.yaml；不变式：磁盘是真相 · RAW+JPEG 成对原子 · 缓存可重建。</p>
+          </DevDetails>
         </CardContent>
       </Card>
 
@@ -237,8 +255,7 @@ export function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-xs text-muted-foreground">
-          <p>目标形态：家里跑一份，Tailscale 内网随时打开（手机、平板、笔电都能挑片）。</p>
-          <p>前端是纯客户端，不碰磁盘；只有后端进程读写文件。</p>
+          <p>家里跑一份，手机、平板、笔电打开浏览器就能挑片。</p>
           <div className="flex gap-2 pt-1">
             <Button size="sm" variant="outline" onClick={() => void store.loadRoots()}>
               重新读取项目
@@ -250,6 +267,11 @@ export function SettingsPage() {
               刷新标注变更
             </Button>
           </div>
+          <DevDetails label="部署形态（技术细节）">
+            <p>目标形态：家里跑一份，Tailscale 内网随时打开。</p>
+            <p>前端是纯客户端，不碰磁盘；只有后端进程读写文件。</p>
+            <p>部署方式（systemd / Docker）、缓存与数据目录备份见 server/README.md 与仓库 README 的「部署」节。</p>
+          </DevDetails>
         </CardContent>
       </Card>
 

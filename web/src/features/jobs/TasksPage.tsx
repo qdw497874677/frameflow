@@ -2,13 +2,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Copy, ExternalLink, RefreshCw, Undo2, X } from 'lucide-react';
 import { cn } from 'cn';
 import { jobSource, source } from '@/api';
-import type { Job, JobEvent } from '@/core/types';
+import { useAppState } from '@/core/store';
+import type { Job, JobEvent, Root } from '@/core/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { describeEvent, eventTone, fmtTime, isActive, itemMark, kindLabel, STATE_LABEL, STATE_TONE } from './jobText';
 
 type Filter = 'all' | 'active' | 'done' | 'ended';
+
+/** 批注任务是谁在标（派发时写进 params.label）：多个任务并列时靠它和人名对上号 */
+function jobSubject(job: Job): string {
+  const label = job.params?.label;
+  return typeof label === 'string' ? label.trim() : '';
+}
+
+/**
+ * 这一批照片在哪：优先用选择集里的 folder，没有就退到项目名（派发时总带 project）——
+ * 同一批人派的多笔任务靠它区分。
+ */
+function jobDirName(job: Job, roots: Root[]): string {
+  const folder = job.selection.where?.folder ?? '';
+  const leaf = folder.split('/').filter(Boolean).pop();
+  if (leaf) return leaf;
+  const rootId = job.selection.project ?? '';
+  return roots.find((r) => r.id === rootId)?.label ?? '';
+}
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -31,6 +50,7 @@ function matchesFilter(job: Job, f: Filter): boolean {
  * 事件用 `nextSince` 当游标增量拉（v1 轮询；形状与将来的 SSE 一致，换传输不改这里）。
  */
 export function TasksPage() {
+  const { roots } = useAppState();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -187,14 +207,17 @@ export function TasksPage() {
                     )}
                   >
                     <span className="flex items-center gap-1.5">
-                      <span className="truncate text-sm">{kindLabel(job.kind)}</span>
+                      <span className="truncate text-sm">
+                        {kindLabel(job.kind)}
+                        {jobSubject(job) ? <span className="text-muted-foreground"> · {jobSubject(job)}</span> : null}
+                      </span>
                       <Badge variant="outline" className={cn('ml-auto', toneClass(STATE_TONE[job.state]))}>
                         {STATE_LABEL[job.state]}
                       </Badge>
                     </span>
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
                       {job.progress.done}/{job.progress.total} · {fmtTime(job.createdAt)}
-                      {job.channel ? ` · ${job.channel}` : ''}
+                      {jobDirName(job, roots) ? ` · ${jobDirName(job, roots)}` : ''}
                     </span>
                     <span className="mt-1 block h-1 overflow-hidden rounded bg-muted-foreground/20">
                       <span
@@ -240,6 +263,7 @@ export function TasksPage() {
                 {fmtTime(detail.createdAt)} 创建
                 {detail.dispatchedAt ? ` · ${fmtTime(detail.dispatchedAt)} 派发` : ''}
                 {detail.finishedAt ? ` · ${fmtTime(detail.finishedAt)} 收尾` : ''}
+                {jobSubject(detail) ? ` · 批注人 ${jobSubject(detail)}` : ''}
                 {detail.channel ? ` · 通道 ${detail.channel}` : ''}
               </p>
 
@@ -297,13 +321,20 @@ export function TasksPage() {
                       const href = a.kind === 'url' ? (a.path.startsWith('http') ? a.path : `${window.location.origin}${a.path}`) : null;
                       return (
                         <li key={`${a.kind}-${i}`} className="flex items-center gap-2 text-xs">
-                          <span className="truncate font-mono text-muted-foreground" title={a.path}>
-                            {a.path}
+                          <span className="shrink-0 text-muted-foreground">{a.kind === 'url' ? '批注链接' : a.kind}</span>
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/70" title={a.path}>
+                            {href ?? a.path}
                           </span>
                           {href && (
                             <>
-                              <Button variant="ghost" size="icon-sm" aria-label="复制链接" onClick={() => void navigator.clipboard.writeText(href)}>
-                                <Copy />
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="h-7 shrink-0"
+                                onClick={() => void navigator.clipboard.writeText(href)}
+                              >
+                                <Copy className="size-3.5" />
+                                复制链接
                               </Button>
                               <Button variant="ghost" size="icon-sm" asChild aria-label="打开">
                                 <a href={href} target="_blank" rel="noreferrer">

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { CornerUpLeft, Trash2 } from 'lucide-react';
+import { Check, CornerUpLeft, Trash2 } from 'lucide-react';
+import { cn } from 'cn';
 import { source } from '@/api';
 import { store, useAppState } from '@/core/store';
 import { formatBytes } from '@/core/format';
@@ -51,11 +52,17 @@ export function TrashPage() {
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-8">
             {pendingTrash.map((p) => (
               <div key={p.id} className="overflow-hidden bg-card ring-1 ring-white/10">
-                <img
-                  src={source.thumbUrl(p.id, 512)}
-                  alt={p.displayName}
-                  className="aspect-3/2 w-full object-cover opacity-70"
-                />
+                <div className="relative">
+                  <img
+                    src={source.thumbUrl(p.id, 512)}
+                    alt={p.displayName}
+                    className="aspect-3/2 w-full object-cover opacity-70"
+                  />
+                  {/* 和下面「已搬进回收站」的卡片长得一样，得标出区别：这批还在原目录 */}
+                  <span className="absolute top-1.5 left-1.5 rounded-sm bg-danger/85 px-1 text-[10px] font-medium text-white">
+                    待删
+                  </span>
+                </div>
                 <div className="truncate px-1.5 py-1 text-[11px] text-muted-foreground">{p.displayName}</div>
               </div>
             ))}
@@ -81,7 +88,8 @@ export function TrashPage() {
             <span>
               {trash.length} 张 · {formatBytes(bytes)}
             </span>
-            <span className="hidden sm:inline">· 还原回原目录（{dir}）</span>
+            <span className="hidden sm:inline">· 点卡片选中（可多选）· 还原回原目录（{dir}）</span>
+            <span className="sm:hidden">· 点卡片多选</span>
             <div className="ml-auto flex items-center gap-2">
               <Button
                 size="sm"
@@ -133,11 +141,29 @@ export function TrashPage() {
                       on ? 'ring-2 ring-danger' : 'ring-white/10 hover:ring-white/25'
                     }`}
                   >
-                    <img
-                      src={source.thumbUrl(t.photoId, 512)}
-                      alt={t.displayName}
-                      className="aspect-3/2 w-full object-cover opacity-70"
-                    />
+                    <div className="relative">
+                      <img
+                        src={source.thumbUrl(t.photoId, 512)}
+                        alt={t.displayName}
+                        className="aspect-3/2 w-full object-cover opacity-70"
+                      />
+                      {/* 可点选的线索：不选时是暗圈，选中变实心勾（原来只有 hover 的细环，看不出卡片能点） */}
+                      <span
+                        className={cn(
+                          'pointer-events-none absolute top-1.5 right-1.5 grid size-5 place-items-center rounded-full border backdrop-blur-sm transition-colors',
+                          on
+                            ? 'border-danger bg-danger text-white'
+                            : 'border-white/45 bg-black/35 text-transparent group-hover:border-white/70',
+                        )}
+                      >
+                        <Check className="size-3.5" />
+                      </span>
+                      {t.stars > 0 && (
+                        <Badge className="absolute top-1.5 left-1.5 bg-black/60 text-[11px] text-gold backdrop-blur-sm">
+                          {'★'.repeat(t.stars)}
+                        </Badge>
+                      )}
+                    </div>
                     <CardContent className="flex items-center gap-2 p-2 text-[11px]">
                       <span className="truncate">{t.displayName}</span>
                       <span className="ml-auto shrink-0 text-muted-foreground">{t.fromDir.split('/').pop()}</span>

@@ -142,6 +142,8 @@ export function DispatchAnnotateButton() {
         title={items.length === 0 ? '这个目录里没有可派的照片' : '把当前选择集派给外部批注人'}
       >
         <Users />
+        {/* 手机上底栏也就能放下两个字：图标裸着没人看得懂 */}
+        <span className="sm:hidden">派发</span>
         <span className="hidden sm:inline">派发批注</span>
       </Button>
 

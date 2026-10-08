@@ -53,8 +53,8 @@ export function LoginScreen() {
               进入
             </Button>
             <p className="text-[11px] text-muted-foreground">
-              密码在后端 <code className="text-foreground">artworks.config.yaml</code> 的 <code className="text-foreground">password</code> 里；
-              留空表示不启用认证。
+              密码由部署者在后端配置的 <code className="text-foreground">password</code> 里设置；
+              忘了就改一下，改完新密码立即生效。
             </p>
           </form>
         </CardContent>
