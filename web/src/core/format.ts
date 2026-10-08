@@ -25,3 +25,13 @@ export function formatTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return '—';
   return `${formatDate(iso)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+
+/** 紧凑本地时间：`MM-DD HH:mm`（列表里省宽度用；ISO 串是 UTC，不能直接截字符） */
+export function formatShortTime(iso: string | null | undefined, withSeconds = false): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  const sec = withSeconds ? `:${p(d.getSeconds())}` : '';
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}${sec}`;
+}

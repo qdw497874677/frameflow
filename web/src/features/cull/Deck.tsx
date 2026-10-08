@@ -281,7 +281,7 @@ export function Deck() {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="rounded-full"
+                className="size-9 rounded-full sm:size-7"
                 aria-label={zoomed ? '退出放大' : '放大看细节'}
                 onClick={() => (zoomed ? zoomApi.current?.reset() : zoomApi.current?.zoomIn())}
               >

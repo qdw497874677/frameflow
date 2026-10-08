@@ -122,18 +122,18 @@ export function Grid() {
                     size="icon-xs"
                     aria-label="看片台"
                     onClick={() => setOpen(i)}
-                    className="bg-black/55 backdrop-blur-sm"
+                    className="size-8 bg-black/55 backdrop-blur-sm sm:size-6"
                   >
-                    <Maximize2 className="size-3.5" />
+                    <Maximize2 className="size-4 sm:size-3.5" />
                   </Button>
                   <Button
                     variant="secondary"
                     size="icon-xs"
                     aria-label="加星"
                     onClick={() => store.setStars(p.id, p.mark.stars > 0 ? cycle(p.mark.stars) : 1)}
-                    className={cn('bg-black/55 backdrop-blur-sm', p.mark.stars > 0 && 'text-gold')}
+                    className={cn('size-8 bg-black/55 backdrop-blur-sm sm:size-6', p.mark.stars > 0 && 'text-gold')}
                   >
-                    <Star className={cn('size-3.5', p.mark.stars > 0 && 'fill-gold')} />
+                    <Star className={cn('size-4 sm:size-3.5', p.mark.stars > 0 && 'fill-gold')} />
                   </Button>
                   <Button
                     variant="secondary"
@@ -141,9 +141,9 @@ export function Grid() {
                     aria-label="待删"
                     aria-pressed={p.mark.del}
                     onClick={() => store.toggleDel(p.id)}
-                    className={cn('bg-black/55 backdrop-blur-sm', p.mark.del && 'bg-danger/25 text-danger')}
+                    className={cn('size-8 bg-black/55 backdrop-blur-sm sm:size-6', p.mark.del && 'bg-danger/25 text-danger')}
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash2 className="size-4 sm:size-3.5" />
                   </Button>
                 </div>
               </motion.div>

@@ -150,7 +150,7 @@ export function TasksPage() {
               key={f.id}
               onClick={() => setFilter(f.id)}
               className={cn(
-                'rounded-full px-2.5 py-1 text-xs transition-colors',
+                'rounded-full px-3 py-1.5 text-xs transition-colors sm:px-2.5 sm:py-1',
                 filter === f.id ? 'bg-gold/15 text-gold' : 'text-muted-foreground hover:bg-muted',
               )}
             >

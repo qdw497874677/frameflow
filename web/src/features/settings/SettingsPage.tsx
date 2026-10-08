@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, Cloud, FolderMinus, FolderOpen, FolderPlus, HardDrive, ListChecks, Pencil, Server, TriangleAlert } from 'lucide-react';
 import { source } from '@/api';
 import { store, useAppState } from '@/core/store';
+import { formatShortTime } from '@/core/format';
 import { DirPicker } from '@/components/DirPicker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -69,23 +70,23 @@ export function SettingsPage() {
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="size-6 shrink-0"
+                  className="size-9 shrink-0 sm:size-6"
                   title="改显示名"
                   onClick={() => {
                     setRenamingId(renamingId === r.id ? null : r.id);
                     setRenameLabel(r.label);
                   }}
                 >
-                  <Pencil className="size-3" />
+                  <Pencil className="size-3.5 sm:size-3" />
                 </Button>
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="size-6 shrink-0 text-danger"
+                  className="size-9 shrink-0 text-danger sm:size-6"
                   title="移除这个项目（只解除映射，盘上文件不动）"
                   onClick={() => setConfirmRemoveId(confirmRemoveId === r.id ? null : r.id)}
                 >
-                  <FolderMinus className="size-3" />
+                  <FolderMinus className="size-3.5 sm:size-3" />
                 </Button>
               </div>
               {renamingId === r.id && (
@@ -103,7 +104,7 @@ export function SettingsPage() {
                   />
                   <Button
                     size="sm"
-                    className="h-7"
+                    className="h-9 sm:h-7"
                     disabled={!renameLabel.trim() || renameLabel.trim() === r.label}
                     onClick={() => void store.renameRoot(r.id, renameLabel.trim()).then(() => setRenamingId(null))}
                   >
@@ -116,10 +117,10 @@ export function SettingsPage() {
                   <span className="flex-1">
                     移除「{r.label}」？盘上的文件不会被删；重新添加 {r.diskPath ?? r.path} 即可找回。
                   </span>
-                  <Button size="sm" variant="destructive" className="h-7" onClick={() => { setConfirmRemoveId(null); void store.removeRoot(r.id); }}>
+                  <Button size="sm" variant="destructive" className="h-9 sm:h-7" onClick={() => { setConfirmRemoveId(null); void store.removeRoot(r.id); }}>
                     确认移除
                   </Button>
-                  <Button size="sm" variant="ghost" className="h-7" onClick={() => setConfirmRemoveId(null)}>
+                  <Button size="sm" variant="ghost" className="h-9 sm:h-7" onClick={() => setConfirmRemoveId(null)}>
                     取消
                   </Button>
                 </div>
@@ -147,11 +148,11 @@ export function SettingsPage() {
               placeholder="显示名（可空）"
               className="h-7 w-32 text-xs"
             />
-            <Button size="sm" variant="outline" className="h-7" onClick={() => setPickerOpen(true)}>
+            <Button size="sm" variant="outline" className="h-9 sm:h-7" onClick={() => setPickerOpen(true)}>
               <FolderOpen className="mr-1 size-3.5" />
               浏览…
             </Button>
-            <Button size="sm" className="h-7" disabled={!newPath.trim() || adding} onClick={() => void submitAdd()}>
+            <Button size="sm" className="h-9 sm:h-7" disabled={!newPath.trim() || adding} onClick={() => void submitAdd()}>
               {adding ? '添加中…' : '添加'}
             </Button>
           </div>
@@ -205,7 +206,7 @@ export function SettingsPage() {
           )}
           {history.slice(0, 10).map((c, i) => (
             <div key={`${c.photoId}-${c.field}-${c.at}-${i}`} className="flex items-center gap-2">
-              <span className="w-16 shrink-0 tabular-nums text-muted-foreground">{c.at.slice(11, 19)}</span>
+              <span className="w-24 shrink-0 tabular-nums text-muted-foreground">{formatShortTime(c.at)}</span>
               <span className="truncate font-mono">{c.displayName ?? c.photoId}</span>
               <span className="shrink-0 text-muted-foreground">{c.field === 'stars' ? '星' : '待删'}</span>
               <span className="shrink-0 tabular-nums text-muted-foreground">

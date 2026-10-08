@@ -1,3 +1,4 @@
+import { formatShortTime } from '@/core/format';
 import type { JobEvent, JobEventType, JobItem, JobState } from '@/core/types';
 
 /** 任务的显示语言：面向用户一律说「任务」，不说 job（GLOSSARY.md） */
@@ -65,11 +66,7 @@ export function eventTone(type: JobEventType): 'ok' | 'bad' | 'muted' | 'default
 
 /** ISO → 「MM-DD HH:mm」（本地时区）；空值给个占位 */
 export function fmtTime(iso?: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return formatShortTime(iso);
 }
 
 /** items 里一行「标成了什么」：★n / 待删 / 未标 */

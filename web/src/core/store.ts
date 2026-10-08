@@ -420,9 +420,13 @@ class AppStore {
   async loadTrash() {
     this.patch({ busy: true });
     try {
+      const dir = this.state.dir;
       const [trash, pending] = await Promise.all([
         source.listTrash(),
-        source.listPhotos({ dir: this.state.dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500 }),
+        // 没选定目录时不问：后端要求 dir，空串会被 400 顶回来（boot 还没定目录时就是这种状态）
+        dir
+          ? source.listPhotos({ dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500 })
+          : Promise.resolve({ items: [] as Photo[] }),
       ]);
       this.patch({ trash, pendingTrash: pending.items, busy: false });
     } catch (err) {
@@ -432,6 +436,7 @@ class AppStore {
 
   /** 单独刷新「待删」（打完 tag 之后、换目录之后调用） */
   async loadPendingTrash() {
+    if (!this.state.dir) return;
     try {
       const page = await source.listPhotos({
         dir: this.state.dir,

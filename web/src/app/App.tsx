@@ -67,7 +67,7 @@ export function App() {
       <AppSidebar />
       <SidebarInset className="flex h-svh min-h-0 flex-col overflow-hidden">
         <header className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 pt-[calc(env(safe-area-inset-top)+0.375rem)]">
-          <SidebarTrigger className="text-muted-foreground" />
+          <SidebarTrigger className="size-9 text-muted-foreground sm:size-7" />
           <span className="text-sm font-medium">{title}</span>
           {/* 现在在哪个目录：库名 + 相对子路径。手机也显示（原来 hidden sm:block 手机上完全看不到自己在哪）。
               根的虚拟路径是 /<id>/…，id 是拼音/英文不好认，换成用户超的 label 更直观；悬停吐原始虚拟路径。 */}
