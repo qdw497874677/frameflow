@@ -51,6 +51,40 @@ cd server && ./tools/dev.sh start                # 扫描 + 托管 web/dist + �
 也可以用环境变量指定别的文件：`ARTWORKS_CONFIG=/path/to/cfg.yaml ./tools/dev.sh start`
 （优先级：`--config=` > `ARTWORKS_CONFIG` > `artworks.config.local.yaml` > `artworks.config.yaml`）。
 
+## 部署
+
+两套交付物（票 012）：
+
+**Docker**（`Dockerfile` + `docker-compose.yml`，多阶段：builder 构建前端，runtime 只留生产依赖 + `web/dist` + ffmpeg/perl，Node 22 原生跑 .ts）：
+
+```bash
+docker compose up -d --build          # 宿主端口默认 8791（避开开发服 8787），http://127.0.0.1:8791/
+```
+
+三个卷：`/config`（只读配置）、`/data`（索引/缓存/日志，**别放照片共享里**）、`/photos`（照片库，必须读写：要写 .xmp 与 .trash）。
+容器内以 node(uid 1000) 运行 —— 挂载源目录属主不是 1000 时用 compose 里的 `user:` 覆盖或 `chown -R 1000:1000`。
+环境变量 `ARTWORKS_CONFIG` / `ARTWORKS_DATA` / `ARTWORKS_PHOTOS` / `ARTWORKS_PORT` 可覆盖默认挂载。
+
+**裸机**（systemd + `deploy/install.sh`）：
+
+```bash
+deploy/install.sh                    # 依赖检查 → npm ci → 构建前端 → 生成配置 → 装用户级 systemd 单元
+deploy/install.sh --no-service       # 只装依赖 + 构建，不碰 systemd
+deploy/install.sh --config /path/cfg.yaml --data-dir ~/.local/share/artworks --photos ~/Pictures
+```
+
+用户级单元装在 `~/.config/systemd/user/artworks.service`（注销后仍运行：`loginctl enable-linger $USER`）；
+root 执行则装系统级。模板在 `deploy/artworks.service`，配置示例 `deploy/artworks.config.example.yaml`（容器路径版）。
+
+部署要点（细节见 `server/README.md`）：Node >= 22（直跑 .ts）；`VITE_API_BASE=/api/v1` 不能少；对外访问要设 `password` 并把 `host` 改 `0.0.0.0`；网络挂载建议 NFS 直挂（gvfs 挂载在用户会话里，systemd 服务看不到，见 server/README「挂载失联」）。
+
+**远程访问**：只打算局域网 / Tailscale，不加反代与证书（决策见 `wayfinder/tickets/005-stack-deployment.md`）。
+在装了 Tailscale 的机器上把 `host` 设 `0.0.0.0`（**必须设密码**），手机/笔记本用 `http://<tailscale主机名>:8787` 访问。
+
+**备份**：`dataDir` 一个目录就是全部可重建状态之外的东西 —— 索引、预览缓存、`tokens.json`（API 密钥）、`marks.jsonl`（标注历史）、`trash.jsonl`（回收站操作日志）。索引与预览缓存丢了可以重扫重建，但 `tokens.json` / `marks.jsonl` / `trash.jsonl` 丢了不可恢复 —— 备份策略：定时 rsync/快照 `dataDir`（排除 `previews/`、`thumbs/`）即可，体积很小。
+
+**升级**：`git pull` → （Docker）`docker compose up -d --build`；（裸机）`deploy/install.sh`（重复跑安全）或 `cd web && VITE_API_BASE=/api/v1 npm run build && cd ../server && npm ci` → `systemctl --user restart artworks`（或 `restart artworks.service`）。数据目录不动，升级前后无需迁移。
+
 ## 测试
 
 ```bash

@@ -1,0 +1,39 @@
+# art-workspace systemd 单元模板。
+#
+# 这是**模板**：里面的 @NODE@ / @REPO@ / @CONFIG@ / @USER@ 占位符由 deploy/install.sh
+# 渲染后写入 systemd 目录。手动安装时自己把占位符替换成实际值。
+#
+# 装到哪：
+#   用户级（推荐，无需 root）：~/.config/systemd/user/artworks.service
+#       systemctl --user daemon-reload && systemctl --user enable --now artworks
+#       （想注销后仍运行：loginctl enable-linger "$USER"）
+#   系统级（需要 root）：/etc/systemd/system/artworks.service
+#       systemctl daemon-reload && systemctl enable --now artworks
+#       系统级要把下面 WantedBy 改成 multi-user.target、User 填成跑应用的账号，
+#       并且 network-online.target 才真正存在（用户级管理器里没有它）。
+
+[Unit]
+Description=art-workspace 照片整理后端（API + 前端静态产物）
+Documentation=file:@REPO@/README.md
+# 网络挂载点（NAS/SMB）要在服务起来前就位
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 跑应用的账号：必须是照片目录与 dataDir 的属主（否则写不了 XMP）
+User=@USER@
+WorkingDirectory=@REPO@/server
+# 配置文件的绝对路径；不设就用 server/artworks.config.yaml 的默认值
+Environment=ARTWORKS_CONFIG=@CONFIG@
+Environment=NODE_ENV=production
+# Node 22+ 原生跑 .ts（server 的 tsconfig 开了 erasableSyntaxOnly，只用可擦除语法）
+ExecStart=@NODE@ src/index.ts
+Restart=on-failure
+RestartSec=3
+# 冷启动首次扫盘可能很久；给收摊留足时间，别把写 XMP 的请求切断
+TimeoutStopSec=30
+
+[Install]
+# 用户级用 default.target；系统级改成 multi-user.target
+WantedBy=@WANTEDBY@

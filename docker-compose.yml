@@ -1,0 +1,42 @@
+# art-workspace 单服务编排。
+#
+# 三个卷是刻意的分工：
+#   /config  只读，配置是被「读」的（运行期加根目录要写回，见下面的已知限制）
+#   /data    索引 / 缩略图缓存 / tokens.json / marks.jsonl / trash.jsonl，**别放照片共享里**
+#   /photos  照片库本体，**必须读写**：应用要写 .xmp 侧车与 dir/.trash
+#
+# 宿主端口默认 8791（不是 8787）：本机开发服务器常占着 8787，容器别去抢。
+
+services:
+  artworks:
+    build: .
+    image: artworks:local
+    # 容器内 8787 → 宿主机 ${ARTWORKS_PORT:-8791}
+    ports:
+      - "${ARTWORKS_PORT:-8791}:8787"
+    environment:
+      # 指向挂载进容器的配置路径；config.ts 优先读这个环境变量
+      ARTWORKS_CONFIG: /config/artworks.config.yaml
+    volumes:
+      # 配置：默认用仓库里的示例，正式部署时把 ARTWORKS_CONFIG 指到你自己的 yaml
+      - ${ARTWORKS_CONFIG:-./deploy/artworks.config.example.yaml}:/config/artworks.config.yaml:ro
+      # 应用数据：默认 ./data（compose 相对路径），可换成宿主机上的持久目录
+      - ${ARTWORKS_DATA:-./data}:/data
+      # 照片根：**指向真实照片目录**（如 /home/you/Pictures），读写挂载
+      - ${ARTWORKS_PHOTOS:-./photos}:/photos
+      # 注意：/data 与 /photos 都要对容器内 uid 1000（node 用户）可写。
+      # 容器以非 root 运行，若挂载源目录属主不是 1000，会写不了索引/缩略图/XMP/回收站。
+      # 处理办法（二选一）：
+      #   mkdir -p data && sudo chown -R 1000:1000 data        # 用宿主机的 uid 1000（多数单用户机就是你自己）
+      #   取消文件末尾的 user: 行，填宿主机照片目录的 `id -u`:`id -g`
+    restart: unless-stopped
+    # 与 Dockerfile 里的 HEALTHCHECK 保持一致（compose 显式写一份，方便 docker compose ps 直接看到）
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/v1/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    # 镜像默认以 node(uid 1000) 运行。若挂进来的照片目录属主不是 1000，
+    # 就取消下面这行并填上宿主机上照片目录的 uid:gid，否则写不了 .xmp / .trash：
+    # user: "1000:1000"

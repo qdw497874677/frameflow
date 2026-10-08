@@ -1,0 +1,44 @@
+# art-workspace 配置文件（Docker 部署示例）。
+#
+# 容器里用 `ARTWORKS_CONFIG=/config/artworks.config.yaml` 指定这份（见 docker-compose.yml）。
+# 裸机部署时把 dataDir / roots[].path 换成本机的真实路径即可，字段含义完全一样。
+#
+# 注意：这里的路径都是**服务端进程（容器内）可见的绝对路径**，不是宿主机的。
+# 宿主机目录靠 compose 的卷映射进容器。
+
+# 监听地址。容器里必须是 0.0.0.0，否则只在容器回环上听，端口映射进来连不上；
+# 对外只暴露到宿主机映射的端口，安全性交给防火墙/反向代理。
+host: 0.0.0.0
+# 容器内端口。要改端口请改宿主机映射（ARTWORKS_PORT），容器内一般不动。
+port: 8787
+
+# 索引、缩略图缓存、tokens.json、marks.jsonl、trash.jsonl 的落脚处。
+# 对应 compose 里映射到 /data 的那个卷 —— 放宿主机本地盘，别放照片共享里。
+dataDir: /data
+
+# 单用户密码。留空 = 免认证（只在本机/可信网络这样用）。
+password: ""
+
+# 照片根目录：每个 root 映射宿主机上一个真实目录。
+roots:
+  - id: photos        # 稳定标识：进 URL 与选择集的虚拟路径就是 /photos（改名不影响已存的标注）
+    label: 照片库      # 侧边栏显示名
+    path: /photos     # 服务端可见的真实磁盘路径，必须对进程可读**可写**（写 XMP 侧车与 .trash）
+    # 说明：API `/roots` 返回的 diskPath 就是这个 path；虚拟路径由 id 推导为 /photos。
+    # 想挂多个库就再加条目，并在 compose 里加对应的卷映射（每个宿主机目录 → 一个容器内路径）。
+
+scan:
+  # 下钻深度上限（防止误指到 / 上把整盘扫了）
+  maxDepth: 8
+  # 单个根目录的扫描超时（毫秒）：NAS/SMB 挂载失联时 FS 调用永不返回，没有这道闸会把服务拖住。
+  # 超时只把这个根标离线，其余根照扫。
+  rootTimeoutMs: 20000
+  # 索引超过这么多天没扫就自动补扫一次（启动时 + 长期实例每 10 分钟检查）；0 = 关
+  autoRescanAfterDays: 7
+
+cache:
+  # 预览缓存（512/2048 缩略图）上限，字节；超了按最久未读淘汰到 90%。
+  # 默认 8 GiB；0 = 不限；环境变量 ARTWORKS_CACHE_MAX_BYTES 可覆盖。
+  maxBytes: 8589934592
+
+logLevel: info

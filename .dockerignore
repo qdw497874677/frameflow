@@ -1,0 +1,29 @@
+# 构建上下文瘦身：镜像里要的东西都在 COPY 里显式点名，其余一律别塞进 daemon。
+# （node_modules 与 dist 尤其重要：宿主机的它们是本机/别的架构的产物，COPY 进去会污染镜像。）
+
+# 依赖与构建产物（镜像里由 builder 重新生成）
+**/node_modules
+**/dist
+**/build
+**/*.tsbuildinfo
+
+# git 与编辑器
+.git
+.gitignore
+.idea
+.vscode
+
+# 运行时数据与本地配置（绝不能进镜像：里面有索引、token、本机路径）
+data/
+**/*.log
+**/.env
+**/.env.*
+server/artworks.config.yaml
+server/artworks.config.local.yaml
+
+# 与运行无关的仓库目录
+prototype/
+wayfinder/
+docs/
+contracts/
+.pictures/
