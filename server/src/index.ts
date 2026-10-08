@@ -21,6 +21,7 @@ app.log.info(
     dataDir: cfg.dataDir,
     auth: cfg.password ? '密码认证已开启' : '免认证（只在本机开发时这样用）',
     roots: cfg.roots.map((r) => `${r.id}:${r.path}`),
+    cacheMaxBytes: cfg.cache.maxBytes || '不限',
   },
   'art-workspace server 已启动',
 );
@@ -36,6 +37,38 @@ if (cached) {
 
 // 根目录在不在：异步探一次（挂死的挂载也不能堵住事件循环），随后 refresh() 会再校正
 void lib.probeRoots().catch(() => undefined);
+
+// 索引比 autoRescanAfterDays 还旧：这次的启动扫描就是「补扫」（票 013）
+if (lib.noteAutoRescanAtBoot()) {
+  app.log.info({ afterDays: cfg.scan.autoRescanAfterDays }, '索引已过期：启动补扫一次');
+}
+
+// 预览缓存（票 013）：起监听之后再收拾 —— 大库启动时不跟首次扫描抢 IO。
+// 超上限就按 atime 从旧到新删到 90%，每 10 分钟再看一眼（长时间运行也不会涨到失控）。
+void lib
+  .maintainCache()
+  .then((res) => {
+    if (!res) return app.log.info({ maxBytes: 0 }, '预览缓存不限容量（cache.maxBytes = 0）');
+    app.log.info(
+      { bytes: res.bytes, files: res.files, deleted: res.deleted, freedBytes: res.freedBytes, maxBytes: cfg.cache.maxBytes },
+      res.deleted ? '预览缓存已淘汰最久未用的部分' : '预览缓存未超上限',
+    );
+  })
+  .catch((err) => app.log.warn({ err }, '缓存维护失败（不影响服务）'));
+
+const cacheTimer = setInterval(() => {
+  void lib
+    .maintainCache()
+    .then((res) => {
+      if (res?.deleted) {
+        app.log.info({ deleted: res.deleted, freedBytes: res.freedBytes, bytes: res.bytes }, '预览缓存定期淘汰');
+      }
+    })
+    .catch(() => undefined);
+  // 索引放旧了就补扫一次：NAS 上的实例可能几周不重启，新照片不能等到下次重启
+  if (lib.checkAutoRescan()) app.log.info('索引超过 autoRescanAfterDays：自动补扫');
+}, 10 * 60_000);
+cacheTimer.unref();
 
 void lib
   .refresh()

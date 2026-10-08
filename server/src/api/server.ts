@@ -9,7 +9,7 @@ import { createReadStream, existsSync, type Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { Config } from '../config.ts';
+import { expandHome, type Config } from '../config.ts';
 import { JobError, JobsStore, type JobProblem } from '../core/jobs.ts';
 import type { Library } from '../core/library.ts';
 import type { MarkInput } from '../core/marks.ts';
@@ -206,7 +206,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   // 「选择目录」的下钻数据源：真实文件系统，只列目录（含指向目录的符号链接，如 ~/nfs）。
   app.get('/api/v1/fs/browse', async (req, reply) => {
     const q = (req.query as { path?: string }).path;
-    const target = q?.trim() ? resolve(q.trim()) : homedir();
+    const target = q?.trim() ? resolve(expandHome(q.trim())) : homedir();
     let entries: Dirent[];
     try {
       entries = await readdir(target, { withFileTypes: true });

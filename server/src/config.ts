@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { parse as parseYaml, parseDocument, Document } from 'yaml';
 import { DEFAULT_IGNORE_DIRS } from './core/exts.ts';
 import type { RootCfg } from './core/scan.ts';
@@ -25,6 +25,12 @@ export interface Config {
     ignore: string[];
     /** 单个根目录的扫描超时（毫秒）。网络挂载失联时 FS 调用永不返回，没有这道闸就把服务拖住 */
     rootTimeoutMs: number;
+    /** 索引里的 `lastScanAt` 比这个还旧就在启动后补扫一次；0 = 关（不补扫） */
+    autoRescanAfterDays: number;
+  };
+  cache: {
+    /** 预览缓存上限（字节）。`0` = 不限；超了按 atime 从旧到新删到 90% */
+    maxBytes: number;
   };
   logLevel: string;
   /** 配置是从哪个文件读的（运行时添加根目录要写回这里）；null = 没有配置文件（全默认/环境变量） */
@@ -53,18 +59,25 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
   );
 
   const defaultDataDir = resolve(homedir(), '.local/share/artworks');
-  const scanRaw = (raw['scan'] as { maxDepth?: number; ignore?: string[]; rootTimeoutMs?: number }) ?? {};
+  const scanRaw = (raw['scan'] as { maxDepth?: number; ignore?: string[]; rootTimeoutMs?: number; autoRescanAfterDays?: number }) ?? {};
+  const cacheRaw = (raw['cache'] as { maxBytes?: number }) ?? {};
+  // 上限写错（负数/不是数）时当作「不限」：宁可占盘，也不能因为一个手滑的配置把缓存删空
+  const maxBytes = Number(cacheRaw.maxBytes ?? process.env['ARTWORKS_CACHE_MAX_BYTES'] ?? 8 * 1024 ** 3);
 
   return {
     host: String(raw['host'] ?? process.env['ARTWORKS_HOST'] ?? '127.0.0.1'),
     port: Number(raw['port'] ?? process.env['ARTWORKS_PORT'] ?? 8787),
-    dataDir: resolve(String(raw['dataDir'] ?? process.env['ARTWORKS_DATA_DIR'] ?? defaultDataDir)),
+    dataDir: resolve(expandHome(String(raw['dataDir'] ?? process.env['ARTWORKS_DATA_DIR'] ?? defaultDataDir))),
     password: String(raw['password'] ?? process.env['ARTWORKS_PASSWORD'] ?? ''),
     roots,
     scan: {
       maxDepth: Number(scanRaw.maxDepth ?? 8),
       ignore: [...DEFAULT_IGNORE_DIRS, ...(scanRaw.ignore ?? [])],
       rootTimeoutMs: Number(scanRaw.rootTimeoutMs ?? process.env['ARTWORKS_SCAN_TIMEOUT_MS'] ?? 20_000),
+      autoRescanAfterDays: Number(scanRaw.autoRescanAfterDays ?? process.env['ARTWORKS_AUTO_RESCAN_DAYS'] ?? 7),
+    },
+    cache: {
+      maxBytes: Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : 0,
     },
     logLevel: String(raw['logLevel'] ?? process.env['ARTWORKS_LOG_LEVEL'] ?? 'info'),
     sourceFile: file ?? null,
@@ -92,6 +105,10 @@ export function persistRoots(cfg: Config): void {
   cfg.sourceFile = file;
 }
 
+export function expandHome(path: string): string {
+  return path === '~' ? homedir() : path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
+}
+
 function normalizeRoots(list: unknown[]): RootCfg[] {
   const used = new Set<string>();
   const out: RootCfg[] = [];
@@ -104,7 +121,7 @@ function normalizeRoots(list: unknown[]): RootCfg[] {
     let n = 2;
     while (used.has(id)) id = `${label}-${n++}`;
     used.add(id);
-    out.push({ id, label, path: resolve(path) });
+    out.push({ id, label, path: resolve(expandHome(path)) });
   }
   return out;
 }

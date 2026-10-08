@@ -32,6 +32,10 @@ roots:
 scan:
   # 下钻深度上限（防止误指到 / 上把整盘扫了）
   maxDepth: 8
+  # 单个根扫多久没响应就当它挂死了（毫秒）。网络挂载（NFS/gvfs）失联时靠它止损。
+  rootTimeoutMs: 20000
+  # 索引超过这么多天没扫就自动补扫一次（启动时 + 长期运行的实例每 10 分钟检查）；0 = 关
+  autoRescanAfterDays: 7
   # 额外忽略的目录名（小写比较）；下面是内置默认值，写在这里是覆盖而不是追加
   ignore:
     - .artworks
@@ -44,5 +48,10 @@ scan:
     - $RECYCLE.BIN
     - System Volume Information
     - .thumbnails
+
+cache:
+  # 预览缓存（512/2048 缩略图）上限，字节；超了按最久未读淘汰到 90%。
+  # 默认 8 GiB；0 = 不限；也可用环境变量 ARTWORKS_CACHE_MAX_BYTES 覆盖。
+  maxBytes: 8589934592
 
 logLevel: info

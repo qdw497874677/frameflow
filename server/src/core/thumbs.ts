@@ -20,6 +20,7 @@ import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
+import { touchIfStale } from './cache.ts';
 import { extractEmbeddedJpeg } from './exif.ts';
 import type { PhotoRecord, PreviewSource } from './photo.ts';
 
@@ -96,6 +97,8 @@ export class Thumbs {
   private readonly thumbDir: string;
   /** 正在抽的视频封面：同一个视频的并发请求共用一次 ffmpeg */
   private readonly posters = new Map<string, Promise<{ path: string; source: PreviewSource }>>();
+  /** 正在写盘的缓存文件：容量淘汰不能删它们（票 013） */
+  private readonly inflight = new Set<string>();
   private readonly ffmpegGate = new Gate(FFMPEG_CONCURRENCY);
   /** 连续抽帧失败计数 + 熔断到什么时候 */
   private posterFailures = 0;
@@ -106,6 +109,18 @@ export class Thumbs {
     this.thumbDir = join(dataDir, 'thumbs');
     mkdirSync(this.previewDir, { recursive: true });
     mkdirSync(this.thumbDir, { recursive: true });
+  }
+
+  /** 缓存落在哪两个目录（容量策略要扫它们） */
+  cacheDirs(): string[] {
+    return [this.previewDir, this.thumbDir];
+  }
+
+  /** 现在不能删的缓存文件（正在生成 / 正在被写） */
+  protectedPaths(): Set<string> {
+    const set = new Set(this.inflight);
+    for (const path of this.posters.keys()) set.add(path);
+    return set;
   }
 
   /** 源签名：用哪个文件出预览，就按哪个文件的 mtime+size 判新旧 */
@@ -135,13 +150,21 @@ export class Thumbs {
     }
 
     const cached = this.previewCachePath(this.absStemOf(rec), this.sourceSig(rec));
-    if (existsSync(cached)) return { path: cached, source: 'embedded_jpeg' };
+    if (existsSync(cached)) {
+      void touchIfStale(cached); // 抽出来的预览也是缓存，被用到就刷新 LRU
+      return { path: cached, source: 'embedded_jpeg' };
+    }
 
     const buf = await extractEmbeddedJpeg(rec.previewPath);
     if (!buf) throw new PreviewUnavailable(rec.id);
     const tmp = `${cached}.${process.pid}.tmp`;
-    writeFileSync(tmp, buf);
-    renameSync(tmp, cached);
+    this.inflight.add(cached);
+    try {
+      writeFileSync(tmp, buf);
+      renameSync(tmp, cached);
+    } finally {
+      this.inflight.delete(cached);
+    }
     return { path: cached, source: 'embedded_jpeg' };
   }
 
@@ -151,7 +174,10 @@ export class Thumbs {
    */
   private async poster(rec: PhotoRecord): Promise<{ path: string; source: PreviewSource }> {
     const cached = this.previewCachePath(this.absStemOf(rec), this.sourceSig(rec));
-    if (existsSync(cached)) return { path: cached, source: 'video_poster' };
+    if (existsSync(cached)) {
+      void touchIfStale(cached);
+      return { path: cached, source: 'video_poster' };
+    }
     if (Date.now() < this.posterBlockedUntil) {
       throw new PreviewUnavailable(rec.id, '视频封面暂缓：源挂载似乎不可用，稍后自动重试');
     }
@@ -212,12 +238,19 @@ export class Thumbs {
 
     if (!existsSync(out) || statSync(out).size === 0) {
       const tmp = `${out}.${process.pid}.tmp`;
-      await sharp(src, { failOn: 'none', unlimited: false })
-        .rotate() // 按 EXIF 朝向摆正，然后丢掉该标记
-        .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: size > 512 ? 86 : 80, mozjpeg: true })
-        .toFile(tmp);
-      renameSync(tmp, out);
+      this.inflight.add(out);
+      try {
+        await sharp(src, { failOn: 'none', unlimited: false })
+          .rotate() // 按 EXIF 朝向摆正，然后丢掉该标记
+          .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: size > 512 ? 86 : 80, mozjpeg: true })
+          .toFile(tmp);
+        renameSync(tmp, out);
+      } finally {
+        this.inflight.delete(out);
+      }
+    } else {
+      void touchIfStale(out); // 命中缓存：刷新 LRU，别让常用缩略图先被淘汰
     }
     return { path: out, etag, source };
   }

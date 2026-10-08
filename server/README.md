@@ -19,6 +19,7 @@
 | `jobs` | 任务层：一个能力一个 handler（`core/jobs.ts` 状态机 + `jobs/registry.ts` + `jobs/service.ts`） | 契约 `validate → plan → apply → undo?`，只依赖 `core/`，handler 之间不互相 import；先预演再执行；每个任务落 `dataDir/jobs.jsonl`（一行一个快照，同 id 后写覆盖先写）+ `dataDir/job-events.jsonl`（追加型，`seq` 单调）；执行队列不持久化，重启把 `queued`/`running` 标 `interrupted`（收回流或 `undo` 都能接着走） |
 | `channels` | 出站投递通道（应用内 / 飞书 / webhook…） | 只负责「怎么把一批照片发出去」；批注回流不走通道，走 `POST /jobs/{id}/inbound`；v1 不建账号体系，用任务签发的范围受限链接 token（`annotate:<jobId>`），回流记 `by: 'link:<批注人>'` |
 | `storage` | 状态与日志的落盘位置 | 索引/缓存可重建；事件日志与 manifest 不可重建，必须追加写（见 `docs/core-model.md` 不变量 6） |
+| `cache` | 预览缓存的容量策略（`core/cache.ts`） | 512/2048 缩略图共用一个上限（`cache.maxBytes`，默认 8 GiB，`0` = 不限）；按**最久未读**（atime，读命中时顺手刷新）淘汰到上限的 90%；正在生成的文件与视频封面受保护；半截 `.tmp` 一小时后就清 |
 | `trash` | 逻辑删除区（产品回收站）—— 已实现 | 删除 = 移入产品回收站，可恢复；pair（含 `.xmp` 侧车）成对进出（票 001 + 用户决策）；搬走时**顺手把标记清掉**（`channel:'trash'`），否则还原后会带着「待删」回来，而挑片默认隐藏待删 —— 照片就像消失了；落地在 `<照片目录>/.trash/<显示名>/`，记录与日志在 `dataDir/trash.jsonl`（`{op:'in'|'out'}` 追加写，重启后按它重建回收站索引）；`dir/.trash` 下的文件**不参与扫描配对**；还原时同名文件排号（`名字 (2)`），绝不覆盖 |
 | `roots` | 根目录列表与在线检测 | 多根（本地盘/挂载点）；`online=false` 表示当前不可访问，前端只灰显不报错（票 004） |
 | `auth` | 单用户认证与会话 | 家用 + Tailscale 场景下的最简方案（票 005） |
@@ -97,6 +98,20 @@ export const annotate: JobHandler = {
 - 星标/待删不依赖扫描：`MarksStore` 启动即读 `marks.jsonl`，DTO 里的 `stars`/`del` 以它为准（XMP 只是种子）。
 - 失效即重建：版本号不符、JSON 坏了、`records` 为空 → 当没有缓存，照旧全量扫描覆盖。
 - 回归：`node tools/e2e-cold-start.mjs`（重启后断言「扫描还没跑完就能出照片」+ 日志里的「索引缓存已就绪」）。
+
+## 预览缓存与自动补扫（2026-10-07，票 013）
+
+缓存目录 `dataDir/previews`（512/2048 两档）与 `dataDir/thumbs` 合起来算一个容量账，上限 `cache.maxBytes`（默认 8 GiB；`ARTWORKS_CACHE_MAX_BYTES` 可覆盖；`0` 或写错 = 不限）：
+
+- **淘汰规则**：超过上限就按 `atime` 从旧到新删，**删到上限的 90% 就停**（留出抖动空间）；单轮最多看 2000 个文件，没看完下一轮继续（`lastEvict.truncated`）。
+- **atime 要主动刷**：挂载/文件系统的 relatime 会让「最近读过」失真，所以读命中时若 `atime` 已经旧过 1 小时就 `utimes` 一次（节流，避免每条请求都写元数据）。
+- **在途保护**：正在生成的预览（`Thumbs.inflight`）与视频封面（`posters`）不删；跳过的文件不腾地方，于是会继续删更旧的。
+- **半截产物**：生成失败的 `.tmp` 不计入占用，超过 1 小时自动清掉。
+- **什么时候跑**：启动时（监听之后）先 `measure()` 再最多 10 轮 `sweep()`，之后每 10 分钟巡检一次（`unref` 的定时器）。
+- **索引自动补扫**：`scan.autoRescanAfterDays`（默认 7，`ARTWORKS_AUTO_RESCAN_DAYS` 可覆盖，`0` = 关）—— 启动时 `index.json` 的 `lastScanAt` 比这个还旧就记一笔「这次启动扫描就是补扫」；长期运行的实例每 10 分钟检查一次，过期就 `requestRefresh()`。**注意它不会跳过启动扫描**（重启后列表仍先吃缓存、后台照常补扫）。
+- **可观测**：`GET /capabilities` 的 `library.cache`（`bytes`/`files`/`maxBytes`/`lastEvict`）与 `library.autoRescan`（`afterDays`/`lastScanAt`/`triggeredAt`）；启动日志里有 `cacheMaxBytes` 与每轮淘汰的字节数。
+
+回归：`node tools/e2e-cache.mjs` —— A 段直接驱动 `CacheJanitor`（伪造 atime，断言淘汰顺序、90% 停止、单轮预算、在途保护、`maxBytes=0` 不动手），B 段起独立实例（小上限 + 过期索引）断言启动淘汰、`/capabilities` 字段、淘汰后缩略图照常按需重建、`lastScanAt` 放旧后启动补扫。
 
 ## 挂载失联时的行为（2026-10-06，票 011）
 

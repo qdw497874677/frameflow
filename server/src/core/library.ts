@@ -12,8 +12,8 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { basename, dirname, join, resolve as resolvePath } from 'node:path';
-import { persistRoots, type Config } from '../config.ts';
+import { basename, dirname, join, resolve as resolvePath } from 'node:path';import { expandHome, persistRoots, type Config } from '../config.ts';
+import { CacheJanitor, type CacheEvictResult, type CacheStats } from './cache.ts';
 import { extOf, IMAGE_EXTS, RAW_EXTS } from './exts.ts';
 import type { FileRef } from './photo.ts';
 import {
@@ -60,6 +60,10 @@ export interface LibraryStatus {
   markedDel: number;
   files: number;
   errors: string[];
+  /** 预览缓存的占用与上一轮淘汰（票 013） */
+  cache: CacheStats;
+  /** 启动自动补扫的状态（票 013）：索引比 `afterDays` 旧就补扫一次，0 = 关 */
+  autoRescan: { afterDays: number; lastScanAt: string | null; triggeredAt: string | null };
 }
 
 interface DirStat {
@@ -110,6 +114,8 @@ export class Library {
   readonly thumbs: Thumbs;
   readonly marks: MarksStore;
   readonly trash: TrashStore;
+  /** 预览缓存的容量策略（票 013）：上限 + 按 atime 的 LRU 淘汰 */
+  readonly cache: CacheJanitor;
 
   private readonly cfg: Config;
   private records = new Map<string, PhotoRecord>();
@@ -131,6 +137,8 @@ export class Library {
   private fileCount = 0;
   /** 冷启动从 index.json 恢复到的内容（非 null = 启动日志里说一句「先吃缓存，后台补扫」） */
   private restored: { photos: number; savedAt: string | null } | null = null;
+  /** 上一次自动补扫是什么时候（票 013，给 `/capabilities` 看） */
+  private autoRescanAt: string | null = null;
 
   constructor(cfg: Config) {
     this.cfg = cfg;
@@ -138,6 +146,12 @@ export class Library {
     this.thumbs = new Thumbs(cfg.dataDir);
     this.marks = new MarksStore(cfg.dataDir);
     this.trash = new TrashStore(cfg.dataDir);
+    this.cache = new CacheJanitor({
+      dirs: this.thumbs.cacheDirs(),
+      maxBytes: cfg.cache.maxBytes,
+      // 正在生成的缩略图/封面不能被删：删了会写出半截文件（票 013 验收）
+      isProtected: (path) => this.thumbs.protectedPaths().has(path),
+    });
     this.loadIndex();
   }
 
@@ -246,7 +260,7 @@ export class Library {
    * 探测沿用 probeRoots 的思路（超时闸）：挂死的网络挂载上 `stat` 永不返回，不能把请求也挂死。
    */
   async addRoot(input: { path: string; label?: string }): Promise<RootDto> {
-    const path = resolvePath(String(input.path ?? '').trim());
+    const path = resolvePath(expandHome(String(input.path ?? '').trim()));
     if (!input.path?.trim() || !path.startsWith('/')) throw new Error('要给一个绝对路径（以 / 开头）');
     if (this.cfg.roots.some((r) => resolvePath(r.path) === path)) throw new Error(`这个目录已经是项目了：${path}`);
     const reachable = await Promise.race([
@@ -328,7 +342,61 @@ export class Library {
       markedDel,
       files: this.fileCount,
       errors: this.lastErrors.slice(0, 20),
+      cache: this.cache.stats(),
+      autoRescan: {
+        afterDays: this.cfg.scan.autoRescanAfterDays,
+        lastScanAt: this.lastScanAt,
+        triggeredAt: this.autoRescanAt,
+      },
     };
+  }
+
+  // ── 预览缓存（票 013）─────────────────────────────────────────────
+
+  /**
+   * 缓存维护：先量一遍（好让 `/capabilities` 马上有数字），再按上限淘汰。
+   * 调用方在**起监听之后**调它 —— 大库启动时不能为了收拾缓存把端口堵住。
+   */
+  async maintainCache(): Promise<CacheEvictResult | null> {
+    await this.cache.measure();
+    let last: CacheEvictResult | null = null;
+    // 单轮只啃得下 2000 个文件：超得很多时多跑几轮，每轮之间让出事件循环
+    for (let round = 0; round < 10; round++) {
+      const res = await this.cache.sweep();
+      if (!res) return null; // 上限关着
+      last = res;
+      if (res.deleted === 0) break; // 没删动（都在途，或已经删够了）
+      if (!res.truncated && res.bytes <= Math.floor(this.cfg.cache.maxBytes * 0.9)) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    return last;
+  }
+
+  /** 索引里的 `lastScanAt` 是不是比 `autoRescanAfterDays` 还旧（票 013） */
+  autoRescanDue(): { due: boolean; lastScanAt: string | null; afterDays: number } {
+    const afterDays = this.cfg.scan.autoRescanAfterDays;
+    const lastScanAt = this.lastScanAt;
+    if (afterDays <= 0 || !lastScanAt) return { due: false, lastScanAt, afterDays };
+    const age = Date.now() - Date.parse(lastScanAt);
+    return { due: Number.isFinite(age) && age > afterDays * 86_400_000, lastScanAt, afterDays };
+  }
+
+  /** 启动时记一笔：索引够旧 → 这次的启动扫描就是那次「补扫」（好让 `/capabilities` 看得见） */
+  noteAutoRescanAtBoot(): boolean {
+    if (!this.autoRescanDue().due) return false;
+    this.autoRescanAt = new Date().toISOString();
+    return true;
+  }
+
+  /**
+   * 长期运行的实例：索引放旧了就补扫一次。部署在 NAS 上时进程可能几周不重启，
+   * 新拍的照片不能等到下次重启才出现。
+   */
+  checkAutoRescan(): boolean {
+    if (!this.autoRescanDue().due) return false;
+    this.autoRescanAt = new Date().toISOString();
+    this.requestRefresh();
+    return true;
   }
 
   private reindex(): void {

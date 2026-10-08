@@ -47,6 +47,8 @@ paths:
                         undoable: { type: boolean }
                   channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
                   executors: { type: array, items: { type: object, properties: { kind: { type: string }, model: { type: string }, local: { type: boolean } } } }
+                  library: { $ref: "#/components/schemas/LibraryStatus" }
+                  notes: { type: string, description: 给 AI 客户端看的一句话提示（当前能干什么） }
 
   /session:
     post:
@@ -766,6 +768,47 @@ components:
         selection: { $ref: "#/components/schemas/Selection" }
         params: { type: object, additionalProperties: true, description: "annotate：{ channel: 'feishu', label: '老婆' }" }
         mode: { type: string, enum: [plan, apply], default: plan, description: plan 只读预演（展开 items 不落库）；apply 真干 }
+
+    LibraryStatus:
+      type: object
+      description: 库的整体状态（`GET /capabilities` 的 `library`）：计数、上次扫描、错误摘要、预览缓存占用
+      properties:
+        scanning: { type: boolean }
+        lastScanAt: { type: string, nullable: true, description: 上次扫描完成时间（ISO） }
+        photos: { type: integer, description: 照片数（不含视频） }
+        videos: { type: integer }
+        starred: { type: integer, description: 星 > 0 的 }
+        trashed: { type: integer, description: 已在回收站里的 }
+        markedDel: { type: integer, description: 标了待删但还在原地的 }
+        files: { type: integer, description: 索引里的文件数（RAW/JPEG/视频各自算一个） }
+        errors: { type: array, items: { type: string }, description: 最近扫描错误（最多 20 条） }
+        cache: { $ref: "#/components/schemas/CacheStats" }
+        autoRescan:
+          type: object
+          description: 索引过期自动补扫（`scan.autoRescanAfterDays`）
+          properties:
+            afterDays: { type: integer, description: 0 = 关 }
+            lastScanAt: { type: string, nullable: true }
+            triggeredAt: { type: string, nullable: true, description: 这次启动/巡检触发补扫的时间 }
+
+    CacheStats:
+      type: object
+      description: 预览缓存（512/2048 缩略图）的占用与上一轮淘汰；淘汰按最久未读（atime）删到上限的 90%
+      properties:
+        bytes: { type: integer, description: 当前占用字节 }
+        files: { type: integer }
+        maxBytes: { type: integer, description: 上限；0 = 不限 }
+        lastEvict:
+          type: object
+          nullable: true
+          properties:
+            at: { type: string }
+            scanned: { type: integer, description: 这一轮看了几个文件（单轮上限 2000） }
+            deleted: { type: integer }
+            freedBytes: { type: integer }
+            bytes: { type: integer, description: 淘汰后的占用 }
+            files: { type: integer }
+            truncated: { type: boolean, description: 单轮没看全（下一轮继续） }
 
     Channel:
       type: object

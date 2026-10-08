@@ -57,6 +57,9 @@ cd server && ./tools/dev.sh start                # 扫描 + 托管 web/dist + �
 cd server && node tools/e2e-api.mjs         # 后端全链路（真写 .xmp、真搬回收站 —— 只对测试库跑）
 cd server && node tools/e2e-cold-start.mjs  # 冷启动回归：重启后先吃索引缓存，扫描没跑完就能出列表
 cd server && node tools/e2e-hung-mount.mjs  # 挂载失联回归：某个根挂死时服务照常可用（自起独立实例，端口 8788）
+cd server && node tools/e2e-jobs.mjs        # 任务层：状态机 / 事件 / 取消 / 撤销 / 重启收敛（端口 8789）
+cd server && node tools/e2e-annotate.mjs    # 批注任务：范围 token → 回流 → 对账 → 撤销（端口 8790）
+cd server && node tools/e2e-cache.mjs       # 预览缓存策略：淘汰顺序 / 90% 停止 / 在途保护 / 自动补扫（端口 8792）
 ```
 
 测试库可以用 `node server/tools/make-fixture.mjs` 现场造一份。

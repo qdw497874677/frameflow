@@ -2,7 +2,7 @@
 id: "013"
 title: 预览缓存上限 + LRU 淘汰 + 启动自动补扫
 labels: [wayfinder:task]
-status: open
+status: closed
 assignee: ""
 blocked-by: []
 ---
@@ -26,3 +26,17 @@ blocked-by: []
 
 - 2026-10-07 开票（005 落地拆票）。
 - 相关现状：预览缓存键 = `源路径+mtime+size`（`server/src/core/thumbs.ts` 的 `previewKey`），目录 `dataDir/previews/`；索引 `dataDir/index.json` v2（`records` + `metaCache` + `rootErrors`），冷启动先用缓存服务再后台补扫（`c9aa94f`）。
+
+## Resolution（2026-10-08，全部验收达成）
+
+- 新模块 `server/src/core/cache.ts`：`CacheJanitor`（measure/sweep/stats）+ `touchIfStale`。验收逐条：
+  - `cache.maxBytes` 进 `Config`（默认 `8*1024**3`，`0`/写错 = 不限，`ARTWORKS_CACHE_MAX_BYTES` 可覆盖）✓；
+  - 淘汰按 atime 从旧到新删到 `maxBytes*0.9` 停 ✓（relatime 下读命中时顺手刷新 atime，旧过 1h 才刷一次，避免每请求写元数据）；
+  - 起监听后 `maintainCache()` 后台跑（measure + 最多 10 轮 sweep，轮间 `setImmediate`），每 10 分钟巡检；单轮 `walk()` 最多 2000 文件（`truncated` 时下轮继续）✓；
+  - 在途保护：`Thumbs.protectedPaths()` = inflight ∪ 视频封面，受保护文件跳过不腾地方（继续删更旧的）✓；半截 `.tmp` 不计入占用，1h 后自动清；
+  - `scan.autoRescanAfterDays`（默认 7，`0` = 关，`ARTWORKS_AUTO_RESCAN_DAYS` 可覆盖）✓ —— **设计决定：不跳过启动扫描**（否则破坏冷启动语义与 `e2e-cold-start` 断言）；实现为「启动扫描即补扫 + 长期实例每 10 分钟检查」；
+  - 可观测：`/capabilities.library.cache`（bytes/files/maxBytes/lastEvict）+ `library.autoRescan`（afterDays/lastScanAt/triggeredAt）+ 启动/巡检日志 ✓；
+  - 回归 `server/tools/e2e-cache.mjs` **35/0**（A 段直驱 CacheJanitor 断言淘汰顺序/90%/单轮预算/在途保护/maxBytes=0，B 段独立实例：启动淘汰、capabilities 字段、淘汰后按需重建缩略图、索引过期启动补扫）；全套回归 **e2e-api 109/0、e2e-jobs 81/0、e2e-annotate 94/0、e2e-cold-start 6/0、e2e-hung-mount 21/0** ✓；
+  - 文档：`server/README.md` 新增「预览缓存与自动补扫」节 + 模块表 `cache` 行；契约 `LibraryStatus`/`CacheStats` schema 进 `contracts/openapi.yaml`；`web/src/api/contract.ts` 无 capabilities 类型（前端不调 `/capabilities`），无需同步（票内已备注）；`artworks.config.example.yaml` 补两键。
+- 顺手修的纸划伤：`~` 前缀展开（`expandHome`）—— dataDir/roots/`/fs/browse`/`addRoot` 都认 `~/x`（此前示例配置里的 `dataDir: ~/.local/share/artworks` 会落到字面量 `~` 目录）。
+- 验证：server `npm run typecheck`、web `tsc --noEmit` + build 干净；`dev.sh restart` 后 `/capabilities.library` 字段实测正确。
