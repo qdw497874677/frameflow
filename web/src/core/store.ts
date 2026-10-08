@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { source } from '../api';
 import { AuthRequiredError } from '../api/source';
-import { selectionToQuery } from './selection';
+import { selectionFromQuery, selectionToQuery } from './selection';
 import {
   EMPTY_SELECTION,
   ME,
@@ -168,7 +168,9 @@ class AppStore {
       ]);
       this.undoStack = [];
       this.patch({ listing, items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
-      this.flash(`载入 ${page.items.length} 张 · ${dir}`);
+      // 列表默认不含待删，所以载入数常常小于目录计数（侧边栏那个）。把两个数一起说，免得看着像丢照片。
+      const total = listing.photoCount ?? page.items.length;
+      this.flash(total > page.items.length ? `载入 ${page.items.length}/${total} 张 · ${dir}` : `载入 ${page.items.length} 张 · ${dir}`);
       void this.loadPendingTrash();
     } catch (err) {
       this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
@@ -234,6 +236,34 @@ class AppStore {
     this.patch({ selection });
     this.syncUrl();
     await this.reload();
+  }
+
+  /**
+   * 深链里的选择集（`?sel=del` / `?sel=stars>=3,marked`）：筛选状态要能从 URL 还原，
+   * 分享、收藏和刷新才成立（syncUrl 已经会把它写进去）。
+   */
+  restoreSelectionFromUrl(q: string | null) {
+    if (!q) return;
+    this.patch({ selection: selectionFromQuery(q) });
+  }
+
+  /**
+   * 挑片页顶栏的「待删」筛选。
+   *
+   * 默认列表把待删藏起来（挑片只看剩下的），于是打完 tag 就再也看不到那一批了。
+   * 这里把选择集切成 del=true —— 走的是同一套选择集，所以 URL 会同步成 `?sel=del`，能分享能收藏；
+   * 再点一次回到全部。
+   */
+  async toggleDelFilter() {
+    const cur = this.state.selection;
+    const where = { ...(cur.where ?? {}) };
+    const on = where.del === true;
+    if (on) delete where.del;
+    else where.del = true;
+    const next: Selection = { ...cur, where };
+    if (!Object.keys(where).length) delete next.where;
+    await this.setSelection(next);
+    this.flash(on ? '回到全部照片' : '只看待删（还在原地，没搬进回收站）');
   }
 
   /** 目录不变、按当前选择集重列（选择集变了，或盘上被外部改过） */
@@ -347,6 +377,10 @@ class AppStore {
       return;
     }
     try {
+      // 侧边栏的回收站数字 =「回收站里的」+「还留在原地的待删」。
+      // 前者原来是进了回收站页才拉，于是同一个会话里数字会 2 → 4 跳一下；boot 就拉齐，任何页面上都一致。
+      // 此刻 dir 还是空的，所以这里只会拉「回收站里的」那半，待删随 open() 之后补上。
+      void this.loadTrash();
       await this.loadRoots();
       const roots = this.state.roots;
       const start = preferredDir ?? roots.find((r) => r.online)?.path ?? roots[0]?.path ?? '';
@@ -428,7 +462,9 @@ class AppStore {
           ? source.listPhotos({ dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500 })
           : Promise.resolve({ items: [] as Photo[] }),
       ]);
-      this.patch({ trash, pendingTrash: pending.items, busy: false });
+      // 没定目录时不碰 pendingTrash：boot 的这次调用与 open() 的 loadPendingTrash() 会并发，
+      // 后到的空数组会把已经拿到的待删覆盖掉。
+      this.patch(dir ? { trash, pendingTrash: pending.items, busy: false } : { trash, busy: false });
     } catch (err) {
       this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
     }

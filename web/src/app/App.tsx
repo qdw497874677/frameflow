@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { GalleryVerticalEnd, LayoutGrid } from 'lucide-react';
+import { GalleryVerticalEnd, LayoutGrid, Trash2 } from 'lucide-react';
+import { cn } from 'cn';
 import { store, useAppState } from '@/core/store';
 import type { Root } from '@/core/types';
 import type { View } from '@/core/types';
@@ -30,6 +31,8 @@ export function App() {
     const wantedView = params.get('view') as View | null;
     const view = wantedView && NAV.some((n) => n.id === wantedView) ? wantedView : undefined;
     if (view) store.setView(view);
+    // 选择集（筛选）也进 URL：?sel=del 这类深链刷新/分享出去要能还原
+    store.restoreSelectionFromUrl(params.get('sel'));
     void store.boot(params.get('dir') ?? undefined, view);
     // 只跑一次：目录/页面切换都由交互显式触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -69,6 +72,8 @@ export function App() {
         <header className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 pt-[calc(env(safe-area-inset-top)+0.375rem)]">
           <SidebarTrigger className="size-9 text-muted-foreground sm:size-7" />
           <span className="text-sm font-medium">{title}</span>
+          {/* 待删筛选：默认列表不含待删，标完就找不到了。有货时出现，点一下只看待删，再点回到全部 */}
+          {view === 'cull' && <DelFilterChip />}
           {/* 现在在哪个目录：库名 + 相对子路径。手机也显示（原来 hidden sm:block 手机上完全看不到自己在哪）。
               根的虚拟路径是 /<id>/…，id 是拼音/英文不好认，换成用户超的 label 更直观；悬停吐原始虚拟路径。 */}
           {dir && <DirBadge dir={dir} roots={roots} />}
@@ -117,6 +122,36 @@ export function App() {
         <Toaster theme="dark" position="top-center" />
       </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+/**
+ * 挑片页的「待删」筛选。
+ *
+ * 挑片列表默认把待删滤掉（只看剩下要挑的），于是「标完待删就再也看不到那一批」——
+ * 这里给它们一个入口：点一下把选择集切成 del=true（走同一套选择集，URL 变成 ?sel=del），再点回到全部。
+ */
+function DelFilterChip() {
+  const { selection, pendingTrash } = useAppState();
+  const on = selection.where?.del === true;
+  const n = pendingTrash.length;
+  if (!on && n === 0) return null;
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title={on ? '回到全部照片' : '只看标了待删、还在原地的照片'}
+      onClick={() => void store.toggleDelFilter()}
+      className={cn(
+        'flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+        on
+          ? 'border-danger/50 bg-danger/15 text-danger'
+          : 'border-border/60 text-muted-foreground hover:bg-accent hover:text-foreground',
+      )}
+    >
+      <Trash2 className="size-3" />
+      {on ? `只看待删 ${n}` : `待删 ${n}`}
+    </button>
   );
 }
 

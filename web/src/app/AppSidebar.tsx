@@ -45,6 +45,8 @@ export const NAV: { id: View; label: string; icon: typeof Images }[] = [
 ];
 
 export function AppSidebar() {
+  // 徽标口径：回收站 = 已搬走的 + 还在原地的待删（任何页面上都一致）。
+  // 挑片不再挂「当前目录星标数」——那是目录级的数，挂在全局导航上总要解释「这是哪个目录的」。
   const { view, items, trash, pendingTrash, canUndo } = useAppState();
   const c = counts(items);
   const trashCount = pendingTrash.length + trash.length;
@@ -95,9 +97,6 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                   {item.id === 'trash' && trashCount > 0 && (
                     <SidebarMenuBadge className="tabular-nums">{trashCount}</SidebarMenuBadge>
-                  )}
-                  {item.id === 'cull' && c.starred > 0 && (
-                    <SidebarMenuBadge className="tabular-nums text-gold">{c.starred}</SidebarMenuBadge>
                   )}
                 </SidebarMenuItem>
               ))}
@@ -166,9 +165,10 @@ export function AppSidebar() {
             <Star className="size-3 fill-gold text-gold" />
             {c.starred}
           </Badge>
+          {/* 待删用后端给的「还在原地的」准数：items 里默认不含待删，从 items 数永远是 0（和上面的回收站徽标会打架） */}
           <Badge variant="secondary" className="gap-1 tabular-nums">
             <Trash2 className="size-3 text-danger" />
-            {c.trash}
+            {pendingTrash.length}
           </Badge>
           <Badge variant="outline" className="gap-1 tabular-nums text-muted-foreground">
             未标 {c.none}
