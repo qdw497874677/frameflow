@@ -184,7 +184,7 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 
 **权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
 
-待拍板（[票 009](../wayfinder/tickets/009-ai-access.md)）：①先 pull 还是 push；②建议层 vs 直接落标；③MCP 是否必做；④AI token 是否限范围；⑤pull 要不要 claim/lease。
+已拍板（2026-10-08，[票 009](../wayfinder/tickets/009-ai-access.md) 全部五问）：①先 pull 后 push；②直接落标不做建议层（`by: 'ai:<model>'` + `sel=by:ai`，回滚靠 `marks.jsonl`）；③MCP 不进 v1（REST + Bearer + 自认证缩略图 + `/capabilities` + [agent 接入指南](agent-access.md) 即够，MCP 待第二消费者出现再作薄包装）；④Bearer v1 全权限（`scope` 字段已存未强制），只读缩略图走 linkToken，真删磁盘仍须人工；⑤不做 claim/lease（无状态循环 + 后写覆盖留痕；确定性用任务层）。
 
 ## 12. 插件扩展面：内置能力与第三方模块同一套契约
 
@@ -207,4 +207,4 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 其结构属于**不可重建**的那一类（与 XMP、事件日志同级），存应用数据目录的项目文件（照片目录可写时也可写 `.artworks/`）。
 把它做成插件而不是核心，是为了让「不来这套的人」完全看不到它。
 
-待拍板（[票 010](../wayfinder/tickets/010-plugins.md)）：内置与插件的分界、v1 该冻结哪些贡献点、权限等级怎么切、虚拟目录的结构存哪、加载与隔离方式。
+已拍板（2026-10-08，[票 010](../wayfinder/tickets/010-plugins.md) 全部六问）：内置与第三方**同一套 manifest 契约**，v1 只加载内置（代码内注册表）；冻结的贡献点只有 `JobHandler` 与 `Channel`，`FolderProvider` / `SelectionTerm` / 设置页留缝不冻结；副作用五档进 manifest 形状、v1 不做运行时强制；虚拟目录 = 默认关闭插件、结构存应用数据目录（照片目录只出 .xmp 与 .trash 不变）；加载 = 启动扫描 + 重启生效；v1 不冻结对外插件 API，宣布开源时再冻结。

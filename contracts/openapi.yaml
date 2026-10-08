@@ -46,7 +46,7 @@ paths:
                         sideEffect: { type: string, description: "readonly | mark | library | newLocation | originals" }
                         undoable: { type: boolean }
                   channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
-                  executors: { type: array, items: { type: object, properties: { kind: { type: string }, model: { type: string }, local: { type: boolean } } } }
+                  executors: { type: array, items: { type: object, properties: { kind: { type: string }, model: { type: string }, local: { type: boolean }, status: { type: string, description: "planned = 占位声明，未实现（push 形态后置；当前 AI 接入用 pull：Bearer + GET /photos + PUT /marks）" } } } }
                   library: { $ref: "#/components/schemas/LibraryStatus" }
                   notes: { type: string, description: 给 AI 客户端看的一句话提示（当前能干什么） }
 

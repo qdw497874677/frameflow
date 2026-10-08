@@ -179,12 +179,14 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     }),
     channels: listChannels(),
     executors: [
-      { kind: 'ollama', model: '', local: true },
-      { kind: 'openai', model: '', local: false },
-      { kind: 'anthropic', model: '', local: false },
+      // 声明将来 push 形态（我们调模型）打算支持的执行者；**当前一个都还没实现** ——
+      // capabilities 的消费者（agent）靠 status 分辨，别把占位当成可用能力。
+      { kind: 'ollama', model: '', local: true, status: 'planned' },
+      { kind: 'openai', model: '', local: false, status: 'planned' },
+      { kind: 'anthropic', model: '', local: false, status: 'planned' },
     ],
     library: lib.status,
-    notes: '任务层已开（POST /jobs 先 plan 再 apply；批注回流走 POST /jobs/{id}/inbound）；通道 v1 只有内置 inapp。AI 客户端现在就能用 GET /photos + PUT /marks 取活干。',
+    notes: '任务层已开（POST /jobs 先 plan 再 apply；批注回流走 POST /jobs/{id}/inbound）；通道 v1 只有内置 inapp。AI 接入用 pull 形态：Bearer token + GET /photos + PUT /marks（见 docs/agent-access.md）；executors 均为 planned（push 未实现）。',
   }));
 
   // ── 会话 ───────────────────────────────────────────────────────────────
