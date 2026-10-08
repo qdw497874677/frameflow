@@ -56,6 +56,12 @@ void lib
   })
   .catch((err) => app.log.warn({ err }, '缓存维护失败（不影响服务）'));
 
+// 巡检间隔（缓存淘汰 + 失联项目重探 + 索引过期补扫）。默认 10 分钟，e2e 里用环境变量调短。
+const TOUR_MS = (() => {
+  const raw = Number(process.env['ARTWORKS_TOUR_MS'] ?? '');
+  return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60_000;
+})();
+
 const cacheTimer = setInterval(() => {
   void lib
     .maintainCache()
@@ -67,7 +73,14 @@ const cacheTimer = setInterval(() => {
     .catch(() => undefined);
   // 索引放旧了就补扫一次：NAS 上的实例可能几周不重启，新照片不能等到下次重启
   if (lib.checkAutoRescan()) app.log.info('索引超过 autoRescanAfterDays：自动补扫');
-}, 10 * 60_000);
+  // 失联的项目（挂载掉了/目录没了）再探一下，回来了就自动补扫 —— 不用等人点「重扫」
+  void lib
+    .reprobeOfflineRoots()
+    .then((recovered) => {
+      if (recovered) app.log.info('失联的项目又能访问了：自动补扫');
+    })
+    .catch(() => undefined);
+}, TOUR_MS);
 cacheTimer.unref();
 
 void lib

@@ -126,6 +126,7 @@ export class Library {
   private metaCache = new Map<string, CachedMeta>();
   private online = new Map<string, boolean>();
   /** 每个根上一次判离线的原因（`/roots` 的 `lastError`） */
+  private removedRoots: { id: string; path: string }[] = [];
   private rootErrors = new Map<string, string>();
   /** 扫描超时过的根 → 冷却到什么时候（票 011 的熔断：挂死的挂载不反复去碰） */
   private hungUntil = new Map<string, number>();
@@ -146,6 +147,7 @@ export class Library {
     this.thumbs = new Thumbs(cfg.dataDir);
     this.marks = new MarksStore(cfg.dataDir);
     this.trash = new TrashStore(cfg.dataDir);
+    this.loadRemovedRoots();
     this.cache = new CacheJanitor({
       dirs: this.thumbs.cacheDirs(),
       maxBytes: cfg.cache.maxBytes,
@@ -256,6 +258,37 @@ export class Library {
   }
 
   /**
+   * 巡检：把「之前失联」的根再探一遍 —— 挂载回来了就自动补扫，不用等人点「重扫」。
+   * 还在冷却期的（刚超时过的挂死挂载）跳过：别每 10 分钟去捅一次死马占一个线程。
+   * online 不在这里改 —— 探到了就触发补扫，由扫描结果说了算。
+   */
+  async reprobeOfflineRoots(timeoutMs = 3000): Promise<boolean> {
+    const now = Date.now();
+    const offline = this.cfg.roots.filter(
+      (r) => this.online.get(r.id) === false && (this.hungUntil.get(r.id) ?? 0) <= now,
+    );
+    if (!offline.length) return false;
+    let recovered = false;
+    await Promise.all(
+      offline.map(async (r) => {
+        const ok = await Promise.race([
+          stat(resolvePath(r.path)).then(
+            () => true,
+            () => false,
+          ),
+          new Promise<boolean>((done) => {
+            setTimeout(() => done(false), timeoutMs).unref();
+          }),
+        ]);
+        if (ok) recovered = true;
+      }),
+    );
+    if (!recovered) return false;
+    this.requestRefresh();
+    return true;
+  }
+
+  /**
    * 运行时添加项目（设置页「添加项目」）：探路径可达 → 入列 → 写回配置 → 后台扫描。
    * 探测沿用 probeRoots 的思路（超时闸）：挂死的网络挂载上 `stat` 永不返回，不能把请求也挂死。
    */
@@ -274,14 +307,22 @@ export class Library {
     ]);
     if (!reachable) throw new Error(`路径访问不到（不存在，或挂载无响应）：${path}`);
     const label = (input.label ?? '').trim() || basename(path);
-    // id 从 label 派生，撞了就加 -2/-3 —— 与 loadConfig.normalizeRoots 同一套规则
+    // id 从 label 派生，撞了就加 -2/-3 —— 与 loadConfig.normalizeRoots 同一套规则。
+    // 但移除过的同路径项目优先用回原 id：标注/回收站记录都挂在 id 上，换了 id 就全断了。
+    const tomb = this.removedRoots.find((t) => t.path === path && !this.cfg.roots.some((r) => r.id === t.id));
     const baseId =
-      label
+      tomb?.id ??
+      (label
         .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
-        .replace(/^-+|-+$/g, '') || 'root';
+        .replace(/^-+|-+$/g, '') ||
+        'root');
     let id = baseId;
     let n = 2;
     while (this.cfg.roots.some((r) => r.id === id)) id = `${baseId}-${n++}`;
+    if (tomb) {
+      this.removedRoots = this.removedRoots.filter((t) => t.path !== path);
+      this.saveRemovedRoots();
+    }
     this.cfg.roots.push({ id, label, path });
     persistRoots(this.cfg);
     this.online.set(id, true);
@@ -311,6 +352,10 @@ export class Library {
     if (!root) throw new Error(`没有这个项目：${id}`);
     this.cfg.roots = this.cfg.roots.filter((r) => r.id !== id);
     persistRoots(this.cfg);
+    // 留个墓碑：同一目录再添加时把 id 用回去，旧标注/回收站记录才能接上
+    const path = resolvePath(root.path);
+    this.removedRoots = [...this.removedRoots.filter((t) => t.path !== path), { id, path }];
+    this.saveRemovedRoots();
     this.online.delete(id);
     this.rootErrors.delete(id);
     this.hungUntil.delete(id);
@@ -867,6 +912,24 @@ export class Library {
 
   private get indexFile(): string {
     return join(this.cfg.dataDir, 'index.json');
+  }
+
+  private loadRemovedRoots(): void {
+    try {
+      const raw = JSON.parse(readFileSync(join(this.cfg.dataDir, 'removed-roots.json'), 'utf8'));
+      if (Array.isArray(raw)) {
+        this.removedRoots = raw.filter(
+          (t): t is { id: string; path: string } =>
+            t && typeof t.id === 'string' && typeof t.path === 'string',
+        );
+      }
+    } catch {
+      /* 没有或坏了就当空 —— 墓碑只是优化，不是账本 */
+    }
+  }
+
+  private saveRemovedRoots(): void {
+    writeFileSync(join(this.cfg.dataDir, 'removed-roots.json'), JSON.stringify(this.removedRoots, null, 2), 'utf8');
   }
 
   private loadIndex(): void {

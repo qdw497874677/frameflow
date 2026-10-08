@@ -89,6 +89,11 @@ export function SettingsPage() {
                   <FolderMinus className="size-3.5 sm:size-3" />
                 </Button>
               </div>
+              {!r.online && (
+                <div className="whitespace-normal break-all text-[11px] leading-snug text-muted-foreground" title={r.lastError ?? undefined}>
+                  {r.lastError ?? '项目暂时访问不到：挂载没挂上或已断开'}
+                </div>
+              )}
               {renamingId === r.id && (
                 <div className="flex items-center gap-2">
                   <Input

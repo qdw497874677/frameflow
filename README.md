@@ -94,6 +94,7 @@ cd server && node tools/e2e-hung-mount.mjs  # 挂载失联回归：某个根挂�
 cd server && node tools/e2e-jobs.mjs        # 任务层：状态机 / 事件 / 取消 / 撤销 / 重启收敛（端口 8789）
 cd server && node tools/e2e-annotate.mjs    # 批注任务：范围 token → 回流 → 对账 → 撤销（端口 8790）
 cd server && node tools/e2e-cache.mjs       # 预览缓存策略：淘汰顺序 / 90% 停止 / 在途保护 / 自动补扫（端口 8792）
+cd server && node tools/e2e-root-lifecycle.mjs # 项目目录生命周期：离线→移除→重添 id 复用→标注接上→自动恢复（端口 8794）
 ```
 
 测试库可以用 `node server/tools/make-fixture.mjs` 现场造一份。
