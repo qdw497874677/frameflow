@@ -1,5 +1,11 @@
 /** 体积、时间这类展示用的格式化（UI 层共用） */
 
+/** 镜头型号：EXIF 里没镜头时 exiftool 会给 `----` 这类占位符，别把它当型号显示 */
+export function lensLabel(lens: string | null | undefined): string {
+  const v = lens?.trim();
+  return !v || /^[-–—\s]+$/.test(v) ? '' : v;
+}
+
 export function formatBytes(bytes: number | undefined | null): string {
   if (!bytes || bytes < 0) return '—';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];

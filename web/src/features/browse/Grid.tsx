@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from 'cn';
 import { Maximize2, Play, Star, Trash2 } from 'lucide-react';
 import { store, useAppState } from '@/core/store';
+import type { Photo } from '@/core/types';
 import { source } from '@/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,48 @@ import { FOCUS_LABEL } from '@/features/cull/PhotoCard';
 /** 点同一颗星循环：0 → 1 → 2 … → 5 → 0，落在一张图上只用一个按钮 */
 function cycle(stars: number): number {
   return stars >= 5 ? 0 : stars + 1;
+}
+
+type GridCell = { p: Photo; i: number };
+type GridRow = { cells: GridCell[]; height: number };
+
+/**
+ * 行优先的瀑布：先把一批照片分成「行」，每行按宽高比把可用宽度恰好分完（justified）。
+ *
+ * 为什么不用 CSS 多列（columns-*）：多列是**列优先**的 —— 视觉上的第一行其实是第 1、4、7 张，
+ * 横向扫读会 zig-zag（挑片是横向扫的），底部还会参差不齐。这里按行分组，DOM 顺序 = 阅读顺序，
+ * 每行等高、行内按 ar 分宽，一张都不裁。
+ */
+function buildRows(cells: GridCell[], width: number, target: number, gap: number): GridRow[] {
+  if (!width) return [];
+  const rows: GridRow[] = [];
+  let cur: GridCell[] = [];
+  let sum = 0;
+  const heightOf = (n: number, s: number) => (width - gap * (n - 1)) / s;
+
+  for (const cell of cells) {
+    const ar = cell.p.ar || 1;
+    const h = heightOf(cur.length + 1, sum + ar);
+    // 带上它这一行会被压得太矮（碰上全景这种极端比例）：先把当前行收了，把它留给下一行
+    if (cur.length > 0 && h <= target * 0.55) {
+      rows.push({ cells: cur, height: heightOf(cur.length, sum) });
+      cur = [cell];
+      sum = ar;
+      continue;
+    }
+    cur.push(cell);
+    sum += ar;
+    if (h <= target) {
+      rows.push({ cells: cur, height: h });
+      cur = [];
+      sum = 0;
+    }
+  }
+  if (cur.length > 0) {
+    // 最后一行：凑不满就按目标高度左对齐，别把一张图拉成巨幅
+    rows.push({ cells: cur, height: Math.min(target, heightOf(cur.length, sum)) });
+  }
+  return rows;
 }
 
 /**
@@ -25,6 +68,28 @@ export function Grid() {
   const { items, cursor, mode, centerId, centerToken, flight } = useAppState();
   const [open, setOpen] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
+
+  // 行怎么分要看容器宽度（窗口缩放 / 侧边栏收起都要重排）
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = rowsRef.current;
+    if (!el) return;
+    setWidth(el.clientWidth);
+    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const rows = useMemo(() => {
+    const target = width < 560 ? 150 : width < 1024 ? 190 : 224;
+    return buildRows(
+      items.map((p, i) => ({ p, i })),
+      width,
+      target,
+      8,
+    );
+  }, [items, width]);
 
   // 隐藏层先别加载缩略图：一进目录就是几十张，视频还要 ffmpeg 抽帧。布局照留（aspect-ratio 占位），
   // 所以切过来时的变焦飞行仍然量得到落点。
@@ -61,20 +126,25 @@ export function Grid() {
   return (
     <>
       <div ref={listRef} className="h-full overflow-y-auto overscroll-contain px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+4.5rem)]">
-        <div className="columns-2 gap-2 sm:columns-3 lg:columns-4 xl:columns-5">
-          {items.map((p, i) => {
-            const here = i === cursor;
-            return (
-              <motion.div
-                key={p.id}
-                data-photo={p.id}
-                style={{ opacity: flight?.id === p.id ? 0 : 1 }}
-                className={cn(
-                  'group relative mb-2 break-inside-avoid overflow-hidden rounded-none bg-card ring-1 ring-white/10',
-                  p.mark.del && 'ring-2 ring-danger/60',
-                  here && !p.mark.del && 'ring-2 ring-gold/70',
-                )}
-              >
+        <div ref={rowsRef} className="flex flex-col gap-2">
+          {rows.map((row, ri) => (
+            <div key={ri} className="flex gap-2" style={{ height: row.height }}>
+              {row.cells.map(({ p, i }) => {
+                const here = i === cursor;
+                return (
+                  <motion.div
+                    key={p.id}
+                    data-photo={p.id}
+                    style={{
+                      width: row.height * (p.ar || 1),
+                      opacity: flight?.id === p.id ? 0 : 1,
+                    }}
+                    className={cn(
+                      'group relative min-w-0 overflow-hidden rounded-none bg-card ring-1 ring-white/10',
+                      p.mark.del && 'ring-2 ring-danger/60',
+                      here && !p.mark.del && 'ring-2 ring-gold/70',
+                    )}
+                  >
                 <button
                   type="button"
                   onClick={() => store.focusAt(i)}
@@ -85,8 +155,7 @@ export function Grid() {
                     <img
                       src={source.thumbUrl(p.id, 512)}
                       alt={p.displayName}
-                      style={{ aspectRatio: p.ar }}
-                      className="w-full object-cover"
+                      className="h-full w-full object-cover"
                       loading="lazy"
                       decoding="async"
                       draggable={false}
@@ -146,9 +215,11 @@ export function Grid() {
                     <Trash2 className="size-4 sm:size-3.5" />
                   </Button>
                 </div>
-              </motion.div>
-            );
-          })}
+                  </motion.div>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </div>
 

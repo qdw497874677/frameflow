@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { cn } from 'cn';
-import { ChevronLeft, ChevronRight, Play, Star, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Star, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { store } from '@/core/store';
+import { lensLabel } from '@/core/format';
 import { source } from '@/api';
 import type { Photo } from '@/core/types';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +23,8 @@ interface LightboxProps {
  */
 export function Lightbox({ items, index, onClose }: LightboxProps) {
   const [cursor, setCursor] = useState(index ?? 0);
+  /** 放大到 1:1 预览（看合焦）：滚轮/拖动平移，再点一下回到适应窗口 */
+  const [zoom, setZoom] = useState(false);
 
   useEffect(() => {
     if (index !== null) setCursor(index);
@@ -29,6 +32,10 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
 
   const open = index !== null;
   const photo = items[cursor];
+  const lens = lensLabel(photo?.lens);
+
+  // 翻张就回到适应窗口：上一张的缩放位置对下一张没意义
+  useEffect(() => setZoom(false), [photo?.id]);
 
   const step = useCallback(
     (delta: number) => {
@@ -50,6 +57,7 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
       if (k >= '1' && k <= '5') store.setStars(photo.id, Number(k));
       else if (k === '0') store.clearMark(photo.id);
       else if (k.toLowerCase() === 'x') store.toggleDel(photo.id);
+      else if (k.toLowerCase() === 'z') setZoom((v) => !v);
       else if (k === 'ArrowRight') step(1);
       else if (k === 'ArrowLeft') step(-1);
     };
@@ -73,7 +81,7 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{photo.displayName}</DialogTitle>
-          <DialogDescription>看片台：1-5 打星，0 清星，X 待删，←→ 翻张</DialogDescription>
+          <DialogDescription>看片台：1-5 打星，0 清星，X 待删，Z 放大，←→ 翻张</DialogDescription>
         </DialogHeader>
 
         {/* 顶栏 */}
@@ -81,16 +89,31 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
           <Badge variant="secondary" className="tabular-nums">
             {String(cursor + 1).padStart(2, '0')}/{items.length}
           </Badge>
+          {/* 文件名：挑片时最常用来对号的东西（「刚才那张」），别再靠相机型号去认 */}
+          <span className="min-w-0 truncate text-xs font-medium" title={photo.displayName}>
+            {photo.displayName}
+          </span>
           {photo.camera && (
-            <Badge variant="outline" className="text-muted-foreground">
+            <Badge variant="outline" className="hidden text-muted-foreground sm:inline-flex">
               {photo.camera}
-              {photo.lens ? ` · ${photo.lens}` : ''}
+              {lens ? ` · ${lens}` : ''}
             </Badge>
           )}
           {photo.focusHint && photo.focusHint !== 'sharp' && (
             <Badge variant="destructive">{FOCUS_LABEL[photo.focusHint] ?? photo.focusHint}</Badge>
           )}
           <div className="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setZoom((v) => !v)}
+              aria-pressed={zoom}
+              aria-label={zoom ? '适应窗口' : '放大到 1:1'}
+              title={zoom ? '适应窗口（Z）' : '放大到 1:1 预览看合焦（Z）'}
+              className={cn(zoom && 'text-gold')}
+            >
+              {zoom ? <ZoomOut className="size-4" /> : <ZoomIn className="size-4" />}
+            </Button>
             <Button variant="ghost" size="icon-sm" onClick={() => step(-1)} disabled={cursor === 0} aria-label="上一张">
               <ChevronLeft className="size-4" />
             </Button>
@@ -109,13 +132,32 @@ export function Lightbox({ items, index, onClose }: LightboxProps) {
           </div>
         </div>
 
-        {/* 大图 */}
+        {/* 大图：默认适应窗口；按 Z（或右上角放大键）切到 1:1 缩略预览，滚轮/拖动平移，点一下回到适应 */}
         <div className="relative min-h-0 flex-1 bg-black/40">
-          <img
-            src={source.thumbUrl(photo.id, 2048)}
-            alt={photo.displayName}
-            className="absolute inset-0 size-full object-contain"
-          />
+          {zoom ? (
+            <div
+              className="absolute inset-0 cursor-zoom-out overflow-auto overscroll-contain"
+              onClick={() => setZoom(false)}
+            >
+              <img
+                src={source.thumbUrl(photo.id, 2048)}
+                alt={photo.displayName}
+                draggable={false}
+                className="block max-h-none max-w-none"
+              />
+            </div>
+          ) : (
+            <img
+              src={source.thumbUrl(photo.id, 2048)}
+              alt={photo.displayName}
+              className="absolute inset-0 size-full object-contain"
+            />
+          )}
+          {zoom && (
+            <span className="pointer-events-none absolute right-2 bottom-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] text-muted-foreground backdrop-blur-sm">
+              1:1 预览（2048px）· 点一下回到适应
+            </span>
+          )}
           {photo.kind === 'video' && (
             <span className="pointer-events-none absolute top-1/2 left-1/2 grid size-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm">
               <Play className="size-5 fill-white" />

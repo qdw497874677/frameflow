@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, useTransform, type MotionValue } from 'framer-motion';
 import { Maximize2, Minimize2, Star, Trash2 } from 'lucide-react';
 import { store, useAppState } from '@/core/store';
+import { lensLabel } from '@/core/format';
 import type { Photo } from '@/core/types';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -180,6 +181,7 @@ export function Deck() {
 
   const zoomed = zoomView.s > 1.01;
   const focus = top.focusHint && top.focusHint !== 'sharp' ? top.focusHint : null;
+  const topLens = lensLabel(top.lens);
 
   return (
     <div className="flex h-full flex-col">
@@ -253,9 +255,10 @@ export function Deck() {
           {top.hasRaw && top.hasJpeg && (
             <span className="shrink-0 rounded-sm bg-secondary px-1.5 py-0.5 text-foreground/70">RAW+JPEG</span>
           )}
-          <span className="truncate">
-            {top.camera ?? (top.kind === 'video' ? top.displayName : '')}
-            {top.lens ? ` · ${top.lens}` : ''}
+          <span className="truncate" title={top.displayName}>
+            {top.displayName}
+            {top.camera ? ` · ${top.camera}` : ''}
+            {topLens ? ` · ${topLens}` : ''}
           </span>
         </div>
 

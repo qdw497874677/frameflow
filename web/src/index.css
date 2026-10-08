@@ -150,7 +150,7 @@
   --destructive: oklch(0.72 0.17 22);
   --border: oklch(0.31 0.017 264);
   --input: oklch(0.31 0.017 264);
-  --ring: oklch(0.62 0.19 265);
+  --ring: oklch(0.838 0.128 85);
   --gold: oklch(0.838 0.128 85);
   --danger: oklch(0.72 0.17 22);
   --ok: oklch(0.72 0.13 162);
@@ -175,7 +175,7 @@
   --destructive: oklch(0.72 0.17 22);
   --border: oklch(0.31 0.017 264);
   --input: oklch(0.31 0.017 264);
-  --ring: oklch(0.62 0.19 265);
+  --ring: oklch(0.838 0.128 85);
 }
 
 @theme inline {
