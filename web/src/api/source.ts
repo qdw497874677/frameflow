@@ -26,6 +26,8 @@ export interface ListPhotosOptions {
   selection?: Selection;
   cursor?: string;
   limit?: number;
+  /** 含子目录：把 dir 下面所有层级的照片都列出来（项目级挑片）；省略 = 只看直属照片 */
+  recursive?: boolean;
 }
 
 export interface MarkHistoryOptions {

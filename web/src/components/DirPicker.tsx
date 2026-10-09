@@ -302,7 +302,7 @@ export function DirPicker({
           {jumpError && <div className="w-full text-[11px] text-danger">{jumpError}</div>}
           <Button className="h-8 w-full" disabled={!selected} onClick={pick}>
             <Check className="mr-1 size-3.5" />
-            就选 {selName || '这个目录'}
+            {selName ? `选择「${selName}」` : '选择这个目录'}
           </Button>
         </DialogFooter>
       </DialogContent>

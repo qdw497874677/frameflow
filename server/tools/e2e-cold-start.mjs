@@ -85,6 +85,16 @@ check(before > 0, '前置：索引里已有照片', `${before} 张`);
 const dir = await findDirWithPhotos();
 check(dir !== null, '前置：找到了有照片的目录', dir ?? '');
 
+// ── 前置 2：把一张标成待删（重启后必须还查得到 —— 真值在 marks 日志里，不在索引基线里）──
+const json = (b) => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+const putMarks = (items) => req('/marks', { method: 'PUT', ...json({ items }) });
+const probe = dir ? ((await req(`/photos?dir=${encodeURIComponent(dir)}&limit=1`)).body?.items?.[0] ?? null) : null;
+check(Boolean(probe), '前置：挑到一张用于验证标注持久化', probe?.displayName ?? 'none');
+if (probe) {
+  const marked = await putMarks([{ id: probe.id, del: true }]);
+  check(marked.status === 200, '前置：标成待删', `HTTP ${marked.status}`);
+}
+
 // ── 重启（只关心重启之后新写的那段日志）────────────────────────────────
 let logOffset = 0;
 try {
@@ -142,6 +152,20 @@ try {
   /* 日志不在就算了，下面会 FAIL */
 }
 check(/索引缓存已就绪/.test(fresh), '重启后的日志有「索引缓存已就绪」', `${fresh.length} 字节新日志`);
+
+// ── 重启后：标过的照片仍然查得到（回归：重启后 sel=del 空手而归）────────────
+if (probe && dir) {
+  const delList = await req(`/photos?dir=${encodeURIComponent(dir)}&sel=del&limit=200`);
+  check(
+    (delList.body?.items ?? []).some((p) => p.id === probe.id),
+    '重启后 sel=del 仍能查到标过的照片（真值来自 marks 日志）',
+    `${delList.body?.total ?? 0} 张待删`,
+  );
+  const plain = await req(`/photos?dir=${encodeURIComponent(dir)}&limit=200`);
+  check(!(plain.body?.items ?? []).some((p) => p.id === probe.id), '默认列表里仍然滤掉待删');
+  const undone = await putMarks([{ id: probe.id, stars: 0, del: false }]);
+  check(undone.status === 200, '收尾：把待删标记清掉', `HTTP ${undone.status}`);
+}
 
 // 收尾：等这次补扫跑完，别把下次测试挂在半扫描状态上
 for (let i = 0; i < 600; i++) {

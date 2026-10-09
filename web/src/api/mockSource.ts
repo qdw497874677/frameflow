@@ -274,9 +274,10 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
 
     async listPhotos(opts: ListPhotosOptions): Promise<PhotoPage> {
       // 目录树里只有叶子节点有照片；其余目录返回空列表（模拟真实下钻）
+      // recursive = 含子目录：mock 的照片全在 MOCK_ROOT 这一层，所以任何目录下递归看都是它们
       // 回收站里的不在目录里出现；选择集（谓词）在这里求值（真后端在服务端求）
       const items =
-        opts.dir === MOCK_ROOT
+        opts.dir === MOCK_ROOT || opts.recursive === true
           ? records
               .filter((r) => !trashed.has(r.id))
               .map((rec) => {

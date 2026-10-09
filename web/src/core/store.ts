@@ -93,6 +93,10 @@ export interface AppState {
   busy: boolean;
   loading: boolean;
   error: string | null;
+  /** 当前列表还没取完时的下一页游标（null = 已到底） */
+  nextCursor: string | null;
+  /** 当前作用域里的照片总数（含被默认藏起来的待删），底栏用它说「载入 N/M 张」 */
+  total: number;
   /** 底部提示（最近一次动作；供人确认「刚才发生了什么」） */
   notice: string;
   /** 撤销/回退后新卡片的入场方向，与 entryToken 一起构成一次性动画信号 */
@@ -125,6 +129,8 @@ const INITIAL: AppState = {
   busy: false,
   loading: false,
   error: null,
+  nextCursor: null,
+  total: 0,
   notice: '',
   entryDir: 0,
   entryToken: 0,
@@ -164,14 +170,43 @@ class AppStore {
     try {
       const [listing, page] = await Promise.all([
         source.listFolders(dir),
-        source.listPhotos({ dir, selection: sel }),
+        // 含子目录：目录树的计数是递归的，点项目/中间目录也要能看到里面的照片
+        source.listPhotos({ dir, selection: sel, recursive: true }),
       ]);
       this.undoStack = [];
-      this.patch({ listing, items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
+      this.patch({
+        listing,
+        items: page.items,
+        cursor: 0,
+        nextCursor: page.nextCursor,
+        total: Math.max(page.total ?? page.items.length, listing?.photoCount ?? 0),
+        loading: false,
+        entryDir: 0,
+        entryToken: this.state.entryToken + 1,
+      });
       // 列表默认不含待删，所以载入数常常小于目录计数（侧边栏那个）。把两个数一起说，免得看着像丢照片。
-      const total = listing.photoCount ?? page.items.length;
+      const total = Math.max(page.total ?? page.items.length, listing?.photoCount ?? 0);
       this.flash(total > page.items.length ? `载入 ${page.items.length}/${total} 张 · ${dir}` : `载入 ${page.items.length} 张 · ${dir}`);
       void this.loadPendingTrash();
+    } catch (err) {
+      this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /**
+   * 接着往下拿一页（大项目一屏放不下）。网格滚到底时自动叫一次，也可以点「加载更多」。
+   */
+  async loadMore() {
+    const { dir, selection, nextCursor, loading } = this.state;
+    if (!nextCursor || loading) return;
+    this.patch({ loading: true });
+    try {
+      const page = await source.listPhotos({ dir, selection, cursor: nextCursor, recursive: true });
+      this.patch({
+        items: [...this.state.items, ...page.items],
+        nextCursor: page.nextCursor,
+        loading: false,
+      });
     } catch (err) {
       this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -271,9 +306,17 @@ class AppStore {
     const { dir, selection } = this.state;
     this.patch({ loading: true, error: null });
     try {
-      const page = await source.listPhotos({ dir, selection });
+      const page = await source.listPhotos({ dir, selection, recursive: true });
       this.undoStack = [];
-      this.patch({ items: page.items, cursor: 0, loading: false, entryDir: 0, entryToken: this.state.entryToken + 1 });
+      this.patch({
+        items: page.items,
+        cursor: 0,
+        nextCursor: page.nextCursor,
+        total: Math.max(page.total ?? page.items.length, this.state.listing?.photoCount ?? 0),
+        loading: false,
+        entryDir: 0,
+        entryToken: this.state.entryToken + 1,
+      });
     } catch (err) {
       this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -398,11 +441,14 @@ class AppStore {
     }
   }
 
-  /** 从 path 往下找第一个有照片的目录（深海了就算了，怕库大跑到天荒地老） */
+  /**
+   * 从 path 往下找第一个有照片的目录（含子目录地看，所以项目根自己就算「有照片」）。
+   * 深海了就算了，怕库大跑到天荒地老。
+   */
   private async firstDirWithPhotos(path: string, depth = 0): Promise<string | null> {
     if (depth > 4) return null;
     try {
-      const page = await source.listPhotos({ dir: path, selection: this.state.selection, limit: 1 });
+      const page = await source.listPhotos({ dir: path, selection: this.state.selection, limit: 1, recursive: true });
       if (page.items.length > 0) return path;
       const listing = await source.listFolders(path);
       for (const kid of listing.folders ?? []) {
@@ -459,7 +505,7 @@ class AppStore {
         source.listTrash(),
         // 没选定目录时不问：后端要求 dir，空串会被 400 顶回来（boot 还没定目录时就是这种状态）
         dir
-          ? source.listPhotos({ dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500 })
+          ? source.listPhotos({ dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500, recursive: true })
           : Promise.resolve({ items: [] as Photo[] }),
       ]);
       // 没定目录时不碰 pendingTrash：boot 的这次调用与 open() 的 loadPendingTrash() 会并发，
@@ -478,6 +524,7 @@ class AppStore {
         dir: this.state.dir,
         selection: { ...EMPTY_SELECTION, where: { del: true } },
         limit: 500,
+        recursive: true,
       });
       this.patch({ pendingTrash: page.items });
     } catch {

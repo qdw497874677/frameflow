@@ -65,10 +65,11 @@ function buildRows(cells: GridCell[], width: number, target: number, gap: number
  *   - 格子上直接打星/待删，不用先放大。
  */
 export function Grid() {
-  const { items, cursor, mode, centerId, centerToken, flight } = useAppState();
+  const { items, cursor, mode, centerId, centerToken, flight, nextCursor, loading } = useAppState();
   const [open, setOpen] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // 行怎么分要看容器宽度（窗口缩放 / 侧边栏收起都要重排）
   const [width, setWidth] = useState(0);
@@ -122,6 +123,21 @@ export function Grid() {
       list.scrollTo({ top: list.scrollTop + (t.top - c.top) - (c.height - t.height) / 2, behavior: 'smooth' });
     }
   }, [centerId, mode]);
+
+  // 大项目一屏放不下：滚到底自动续页（旁边再放一个按钮兜底 —— 页面本来就没滚到底时也能点）
+  useEffect(() => {
+    const list = listRef.current;
+    const sentinel = sentinelRef.current;
+    if (!list || !sentinel || !nextCursor) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) void store.loadMore();
+      },
+      { root: list, rootMargin: '480px' },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [nextCursor, items.length]);
 
   return (
     <>
@@ -221,6 +237,13 @@ export function Grid() {
             </div>
           ))}
         </div>
+        {nextCursor && (
+          <div ref={sentinelRef} className="flex justify-center py-4">
+            <Button variant="outline" size="sm" onClick={() => void store.loadMore()} disabled={loading}>
+              {loading ? '加载中…' : `加载更多（已载入 ${items.length} 张）`}
+            </Button>
+          </div>
+        )}
       </div>
 
       <Lightbox items={items} index={open} onClose={() => setOpen(null)} />

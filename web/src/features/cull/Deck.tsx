@@ -65,7 +65,7 @@ function UnderCard({
 }
 
 export function Deck() {
-  const { items, cursor, entryDir, entryToken, mode, canUndo, flight } = useAppState();
+  const { items, cursor, entryDir, entryToken, mode, canUndo, flight, total } = useAppState();
   const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState({ w: 0, h: 0 });
@@ -164,16 +164,32 @@ export function Deck() {
   if (!top) {
     const liked = items.filter((i) => i.mark.stars > 0).length;
     const trashed = items.filter((i) => i.mark.del).length;
+    // 列表空了有三种原因，别都说成「挑完了」：
+    //  ① 这里（含子目录）一张照片都没有  ② 有，但全被标成待删（默认不显示）  ③ 真的都挑完了
+    const allDel = items.length === 0 && total > 0;
+    const none = items.length === 0 && total === 0;
     return (
       <div className="grid h-full place-items-center px-6">
         <Card className="max-w-sm gap-3 p-6 text-center">
-          <p className="text-base font-medium">这一批挑完了</p>
-          <p className="text-sm text-muted-foreground">
-            已标 {liked} 张喜欢、{trashed} 张待删。切到「批量扫」复查一遍，或者在看片台里逐张放大。
+          <p className="text-base font-medium">
+            {allDel ? `这里 ${total} 张都标成了待删` : none ? '这个目录里还没有照片' : '这一批挑完了'}
           </p>
-          <Button variant="outline" size="sm" className="mx-auto" onClick={() => store.undo()} disabled={!canUndo}>
-            撤销上一步
-          </Button>
+          <p className="text-sm text-muted-foreground">
+            {allDel
+              ? '挑片默认不显示待删（它们归回收站管）。要看这一批，就切到「只看待删」。'
+              : none
+                ? '它下面也没有子目录带照片。换个目录，或者在设置里添加一个项目。'
+                : `已标 ${liked} 张喜欢、${trashed} 张待删。切到「批量扫」复查一遍，或者在看片台里逐张放大。`}
+          </p>
+          {allDel ? (
+            <Button variant="outline" size="sm" className="mx-auto" onClick={() => void store.toggleDelFilter()}>
+              只看待删
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" className="mx-auto" onClick={() => store.undo()} disabled={!canUndo}>
+              撤销上一步
+            </Button>
+          )}
         </Card>
       </div>
     );

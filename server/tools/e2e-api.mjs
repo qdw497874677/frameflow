@@ -344,6 +344,46 @@ if (pair) {
   check((backAgain.body.items ?? []).some((p) => p.id === pair.id), '还原后重新出现在挑片列表里');
 }
 
+// ── 11b. 项目级递归列表：dir 只看直属，recursive=1 才含子目录（挑片页用后者）──
+{
+  const direct = await req(`/photos?dir=${encodeURIComponent(root.path)}&limit=1000`);
+  const deep = await req(`/photos?dir=${encodeURIComponent(root.path)}&recursive=1&limit=1000`);
+  check(
+    (deep.body?.total ?? 0) > (direct.body?.total ?? 0),
+    'recursive=1 比直属列表多（项目级挑片看得到子目录里的照片）',
+    `直属 ${direct.body?.total} vs 递归 ${deep.body?.total}`,
+  );
+  check(
+    (deep.body?.total ?? -1) === all.length,
+    'recursive=1 的数量与逐目录走一遍一致（不漏不重）',
+    `${deep.body?.total} vs 逐目录 ${all.length}`,
+  );
+  check(
+    (deep.body?.items ?? []).length <= 200,
+    'recursive 也走分页（默认 limit 200，不一次性吐全库）',
+    `${(deep.body?.items ?? []).length} 项 nextCursor=${deep.body?.nextCursor ? '有' : '无'}`,
+  );
+}
+
+// ── 11c. 视频也要能进回收站（成对逻辑不能只认 RAW/JPEG）─────────────────
+if (video) {
+  const videoDiskPath = diskOf(video.videoPath);
+  const videoTrashDir = join(dirname(videoDiskPath), '.trash');
+  const vmoved = await req('/trash', { method: 'POST', ...json({ ids: [video.id] }) });
+  check(vmoved.status === 200 && vmoved.body.ok === 1, '视频也能移入回收站（不再「这张没有可搬的文件」）', JSON.stringify(vmoved.body));
+  check(!existsSync(videoDiskPath), '视频文件搬走了');
+  check(existsSync(videoTrashDir), '视频搬进同目录的 .trash/', videoTrashDir);
+  const ventry = (await req('/trash')).body.items?.find((t) => t.photoId === video.id);
+  check(Boolean(ventry) && (ventry?.sizeBytes ?? 0) > 0, '回收站条目带着视频体积', `${ventry?.sizeBytes} bytes`);
+  const vbinThumb = await req(`/photos/${encodeURIComponent(video.id)}/thumb?size=512`);
+  check(vbinThumb.status === 200, '回收站里的视频还能出封面（从 .trash 里读）', `HTTP ${vbinThumb.status} src=${vbinThumb.headers.get('x-preview-source')}`);
+  const vback = await req('/trash/restore', { method: 'POST', ...json({ ids: [video.id] }) });
+  check(vback.status === 200 && vback.body.ok === 1, '视频还原', JSON.stringify(vback.body));
+  check(existsSync(videoDiskPath), '视频回到了原位');
+  const vlisted = await req(`/photos?dir=${encodeURIComponent(video.dir)}&limit=200`);
+  check((vlisted.body?.items ?? []).some((p) => p.id === video.id), '还原后重新出现在列表里');
+}
+
 // 真删（唯一会 rmSync 的入口）用一张临时照片试，不拿库里的真片开刀
 const probeDir = join(root.diskPath, '_回收站真删探针');
 mkdirSync(probeDir, { recursive: true });

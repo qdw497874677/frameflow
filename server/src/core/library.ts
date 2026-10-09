@@ -40,6 +40,12 @@ export interface ListPhotosArgs {
   selection?: Selection;
   cursor?: string | null;
   limit?: number;
+  /**
+   * 含子目录：把这个目录**下面所有层级**的照片都列出来。
+   * 项目级挑片（选「2026-冰岛」看整个项目）靠它 —— 目录树的计数本来就是递归的，
+   * 只列直属照片会让「项目里有 6 张」和「点进去 0 张」自相矛盾。
+   */
+  recursive?: boolean;
 }
 
 export interface PhotoPageDto {
@@ -205,6 +211,12 @@ export class Library {
       // 照片旁的 XMP 作为基线（日志里已有更晚记录的不会被覆盖）
       for (const rec of res.records) {
         if (rec.stars > 0 || rec.del) this.marks.seedFromXmp(rec.id, { stars: rec.stars, del: rec.del });
+      }
+      // 再把 marks 日志的真值写回记录（扫描基线只是 XMP；视频、只读盘上的标记只在日志里）。
+      // 不写回的话，重启后 `sel=del`/`stars>=n` 会拿旧基线求值，标过的照片就从列表里漏掉。
+      for (const rec of this.records.values()) {
+        rec.stars = this.marks.starsOf(rec.id);
+        rec.del = this.marks.delOf(rec.id);
       }
       this.lastScanAt = new Date().toISOString();
       this.saveIndex();
@@ -557,11 +569,11 @@ export class Library {
     const wantDel = sel?.where?.del;
     const lastBy = (photoId: string): string | null => this.marks.lastBy(photoId);
 
-    let list = (this.byDir.get(dir) ?? []).filter((rec) => {
+    let list = (args.recursive ? this.recordsUnder(dir) : (this.byDir.get(dir) ?? [])).filter((rec) => {
       // 产品默认：待删的照片不进挑片视图（它们在回收站里）；显式写了 del:true 才要
       if (wantDel === true ? !this.marks.delOf(rec.id) : this.marks.delOf(rec.id)) return false;
       if (!sel || selectionIsEmpty(sel)) return true;
-      return matchesSelection(rec, sel, lastBy);
+      return matchesSelection(this.live(rec), sel, lastBy);
     });
 
     const limit = Math.max(1, Math.min(1000, args.limit ?? 200));
@@ -589,8 +601,33 @@ export class Library {
     };
   }
 
+  /** 目录之下（含自身）所有层级的照片：先按目录、再按文件名排（一个子目录一段） */
+  private recordsUnder(dir: string): PhotoRecord[] {
+    const out: PhotoRecord[] = [];
+    const walk = (d: string): void => {
+      for (const rec of this.byDir.get(d) ?? []) out.push(rec);
+      for (const child of this.dirs.get(d)?.children ?? []) walk(child);
+    };
+    walk(dir);
+    return out.sort((a, b) => {
+      const byDirCmp = dirPath(a.rootId, a.relDir).localeCompare(dirPath(b.rootId, b.relDir), 'zh', { numeric: true });
+      return byDirCmp !== 0 ? byDirCmp : byName(a, b);
+    });
+  }
+
   get(id: string): PhotoRecord | undefined {
     return this.records.get(id) ?? this.trashedById.get(id);
+  }
+
+  /**
+   * 把记录里的 `stars`/`del` 换成 marks 日志里的真值。
+   * 扫描/索引里的这两个字段只是「当时的基线」（XMP 或上次保存的快照），重启后拿它去求值选择集，
+   * 就会漏掉「标了待删、但 XMP 没写进去（视频、只读盘）」的那些照片 —— 挑片里看不见，回收站也找不到。
+   */
+  private live(rec: PhotoRecord): PhotoRecord {
+    const stars = this.marks.starsOf(rec.id);
+    const del = this.marks.delOf(rec.id);
+    return stars === rec.stars && del === rec.del ? rec : { ...rec, stars, del };
   }
 
   /**
@@ -604,7 +641,7 @@ export class Library {
     const out: PhotoRecord[] = [];
     for (const rec of this.records.values()) {
       if (wantDel === true ? !this.marks.delOf(rec.id) : this.marks.delOf(rec.id)) continue;
-      if (!selectionIsEmpty(sel) && !matchesSelection(rec, sel, lastBy)) continue;
+      if (!selectionIsEmpty(sel) && !matchesSelection(this.live(rec), sel, lastBy)) continue;
       out.push(rec);
     }
     return out.sort(byName);
@@ -669,7 +706,8 @@ export class Library {
   }
 
   private async trashOne(rec: PhotoRecord): Promise<void> {
-    const main = rec.jpeg ?? rec.raw;
+    // 视频也要能搬：它没有 raw/jpeg，主文件就是自己
+    const main = rec.jpeg ?? rec.raw ?? rec.video;
     if (!main) throw new Error('这张没有可搬的文件');
     const fromDirAbs = dirname(main.path);
     const trashRoot = join(fromDirAbs, TRASH_DIR);
@@ -687,10 +725,11 @@ export class Library {
     };
     const raw = plan(rec.raw);
     const jpeg = plan(rec.jpeg);
+    const video = plan(rec.video);
     if (oldSidecar && existsSync(oldSidecar)) moves.push({ from: oldSidecar, to: join(target, basename(oldSidecar)) });
 
     const stars = this.marks.starsOf(rec.id);
-    const sizeBytes = (rec.raw?.size ?? 0) + (rec.jpeg?.size ?? 0);
+    const sizeBytes = (rec.raw?.size ?? 0) + (rec.jpeg?.size ?? 0) + (rec.video?.size ?? 0);
 
     // 先清标记（回到「未标」）：趁侧车还在原位，XMP 才写得进去。
     // 不清的话，还原之后这张会带着「待删」标记回来 —— 而挑片视图默认隐藏待删，照片就「消失」了。
@@ -720,7 +759,7 @@ export class Library {
       throw err;
     }
 
-    const moved: PhotoRecord = { ...rec, raw, jpeg, previewPath: jpeg?.path ?? raw?.path ?? rec.previewPath };
+    const moved: PhotoRecord = { ...rec, raw, jpeg, video, previewPath: video?.path ?? jpeg?.path ?? raw?.path ?? rec.previewPath };
     this.records.delete(rec.id);
     this.trashedById.set(rec.id, moved);
     this.trash.add({
@@ -797,6 +836,7 @@ export class Library {
         ...rec,
         raw: fix(rec.raw),
         jpeg: fix(rec.jpeg),
+        video: fix(rec.video),
         previewPath: back.get(rec.previewPath) ?? rec.previewPath,
       });
       this.trashedById.delete(entry.photoId);

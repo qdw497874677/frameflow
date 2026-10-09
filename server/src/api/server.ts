@@ -283,7 +283,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   });
 
   app.get('/api/v1/photos', async (req, reply) => {
-    const q = req.query as { dir?: string; cursor?: string; limit?: string; sel?: string; filter?: string };
+    const q = req.query as { dir?: string; cursor?: string; limit?: string; sel?: string; filter?: string; recursive?: string };
     if (!q.dir) return reply.code(400).send({ error: '要带 dir（虚拟路径 /<rootId>/子目录 或真实磁盘路径）' });
     const selection = q.sel ? selectionFromQuery(q.sel) : q.filter && q.filter !== 'all' ? selectionFromLegacyFilter(q.filter) : {};
     const page = lib.listPhotos({
@@ -291,6 +291,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
       selection,
       cursor: q.cursor ?? null,
       limit: q.limit ? Number(q.limit) : undefined,
+      recursive: q.recursive === '1' || q.recursive === 'true',
     });
     if (!page) return reply.code(404).send({ error: `没这个目录：${q.dir}` });
     return page;

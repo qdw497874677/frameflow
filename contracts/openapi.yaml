@@ -191,6 +191,7 @@ paths:
         - { name: dir, in: query, required: true, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
+        - { name: recursive, in: query, schema: { type: boolean, default: false }, description: "含子目录：把 dir 下面所有层级的照片都列出来（项目级挑片）。省略 = 只看直属照片 —— 目录树的计数是递归的，两者口径要能对得上" }
         - { name: sel, in: query, schema: { type: string }, description: "选择集（谓词）的紧凑字符串形式，如 `stars>=3,marked,kind:photo,by:ai`。语法与求值语义见 contracts/selection.md" }
         - { name: filter, in: query, deprecated: true, schema: { type: string, enum: [all, starred, trash, unmarked], default: all }, description: "已弃用：等价于 sel 的四个常用简写（starred ⇔ marked；unmarked ⇔ marked:false）" }
       responses:

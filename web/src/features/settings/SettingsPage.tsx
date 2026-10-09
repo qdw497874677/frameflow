@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Check, Cloud, FolderMinus, FolderOpen, FolderPlus, HardDrive, ListChecks, Pencil, Server, TriangleAlert } from 'lucide-react';
+import { Check, Cloud, FolderMinus, FolderPlus, HardDrive, ListChecks, Pencil, Server, TriangleAlert } from 'lucide-react';
 import { source } from '@/api';
 import { store, useAppState } from '@/core/store';
 import { formatShortTime } from '@/core/format';
-import { DirPicker } from '@/components/DirPicker';
+import { NewProjectDialog } from '@/components/NewProjectDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,25 +35,10 @@ function DevDetails({ children, label = '技术细节' }: { children: ReactNode;
 
 export function SettingsPage() {
   const { roots, dir, history, busy, authEnabled } = useAppState();
-  const [newPath, setNewPath] = useState('');
-  const [newLabel, setNewLabel] = useState('');
-  const [adding, setAdding] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameLabel, setRenameLabel] = useState('');
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-
-  const submitAdd = async () => {
-    if (!newPath.trim() || adding) return;
-    setAdding(true);
-    try {
-      await store.addRoot(newPath.trim(), newLabel.trim() || undefined);
-      setNewPath('');
-      setNewLabel('');
-    } finally {
-      setAdding(false);
-    }
-  };
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
@@ -155,34 +140,15 @@ export function SettingsPage() {
           </div>
           <Separator />
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <FolderPlus className="size-3.5 shrink-0 text-muted-foreground" />
-            <Input
-              value={newPath}
-              onChange={(e) => setNewPath(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void submitAdd()}
-              placeholder="/home/qdw/Pictures/新目录 或 ~/nfs/... 挂载点"
-              className="h-7 min-w-40 flex-1 font-mono text-xs"
-              spellCheck={false}
-            />
-            <Input
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void submitAdd()}
-              placeholder="显示名（可空）"
-              className="h-7 w-32 text-xs"
-            />
-            <Button size="sm" variant="outline" className="h-9 sm:h-7" onClick={() => setPickerOpen(true)}>
-              <FolderOpen className="mr-1 size-3.5" />
-              浏览…
+            <Button size="sm" className="h-9 sm:h-7" onClick={() => setPickerOpen(true)}>
+              <FolderPlus className="mr-1 size-3.5" />
+              新建项目
             </Button>
-            <Button size="sm" className="h-9 sm:h-7" disabled={!newPath.trim() || adding} onClick={() => void submitAdd()}>
-              {adding ? '添加中…' : '添加'}
-            </Button>
+            <span className="text-[11px] text-muted-foreground/70">
+              先起名、再选目录。添加后立即生效并写回后端配置（重启不丢）；网络挂载路径最多等 3 秒探活。
+            </span>
           </div>
-          <DirPicker open={pickerOpen} onOpenChange={setPickerOpen} onPick={(p) => setNewPath(p)} />
-          <div className="text-[11px] text-muted-foreground/70">
-            添加后立即生效并写回后端配置（重启不丢），子目录会出现在左侧目录树；网络挂载路径最多等 3 秒探活。
-          </div>
+          <NewProjectDialog open={pickerOpen} onOpenChange={setPickerOpen} />
         </CardContent>
       </Card>
 

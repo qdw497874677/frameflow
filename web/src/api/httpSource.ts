@@ -195,6 +195,7 @@ export function createHttpSource(base = '/api/v1'): PhotoSource {
       if (sel) params.set('sel', sel);
       if (opts.cursor) params.set('cursor', opts.cursor);
       if (opts.limit) params.set('limit', String(opts.limit));
+      if (opts.recursive) params.set('recursive', '1');
       const page = await request<PhotoPageDto>(base, `/photos?${params.toString()}`);
       return { items: page.items.map(toPhoto), nextCursor: page.nextCursor ?? null, total: page.total };
     },

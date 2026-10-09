@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   Aperture,
-  FolderOpen,
   FolderPlus,
   Images,
   ListChecks,
@@ -10,7 +9,6 @@ import {
   Star,
   Trash2,
   Undo2,
-  X,
 } from 'lucide-react';
 import { counts, store, useAppState } from '@/core/store';
 import type { View } from '@/core/types';
@@ -31,8 +29,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DirPicker } from '@/components/DirPicker';
-import { Input } from '@/components/ui/input';
+import { NewProjectDialog } from '@/components/NewProjectDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { FolderTree } from '@/features/library/FolderTree';
 
@@ -50,17 +47,8 @@ export function AppSidebar() {
   const { view, items, trash, pendingTrash, canUndo } = useAppState();
   const c = counts(items);
   const trashCount = pendingTrash.length + trash.length;
-  // 就地添加项目：点 + 打开「选目录」（下钻选，或展开一行手输路径）；名字自动用路径末段，想自定义去设置页
-  const [addingAt, setAddingAt] = useState(false);
-  const [addingPath, setAddingPath] = useState('');
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const submitAdd = async () => {
-    const p = addingPath.trim();
-    if (!p) return setAddingAt(false);
-    setAddingAt(false);
-    setAddingPath('');
-    await store.addRoot(p);
-  };
+  // 新建项目：一个入口、先起名再选目录（以前是两个图标：一个直接挂目录、一个手输路径，都只能事后改名）
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -113,44 +101,15 @@ export function AppSidebar() {
             </span>
             <button
               type="button"
-              aria-label="浏览添加项目"
-              title="从文件系统选一个目录挂进左侧树（也可展开手输路径）"
+              aria-label="新建项目"
+              title="新建项目：先起名，再选目录"
               className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setPickerOpen(true)}
+              onClick={() => setNewProjectOpen(true)}
             >
-              <FolderOpen className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              aria-label="手输路径添加项目"
-              title="手动输入绝对路径添加"
-              className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setAddingAt((v) => !v)}
-            >
-              {addingAt ? <X className="size-3.5" /> : <FolderPlus className="size-3.5" />}
+              <FolderPlus className="size-3.5" />
             </button>
           </SidebarGroupLabel>
-          <DirPicker
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            onPick={(p) => void store.addRoot(p)}
-          />
-          {addingAt && (
-            <div className="flex items-center gap-1 px-2 pb-1.5">
-              <Input
-                autoFocus
-                value={addingPath}
-                onChange={(e) => setAddingPath(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitAdd();
-                  if (e.key === 'Escape') setAddingAt(false);
-                }}
-                placeholder="绝对路径，回车添加"
-                className="h-7 border-dashed bg-transparent font-mono text-xs"
-                spellCheck={false}
-              />
-            </div>
-          )}
+          <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} />
           <SidebarGroupContent>
             <SidebarMenu className="gap-0">
               <FolderTree />
