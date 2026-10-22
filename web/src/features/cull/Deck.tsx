@@ -65,7 +65,7 @@ function UnderCard({
 }
 
 export function Deck() {
-  const { items, cursor, entryDir, entryToken, mode, canUndo, flight, total } = useAppState();
+  const { items, cursor, entryDir, entryToken, mode, canUndo, flight, total, unseenOnly, seen } = useAppState();
   const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState({ w: 0, h: 0 });
@@ -88,8 +88,9 @@ export function Deck() {
   }, [stageEl]);
 
   const top = items[cursor];
-  const next1 = items[cursor + 1];
-  const next2 = items[cursor + 2];
+  const following = unseenOnly ? items.slice(cursor + 1).filter(p => !seen[p.id]) : items.slice(cursor + 1, cursor + 3);
+  const next1 = following[0];
+  const next2 = following[1];
 
   const frameW = Math.max(0, Math.min(stage.w * 0.94, 900));
   const frameH = Math.max(0, stage.h - 4);
@@ -132,6 +133,8 @@ export function Deck() {
   useEffect(() => {
     if (mode !== 'a') return;
     const onKey = (e: KeyboardEvent) => {
+      // 文件树现在可用键盘选择。按钮上的空格用于点击，不能同时把照片跳过/打标。
+      if (e.target instanceof Element && e.target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return;
       if (e.metaKey || e.ctrlKey) {
         if (e.key.toLowerCase() === 'z') {
           e.preventDefault();
@@ -172,7 +175,7 @@ export function Deck() {
       <div className="grid h-full place-items-center px-6">
         <Card className="max-w-sm gap-3 p-6 text-center">
           <p className="text-base font-medium">
-            {allDel ? `这里 ${total} 张都标成了待删` : none ? '这个目录里还没有照片' : '这一批挑完了'}
+            {unseenOnly ? '当前列表没有未看过的照片' : allDel ? `这里 ${total} 张都标成了待删` : none ? '这个目录里还没有照片' : '这一批挑完了'}
           </p>
           <p className="text-sm text-muted-foreground">
             {allDel
@@ -295,7 +298,7 @@ export function Deck() {
             <>
               {zoomed && <span className="tabular-nums text-foreground/70">{Math.round(zoomView.s * 100)}%</span>}
               <span className="tabular-nums">
-                {String(cursor + 1).padStart(2, '0')}/{items.length}
+                {String(cursor + 1).padStart(2, '0')}/{total}
               </span>
               <Button
                 variant="ghost"

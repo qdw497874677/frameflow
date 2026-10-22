@@ -153,13 +153,15 @@ export class MarksStore {
 
   /**
    * 批量写入。不变式：`stars > 0` 与 `del = true` 互斥，同时给出时以 `del` 为准（清星）。
-   * 先落状态与日志（内存 + jsonl），再尽力回写 XMP —— 顺序不能反：
-   * 盘上写失败时，日志里必须有。
+   * 先暂存整批状态与变更，日志追加成功后才发布到内存，再尽力回写 XMP。
+   * 日志写失败不发布任何变更；XMP 写失败时，日志里必须有。
    */
   async apply(items: MarkInput[], lookup: (photoId: string) => MarkTarget | null): Promise<MarkResultDto[]> {
     const now = new Date().toISOString();
     const results: MarkResultDto[] = [];
     const lines: string[] = [];
+    const stagedState = new Map<string, MarkState>();
+    const stagedChanges: MarkChange[] = [];
     const xmpJobs: { sidecarPath: string; stars: number; del: boolean }[] = [];
 
     for (const item of items) {
@@ -168,7 +170,8 @@ export class MarksStore {
         results.push({ id: item.id, ok: false, error: '不认识这张照片（可能刚被移走或重命名）' });
         continue;
       }
-      const prev = this.state.get(item.id);
+      // 同一批里的重复 id 必须接着前一项的暂存状态算变化。
+      const prev = stagedState.get(item.id) ?? this.state.get(item.id);
       const by = item.by ?? 'me';
       const channel = item.channel ?? 'inapp';
       const at = item.at ?? now;
@@ -189,10 +192,10 @@ export class MarksStore {
         changed.push({ photoId: item.id, displayName: target.displayName, field: 'del', from: prevDel, to: del, by, channel, at, jobId });
       }
 
-      this.state.set(item.id, { stars, del, by, channel, at });
+      stagedState.set(item.id, { stars, del, by, channel, at });
       for (const ch of changed) {
         lines.push(JSON.stringify(ch));
-        this.changes.unshift(ch);
+        stagedChanges.push(ch);
       }
       if (target.sidecarPath) xmpJobs.push({ sidecarPath: target.sidecarPath, stars, del });
 
@@ -203,9 +206,12 @@ export class MarksStore {
       try {
         appendFileSync(this.logFile, `${lines.join('\n')}\n`, 'utf8');
       } catch (err) {
-        return results.map((r) => (r.ok ? { ...r, error: `变更日志写不进去：${String(err)}` } : r));
+        return results.map((r) => (r.ok ? { ...r, ok: false, error: `变更日志写不进去：${String(err)}` } : r));
       }
     }
+
+    for (const [id, state] of stagedState) this.state.set(id, state);
+    for (const ch of stagedChanges) this.changes.unshift(ch);
 
     // 回写 XMP：失败不改状态（日志已经是真相），只在结果里说一声。
     // 异步：侧车在照片目录里，而照片目录可能在网络挂载上（同步写会把事件循环冻住）

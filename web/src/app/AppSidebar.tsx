@@ -36,7 +36,7 @@ import { FolderTree } from '@/features/library/FolderTree';
 /** 侧边栏导航项（顺序就是工作流顺序：挑 → 派活 → 删 → 设置） */
 export const NAV: { id: View; label: string; icon: typeof Images }[] = [
   { id: 'cull', label: '挑片', icon: Images },
-  { id: 'jobs', label: '任务', icon: ListChecks },
+  { id: 'jobs', label: '批注任务', icon: ListChecks },
   { id: 'trash', label: '回收站', icon: Trash2 },
   { id: 'settings', label: '设置', icon: Settings },
 ];
@@ -97,7 +97,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel className="flex items-center justify-between gap-2">
             <span className="truncate" title="下面的每个条目是一个项目（映射进来的目录，可改名/移除，见设置页）">
-              项目
+              挑片项目
             </span>
             <button
               type="button"

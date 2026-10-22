@@ -25,12 +25,14 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [dir, setDir] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!open) {
       setName('');
       setDir('');
       setBusy(false);
+      setError('');
     }
   }, [open]);
 
@@ -41,8 +43,9 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
     if (!path || busy) return;
     setBusy(true);
     try {
-      await store.addRoot(path, name.trim() || undefined);
-      onOpenChange(false);
+      setError('');
+      if (await store.addRoot(path, name.trim() || undefined)) onOpenChange(false);
+      else setError(store.getState().notice);
     } finally {
       setBusy(false);
     }
@@ -95,6 +98,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             </div>
           </div>
 
+          {error && <p role="alert" className="text-xs text-danger">{error}</p>}
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
               取消

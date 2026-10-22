@@ -65,7 +65,7 @@ function buildRows(cells: GridCell[], width: number, target: number, gap: number
  *   - 格子上直接打星/待删，不用先放大。
  */
 export function Grid() {
-  const { items, cursor, mode, centerId, centerToken, flight, nextCursor, loading } = useAppState();
+  const { items, cursor, mode, centerId, centerToken, flight, nextCursor, loading, unseenOnly, seen } = useAppState();
   const [open, setOpen] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rowsRef = useRef<HTMLDivElement>(null);
@@ -85,12 +85,12 @@ export function Grid() {
   const rows = useMemo(() => {
     const target = width < 560 ? 150 : width < 1024 ? 190 : 224;
     return buildRows(
-      items.map((p, i) => ({ p, i })),
+      items.map((p, i) => ({ p, i })).filter(({ p }) => !unseenOnly || !seen[p.id]),
       width,
       target,
       8,
     );
-  }, [items, width]);
+  }, [items, width, unseenOnly, seen]);
 
   // 隐藏层先别加载缩略图：一进目录就是几十张，视频还要 ffmpeg 抽帧。布局照留（aspect-ratio 占位），
   // 所以切过来时的变焦飞行仍然量得到落点。
@@ -143,6 +143,7 @@ export function Grid() {
     <>
       <div ref={listRef} className="h-full overflow-y-auto overscroll-contain px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+4.5rem)]">
         <div ref={rowsRef} className="flex flex-col gap-2">
+          {unseenOnly && !rows.length && !nextCursor && <p className="p-6 text-center text-sm text-muted-foreground">当前列表没有未看过的照片；可退出未看模式复核。</p>}
           {rows.map((row, ri) => (
             <div key={ri} className="flex gap-2" style={{ height: row.height }}>
               {row.cells.map(({ p, i }) => {

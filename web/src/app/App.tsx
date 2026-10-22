@@ -21,7 +21,7 @@ import { DispatchAnnotateButton } from '@/features/jobs/DispatchAnnotate';
  * 挑片页保留自己的顶栏（这一批的账 + 撤销/重置）和底栏（一个看 ⇄ 批量扫 的变焦切换）。
  */
 export function App() {
-  const { dir, view, mode, notice, error, auth, roots } = useAppState();
+  const { dir, view, mode, notice, error, auth, roots, items, cursor } = useAppState();
 
   // 首次进入：载入项目并落到第一个有照片的目录；支持 ?dir=/?mode=a|c、?view= 与 ?sel= 深链（截图与分享都靠它）
   useEffect(() => {
@@ -45,6 +45,7 @@ export function App() {
   // Shift + ←/→ 变焦（和原型一致的手感）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (!e.shiftKey || view !== 'cull') return;
       if (e.key === 'ArrowRight') store.zoomTo('c');
       else if (e.key === 'ArrowLeft') store.zoomTo('a');
@@ -76,9 +77,11 @@ export function App() {
           {view === 'cull' && <DelFilterChip />}
           {/* 现在在哪个目录：库名 + 相对子路径。手机也显示（原来 hidden sm:block 手机上完全看不到自己在哪）。
               根的虚拟路径是 /<id>/…，id 是拼音/英文不好认，换成用户超的 label 更直观；悬停吐原始虚拟路径。 */}
-          {dir && <DirBadge dir={dir} roots={roots} />}
+          {dir && <DirBadge dir={dir} roots={roots} photoName={view === 'cull' ? items[cursor]?.displayName : undefined} />}
         </header>
 
+        <SaveStatus />
+        {view === 'cull' && <CullProgress />}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           {view === 'cull' ? (
             <Stage />
@@ -131,6 +134,42 @@ export function App() {
  * 挑片列表默认把待删滤掉（只看剩下要挑的），于是「标完待删就再也看不到那一批」——
  * 这里给它们一个入口：点一下把选择集切成 del=true（走同一套选择集，URL 变成 ?sel=del），再点回到全部。
  */
+function SaveStatus() {
+  const { saveStatus, saveMessage, localWarning } = useAppState();
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (saveStatus === 'saving' || saveStatus === 'error') { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [saveStatus]);
+  if (saveStatus === 'idle' && !localWarning) return null;
+  return <div role="status" data-save-status={saveStatus} className={cn('flex flex-wrap items-center gap-2 border-b px-3 py-1 text-xs',
+    saveStatus === 'error' ? 'text-danger' : 'text-muted-foreground')}>
+    <span>{saveMessage}</span>
+    {saveStatus === 'error' && <button className="shrink-0 underline" onClick={() => void store.retrySave()}>重试保存</button>}
+    {localWarning && <span className="text-danger">浏览器存储不可用，续挑/已看进度无法保留；请勿在标记保存前关闭页面。</span>}
+  </div>;
+}
+
+function CullProgress() {
+  const { items, cursor, total, nextCursor, loading, seen, unseenOnly, selection } = useAppState();
+  const seenCount = items.filter(p => seen[p.id]).length;
+  return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 text-xs text-muted-foreground">
+    <span className="tabular-nums" data-photo-position>{items[cursor] ? `第 ${cursor + 1} / ${selection.where?.del ? items.length : total} 张` : '没有当前照片'}</span>
+    <span title="仅当前浏览器；打标或主动翻过记为已看，打开不算。筛选待删时只统计当前筛选。" data-seen-progress>
+      {nextCursor ? '已载入中' : '当前列表'}已看 {seenCount} / {items.length}
+    </span>
+    <button disabled={loading || !items.length || cursor === 0} className="py-1 disabled:opacity-40" onClick={() => store.skip(-1)}>上一张</button>
+    <button disabled={loading || !items[cursor]} className="py-1 disabled:opacity-40" onClick={() => store.skip(1)}>下一张</button>
+    <button aria-pressed={unseenOnly} disabled={loading} className={cn('py-1', unseenOnly && 'text-gold')} onClick={() => void store.toggleUnseen()}>{unseenOnly ? '退出未看模式' : '继续未看过'}</button>
+    <button className="py-1" onClick={() => {
+      if (window.confirm('清除当前项目在本浏览器的已看进度？星级、待删和照片都不会改变。')) store.resetSeen();
+    }}>重置已看进度</button>
+    <button disabled={loading} className="ml-auto py-1 disabled:opacity-40" onClick={() => void store.reload()}>刷新列表</button>
+  </div>;
+}
+
 function DelFilterChip() {
   const { selection, pendingTrash } = useAppState();
   const on = selection.where?.del === true;
@@ -156,14 +195,16 @@ function DelFilterChip() {
 }
 
 /** 顶栏的「现在在哪个目录」：/test/2026…/原照片 → 「本地文件 / 2026…/原照片」，一眼知道是哪个库的哪层 */
-function DirBadge({ dir, roots }: { dir: string; roots: Root[] }) {
+function DirBadge({ dir, roots, photoName }: { dir: string; roots: Root[]; photoName?: string }) {
   const rootId = dir.split('/')[1] ?? '';
   const root = roots.find((r) => r.id === rootId);
   const rest = dir.split('/').slice(2).join('/');
-  const text = root ? `${root.label}${rest ? ' / ' + rest : ''}` : dir;
   return (
-    <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground" title={dir}>
-      {text}
-    </span>
+    <div className="ml-auto flex min-w-0 flex-1 flex-col items-end gap-0.5 text-xs" title={dir}>
+      <span className="max-w-full truncate font-medium" data-current-project={root?.path ?? dir}>
+        项目：{root?.label ?? rootId}{rest ? ` / ${rest}` : ''}
+      </span>
+      {photoName && <span className="max-w-full truncate text-[11px] text-muted-foreground" data-current-photo>{photoName}</span>}
+    </div>
   );
 }
