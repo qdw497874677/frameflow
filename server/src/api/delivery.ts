@@ -9,6 +9,8 @@ import { PolicyError, PolicyStore, parsePolicy, parseTargetRef } from '../delive
 import type { PreviewService } from '../delivery/previews.ts';
 import type { DeliveryPolicy, DispatchParams, TargetRef } from '../delivery/types.ts';
 import type { Selection } from '../core/selection.ts';
+import { ConfirmError, type ConfirmationService } from '../delivery/confirmations.ts';
+import type { DeliveryDispatcher } from '../delivery/dispatcher.ts';
 import { managementGuard, revisionOf } from './connectors.ts';
 
 export interface DeliveryApiDeps {
@@ -20,7 +22,16 @@ export interface DeliveryApiDeps {
   /** 展开选择集为本项目照片 id（只含 rootId === projectId） */
   selectPhotos: (projectId: string, selection: Selection) => string[];
   projectExists: (projectId: string) => boolean;
+  /** F16：确认与投递（缺省则不注册这几条路由） */
+  confirmations?: ConfirmationService<{ id: string; state: string }>;
+  dispatcher?: DeliveryDispatcher;
 }
+
+const CONFIRM_STATUS: Record<string, number> = {
+  INVALID: 400, CONSENT_REQUIRED: 400, REQUEST_ID_CONFLICT: 409, PREVIEW_ALREADY_CONFIRMED: 409, AUTHORIZATION_REVOKED: 409,
+  PREVIEW_NOT_FOUND: 404, PREVIEW_EXPIRED: 410, PREVIEW_REVISION_MISMATCH: 409, PREVIEW_STALE: 409,
+};
+const RETRY_STATUS: Record<string, number> = { JOB_NOT_FOUND: 404, TARGET_NOT_IN_JOB: 400, NOTHING_TO_RETRY: 409, DUPLICATE_RISK: 409, ATTEMPT_IN_FLIGHT: 409 };
 
 const MAX_LIMIT = 100;
 const MAX_TEXT = 500;
@@ -152,6 +163,49 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryApiDe
       const { id } = req.params as { id: string };
       if (!deps.previews.cancel(id)) return err(reply, 404, 'PREVIEW_NOT_FOUND', '预览不存在或已过期');
       return reply.code(204).send();
+    });
+
+    const { confirmations, dispatcher } = deps;
+    if (!confirmations || !dispatcher) return;
+
+    scope.post('/api/v1/delivery-confirmations', async (req, reply) => {
+      const b = req.body;
+      if (!isObj(b)) return err(reply, 400, 'INVALID', '请求体不合法');
+      for (const k of Object.keys(b)) if (!['previewId', 'revision', 'requestId', 'notifyOnComplete', 'acknowledged'].includes(k)) return err(reply, 400, 'UNKNOWN_FIELD', '不接受该字段');
+      if (typeof b['notifyOnComplete'] !== 'boolean' && b['notifyOnComplete'] !== undefined) return err(reply, 400, 'INVALID', 'notifyOnComplete 须为布尔');
+      try {
+        const r = confirmations.confirm({
+          previewId: String(b['previewId'] ?? ''), revision: String(b['revision'] ?? ''), requestId: String(b['requestId'] ?? ''),
+          notifyOnComplete: b['notifyOnComplete'] === true, acknowledged: b['acknowledged'] === true,
+        });
+        const deliveries = r.replayed ? dispatcher.list(r.job.id) ?? [] : dispatcher.start(r.confirmation);
+        return reply.code(r.replayed ? 200 : 201).send({
+          accepted: true, replayed: r.replayed, requestId: r.confirmation.requestId,
+          job: { id: r.job.id, state: r.job.state }, targets: r.confirmation.snapshot.targets, deliveries,
+        });
+      } catch (e) {
+        if (e instanceof ConfirmError) return reply.code(CONFIRM_STATUS[e.code] ?? 400).send({ error: '确认失败', code: e.code, ...(e.detail ? { detail: e.detail } : {}) });
+        throw e;
+      }
+    });
+
+    scope.get('/api/v1/jobs/:id/deliveries', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const items = dispatcher.list(id);
+      if (!items) return err(reply, 404, 'JOB_NOT_FOUND', '该任务没有外传记录');
+      return { jobId: id, items };
+    });
+
+    scope.post('/api/v1/jobs/:id/deliveries/retry', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body;
+      if (!isObj(b)) return err(reply, 400, 'INVALID', '请求体不合法');
+      for (const k of Object.keys(b)) if (!['connectorId', 'targetId', 'acceptDuplicateRisk'].includes(k)) return err(reply, 400, 'UNKNOWN_FIELD', '不接受该字段');
+      let t: TargetRef;
+      try { t = parseTargetRef({ connectorId: b['connectorId'], targetId: b['targetId'] }, 'target'); } catch (e) { return policyError(reply, e); }
+      const r = dispatcher.retry(id, t, b['acceptDuplicateRisk'] === true);
+      if (!r.ok) return err(reply, RETRY_STATUS[r.code] ?? 400, r.code, r.code === 'DUPLICATE_RISK' ? '存在状态未知的消息，重试可能重复外传；需 acceptDuplicateRisk: true' : '无法重试');
+      return reply.code(202).send({ jobId: id, items: r.items });
     });
   });
 }

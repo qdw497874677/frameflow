@@ -15,6 +15,8 @@ export interface RunInput<P> {
   readonly jobId: string;
   readonly targets: readonly TargetRef[];
   readonly parts: readonly P[];
+  /** 显式接受重复外传风险时，unknown 分片也重发（F16 单目标重试） */
+  readonly retryUnknown?: boolean;
 }
 
 export interface RunnerOptions<P> {
@@ -28,6 +30,10 @@ export class DeliveryRunner<P> {
   readonly #o: RunnerOptions<P>;
   /** 迟到结果的记账 promise（测试/关停时可等待） */
   readonly late = new Set<Promise<void>>();
+  /** 超时后传输仍未返回的分片 */
+  readonly inFlight = new Set<string>();
+
+  attemptInFlight(key: PartKey): boolean { return this.inFlight.has(kOf(key)); }
 
   constructor(o: RunnerOptions<P>) { this.#o = o; }
 
@@ -38,7 +44,8 @@ export class DeliveryRunner<P> {
       for (let i = 0; i < input.parts.length; i++) {
         const key: PartKey = { jobId: input.jobId, ...pick(t), partIndex: i };
         const v = store.view(key)!;
-        if (v.state !== 'pending' && v.state !== 'failed') continue;
+        if (v.state !== 'pending' && v.state !== 'failed' && !(input.retryUnknown && v.state === 'unknown')) continue;
+        if (this.inFlight.has(kOf(key))) break; // 原尝试未结束：不叠发
         const intentId = store.beginIntent(key);
         if (!this.#o.authorized(t)) { store.settle(key, intentId, 'failed', { error: 'AUTHORIZATION_REVOKED' }); break; }
         const ok = await this.#sendOne(key, intentId, input.parts[i]!);
@@ -59,7 +66,8 @@ export class DeliveryRunner<P> {
         store.settle(key, intentId, 'unknown', { error: 'TIMEOUT' });
         const lateRec = p.then((x) => store.settle(key, intentId, 'sent', { messageId: x.messageId }), () => { /* 迟到失败：保持 unknown */ });
         this.late.add(lateRec);
-        void lateRec.finally(() => this.late.delete(lateRec));
+        this.inFlight.add(kOf(key));
+        void lateRec.finally(() => { this.late.delete(lateRec); this.inFlight.delete(kOf(key)); });
         return false;
       }
       store.settle(key, intentId, 'sent', { messageId: r.messageId });
@@ -72,3 +80,5 @@ export class DeliveryRunner<P> {
 }
 
 function pick(t: TargetRef): { connectorId: string; targetId: string } { return { connectorId: t.connectorId, targetId: t.targetId }; }
+
+function kOf(k: PartKey): string { return `${k.jobId}\u0000${k.connectorId}\u0000${k.targetId}\u0000${k.partIndex}`; }

@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { isActive } from './jobText';
+import { connectorsApi, deliveryApi, describeConnectorError, newRequestId, ConnectorApiError } from '@/api/connectors';
+import type { ConnectorDto, DeliveryPreviewDto } from '@/api/contract';
 
 /**
  * 挑片页的「派发批注」入口：把当前选择集变成一个批注任务。
@@ -27,6 +29,16 @@ export function DispatchAnnotateButton() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const busyRef = useRef(false);
+  // 外传（F17）：连接器管理可用时走「预览 → 确认」；不可用（未设密码/演示模式）退回旧的应用内派发
+  const [ext, setExt] = useState<ConnectorDto[] | null>(null);
+  const [recommended, setRecommended] = useState<string[]>([]);
+  const [checked, setChecked] = useState<string[]>([]);
+  const [notify, setNotify] = useState(false);
+  const [ack, setAck] = useState(false);
+  const [preview, setPreview] = useState<DeliveryPreviewDto | null>(null);
+  const [previewGen, setPreviewGen] = useState(0);
+  const requestIdRef = useRef<string | null>(null);
+  const previewRef = useRef<DeliveryPreviewDto | null>(null);
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -60,8 +72,19 @@ export function DispatchAnnotateButton() {
       setCreated(null);
       setError(null);
       setCopied(false);
+      setChecked([]);
+      setNotify(false);
+      setAck(false);
+      // 取消：只丢弃预览，零发送
+      if (previewRef.current) void deliveryApi.cancelPreview(previewRef.current.previewId).catch(() => undefined);
+      previewRef.current = null;
+      setPreview(null);
       return;
     }
+    connectorsApi.listAll().then((r) => setExt(r.items), () => setExt(null));
+    deliveryApi.policies().then((r) => setRecommended(r.items
+      .filter((p) => p.enabled && p.event === 'task.dispatched' && p.projectIds.includes(rootId))
+      .flatMap((p) => p.targets.map((t) => `${t.connectorId}/${t.targetId}`))), () => setRecommended([]));
     let alive = true;
     setBusy(true);
     setPlan(null);
@@ -81,18 +104,62 @@ export function DispatchAnnotateButton() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, scoped]);
 
+  const targetsHere = (ext ?? []).filter((c) => c.enabled).flatMap((c) =>
+    c.targets.filter((t) => t.projectIds.includes(rootId)).map((t) => ({ connectorId: c.id, targetId: t.id, label: `${c.label} · ${t.label}` })));
+
+  // 勾选变化 → 重新预览（新预览 = 新 requestId；同一预览的重试复用 requestId）
+  useEffect(() => {
+    if (!open || ext === null || !rootId || created) return;
+    let alive = true;
+    const old = previewRef.current;
+    previewRef.current = null;
+    setPreview(null);
+    if (old) void deliveryApi.cancelPreview(old.previewId).catch(() => undefined);
+    const targets = targetsHere.filter((t) => checked.includes(`${t.connectorId}/${t.targetId}`)).map(({ connectorId, targetId }) => ({ connectorId, targetId }));
+    deliveryApi.preview({ projectId: rootId, selection: scoped, params: { alias: label.trim() || null, notifyOnComplete: notify }, targets })
+      .then((p) => {
+        if (!alive) { void deliveryApi.cancelPreview(p.previewId).catch(() => undefined); return; }
+        previewRef.current = p;
+        requestIdRef.current = newRequestId();
+        setPreview(p);
+      })
+      .catch((e) => alive && setError(describeConnectorError(e)));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ext, rootId, scoped, checked.join(','), notify, previewGen]);
+
+  const confirmDispatch = async (): Promise<Job | null> => {
+    const p = previewRef.current;
+    if (!p || !requestIdRef.current) return null;
+    try {
+      const r = await deliveryApi.confirm({ previewId: p.previewId, revision: p.revision, requestId: requestIdRef.current, notifyOnComplete: notify, acknowledged: ack });
+      previewRef.current = null;
+      return await jobSource.getJob(r.job.id);
+    } catch (e) {
+      if (e instanceof ConnectorApiError && e.code.startsWith('PREVIEW_')) {
+        previewRef.current = null;
+        setPreviewGen((g) => g + 1);
+        throw new Error(`${describeConnectorError(e)}——已重新生成预览，请核对后再确认`);
+      }
+      throw e;
+    }
+  };
+
   const dispatch = async () => {
     // 防重入：同一个标签页里连点两下（或回车 + 点击）会派出两个任务
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     try {
-      const job = await jobSource.createJob({
-        kind: 'annotate',
-        selection: scoped,
-        params: { channel: 'inapp', label: label.trim() || '外部批注人' },
-        mode: 'apply',
-      });
+      const job = ext !== null
+        ? await confirmDispatch()
+        : await jobSource.createJob({
+            kind: 'annotate',
+            selection: scoped,
+            params: { channel: 'inapp', label: label.trim() || '外部批注人' },
+            mode: 'apply',
+          });
+      if (!job) return;
       setCreated(job);
       setError(null);
       // apply 是异步的：POST 立刻回 queued，链接由 handler 落进 artifacts。
@@ -148,7 +215,7 @@ export function DispatchAnnotateButton() {
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>派发批注</DialogTitle>
             <DialogDescription>
@@ -246,6 +313,37 @@ export function DispatchAnnotateButton() {
                 )}
               </div>
 
+              {ext !== null && (
+                <div className="space-y-1.5 rounded-lg border border-border/60 p-3 text-xs" data-testid="dispatch-external" role="group" aria-label="外传目标">
+                  <p className="text-sm">同时外传到（默认仅应用内）</p>
+                  {targetsHere.length === 0 && <p className="text-muted-foreground">这个项目没有已启用、已授权的外部目标。</p>}
+                  {targetsHere.map((t) => {
+                    const k = `${t.connectorId}/${t.targetId}`;
+                    return (
+                      <label key={k} className="flex min-h-11 items-center gap-2">
+                        <input type="checkbox" className="size-5" checked={checked.includes(k)} onChange={(e) => { setAck(false); setChecked(e.target.checked ? [...checked, k] : checked.filter((x) => x !== k)); }} />
+                        <span className="min-w-0 break-all">{t.label}{recommended.includes(k) ? '（策略推荐）' : ''}</span>
+                      </label>
+                    );
+                  })}
+                  <label className="flex min-h-11 items-center gap-2">
+                    <input type="checkbox" className="size-5" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
+                    完成时通知
+                  </label>
+                  <div data-testid="dispatch-preview" aria-live="polite" className="text-muted-foreground">
+                    {!preview ? '预览中…' : preview.targets.length === 0
+                      ? `仅应用内：${preview.photoCount} 张，不发送任何外部消息`
+                      : `将发送派发通知到：${preview.targets.map((x) => targetsHere.find((t) => t.connectorId === x.connectorId && t.targetId === x.targetId)?.label ?? x.label).join('、')}（${preview.photoCount} 张；消息只含张数/批注人/说明，不含照片原图与链接凭据）`}
+                  </div>
+                  {preview && preview.targets.length > 0 && (
+                    <label className="flex min-h-11 items-center gap-2">
+                      <input type="checkbox" className="size-5" aria-label="确认外传" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+                      我确认把这批的派发通知发到以上目标
+                    </label>
+                  )}
+                </div>
+              )}
+
               {error && <p className="text-xs text-destructive">{error}</p>}
             </div>
           )}
@@ -268,7 +366,7 @@ export function DispatchAnnotateButton() {
                 <Button
                   size="sm"
                   className="h-11 sm:h-9"
-                  disabled={busy || !plan || plan.progress.total === 0}
+                  disabled={busy || !plan || plan.progress.total === 0 || (ext !== null && (!preview || (preview.targets.length > 0 && !ack)))}
                   onClick={() => void dispatch()}
                 >
                   <Send />

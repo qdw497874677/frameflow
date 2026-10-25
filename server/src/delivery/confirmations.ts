@@ -101,6 +101,7 @@ export class ConfirmationStore {
 
   get(requestId: string): ConfirmationRecord | undefined { return this.#byRequest.get(requestId); }
   requestOfPreview(previewId: string): string | undefined { return this.#byPreview.get(previewId); }
+  byJob(jobId: string): ConfirmationRecord | undefined { return this.all().find((r) => r.jobId === jobId); }
   all(): ConfirmationRecord[] { return [...this.#byRequest.values()]; }
 
   append(r: ConfirmationRecord): void {
@@ -114,6 +115,8 @@ export class ConfirmationService<J> {
   readonly #store: ConfirmationStore;
   readonly #deps: ConfirmDeps<J>;
   readonly #now: () => number;
+
+  get store(): ConfirmationStore { return this.#store; }
 
   constructor(store: ConfirmationStore, deps: ConfirmDeps<J>, now: () => number = Date.now) {
     this.#store = store;

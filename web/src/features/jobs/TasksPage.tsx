@@ -7,6 +7,7 @@ import type { Job, JobEvent, Root } from '@/core/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { DeliveryStatus } from './DeliveryStatus';
 import { describeEvent, eventTone, fmtTime, isActive, itemMark, kindLabel, STATE_LABEL, STATE_TONE } from './jobText';
 
 type Filter = 'all' | 'active' | 'done' | 'ended';
@@ -311,6 +312,8 @@ export function TasksPage() {
                   </Button>
                 </div>
               </div>
+
+              <DeliveryStatus jobId={detail.id} />
 
               {/* 产物：批注任务就是那张「打开就能批注」的链接 */}
               {detail.artifacts.length > 0 && (

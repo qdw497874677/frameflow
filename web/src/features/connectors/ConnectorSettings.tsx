@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { TargetEditor } from './TargetEditor';
+import { PolicyEditor } from './PolicyEditor';
 
 type Draft = ConnectorInstanceInputDto;
 const STATE_TEXT: Record<string, string> = { disabled: '未启用', connecting: '连接中', connected: '已连接', degraded: '部分可用', error: '出错' };
@@ -145,6 +146,7 @@ export function ConnectorSettings({ authEnabled, projects }: { authEnabled: bool
           </form>
         )}
         {authEnabled && !draft && <Button className="min-h-11" variant="outline" disabled={busy} onClick={() => setDraft({ mode: 'new', value: blank(items) })}>新建飞书连接器</Button>}
+        {authEnabled && items.length > 0 && !draft && <PolicyEditor connectors={items} projects={projects} />}
       </CardContent>
     </Card>
   );

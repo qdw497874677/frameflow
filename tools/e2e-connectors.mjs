@@ -2,6 +2,9 @@
 /**
  * 设置页连接器管理浏览器回归（F10）。先 cd web && VITE_API_BASE=/api/v1 npm run build，再从仓库根运行：
  *   node tools/e2e-connectors.mjs --scenario=settings
+ *   node tools/e2e-connectors.mjs --scenario=dispatch   # F17：派发框勾选目标/预览/确认/取消零发送
+ *   node tools/e2e-connectors.mjs --scenario=delivery   # F18：两实例三目标部分失败、单目标重试、unknown 风险确认
+ * dispatch/delivery 用 FRAMEFLOW_FAKE_TRANSPORT=e2e 的离线假传输（externalId 以 oc_fail 开头的失败），绝不触网。
  * 独立临时库与数据目录；后端未注册任何平台适配器（零外传），Secret 只用假环境变量；CDP 真鼠标/键盘。
  * 两轮：①设密码并登录（390px）：新建默认停用、目标编辑、secretConfigured、启用后真实错误状态、
  * 无消息测试、非法输入失败保留表单、无横向溢出、主控件≥44px；②未设密码：入口禁用且后端仍拒绝。
@@ -35,7 +38,7 @@ export default async function probe(send) {
       if (await evaluate(`Boolean(${expression})`)) return;
       await sleep(100);
     }
-    throw new Error(`${message}\n${await evaluate(`document.querySelector('[data-testid="connector-settings"]')?.innerText ?? document.body.innerText.slice(0, 500)`)}`);
+    throw new Error(`${message}\n${await evaluate(`(document.querySelector('[role="dialog"]') ?? document.querySelector('[data-testid="delivery-status"]') ?? document.querySelector('[data-testid="connector-settings"]') ?? document.body).innerText.slice(0, 1500)`)}`);
   };
   const clickAt = async (point) => {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
@@ -68,6 +71,8 @@ export default async function probe(send) {
     .filter(e => e.getBoundingClientRect().height < 44).map(e => e.textContent.trim() || e.getAttribute('aria-label'))`);
 
   const mode = await evaluate(`new URLSearchParams(location.search).get('e2eMode')`);
+
+  if (mode === 'dispatch' || mode === 'delivery') return flow(mode, { evaluate, waitFor, clickAt, center, send });
   if (mode === 'noauth') {
     await waitFor(`${card}`, '设置页未显示连接器卡片');
     assert.match(await evaluate(`${card}.innerText`), /先在后端设置应用密码/);
@@ -131,6 +136,100 @@ export default async function probe(send) {
   console.log('ok 保存失败：错误码显示，表单内容保留；390px 无横向溢出');
 }
 
+async function flow(mode, { evaluate, waitFor, clickAt, center }) {
+  const api = (method, path, body) => evaluate(`fetch(${JSON.stringify(path)}, { method: ${JSON.stringify(method)}, headers: { 'content-type': 'application/json' }, body: ${body ? JSON.stringify(JSON.stringify(body)) : 'undefined'} }).then(async r => ({ s: r.status, j: r.status === 204 ? null : await r.json() }))`);
+  if (!(await evaluate(`fetch('/api/v1/connectors').then(r => r.ok)`))) {
+    assert.equal((await api('POST', '/api/v1/session', { password: PASSWORD })).s < 300, true, '登录失败');
+  }
+  // 两个实例、三个目标（其中 c2/bad 会失败）；全部通过公开 API 建立
+  const inst = (id, targets) => ({ id, kind: 'feishu', label: id === 'c1' ? '飞书甲' : '飞书乙', appId: `cli_${id}`, secretEnv: FAKE_ENV, tenantId: 't1',
+    targets: targets.map(([tid, label, ext]) => ({ id: tid, connectorId: id, label, kind: 'group', externalId: ext, projectIds: ['e2e'], allowedActorIds: [], canAnnotate: false, canRequestJpeg: false })),
+    creatorActorIds: [], creatorProjectIds: [] });
+  let rev = (await api('GET', '/api/v1/connectors')).j.revision;
+  for (const i of [inst('c1', [['g1', '摄影群', 'oc_ok_one']]), inst('c2', [['g1', '客户群', 'oc_ok_two'], ['bad', '坏群', 'oc_fail_x']])]) {
+    if ((await api('GET', `/api/v1/connectors/${i.id}`)).s === 200) continue;
+    let r = await api('POST', '/api/v1/connectors', { expectedRevision: rev, instance: i });
+    assert.ok(r.s < 300, JSON.stringify(r)); rev = r.j.revision;
+    r = await api('PATCH', `/api/v1/connectors/${i.id}`, { expectedRevision: rev, patch: { enabled: true } });
+    assert.ok(r.s < 300, JSON.stringify(r)); rev = r.j.revision;
+  }
+  await evaluate(`location.href = '/?e2eMode=${mode}&step=ui'`);
+  await sleep(2000);
+  const dlg = `document.querySelector('[role="dialog"]')`;
+  const openDispatch = async () => {
+    await waitFor(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('派发批注'))`, '挑片页没有派发入口');
+    await clickAt(await center(`() => [...document.querySelectorAll('button')].find(b => b.textContent.includes('派发批注'))`));
+    await waitFor(`${dlg}?.querySelector('[data-testid="dispatch-external"]')`, '派发框没有外传区');
+    await waitFor(`/仅应用内/.test(${dlg}.querySelector('[data-testid="dispatch-preview"]').textContent)`, '默认应仅应用内');
+  };
+  const tick = async (text) => clickAt(await center(`() => [...${dlg}.querySelectorAll('label')].find(l => l.textContent.includes(${JSON.stringify(text)}))?.querySelector('input')`));
+  const sentCount = async () => (await api('GET', '/api/v1/jobs?limit=50')).j.items?.length ?? 0;
+  const noOverflow = async (where) => {
+    const r = await evaluate(`({ doc: document.documentElement.scrollWidth, vw: window.innerWidth })`);
+    assert.ok(r.doc <= r.vw, `${where}横向溢出 ${JSON.stringify(r)}`);
+  };
+  const dlgSmall = () => evaluate(`[...${dlg}.querySelectorAll('button')].filter(e => e.getBoundingClientRect().height < 44 && !e.getAttribute('aria-label')?.includes('关闭') && e.textContent.trim() && e.textContent.trim() !== 'Close').map(e => e.textContent.trim())`);
+
+  if (mode === 'dispatch') {
+    // 取消：零发送、零任务
+    const before = await sentCount();
+    await openDispatch();
+    await tick('飞书甲 · 摄影群');
+    await waitFor(`/将发送派发通知到：飞书甲 · 摄影群/.test(${dlg}.querySelector('[data-testid="dispatch-preview"]').textContent)`, '勾选后预览应列出目标');
+    assert.equal(await evaluate(`[...${dlg}.querySelectorAll('button')].find(b => b.textContent.trim() === '派发').disabled`), true, '未勾确认不可派发');
+    await noOverflow('派发框');
+    assert.deepEqual(await dlgSmall(), [], '派发框按钮须≥44px');
+    await clickAt(await center(`() => [...${dlg}.querySelectorAll('button')].find(b => b.textContent.trim() === '取消')`));
+    await sleep(800);
+    assert.equal(await sentCount(), before, '取消不应建任务');
+    console.log('ok 派发框：默认仅应用内；勾选后预览列目标；须确认；取消零发送');
+    // 确认：建任务并外传到所选目标
+    await openDispatch();
+    await tick('飞书甲 · 摄影群');
+    await waitFor(`/飞书甲/.test(${dlg}.querySelector('[data-testid="dispatch-preview"]').textContent)`, '预览未刷新');
+    await tick('我确认');
+    await clickAt(await center(`() => [...${dlg}.querySelectorAll('button')].find(b => b.textContent.trim() === '派发' && !b.disabled)`));
+    await waitFor(`/已派发/.test(${dlg}.innerText)`, '确认后应显示已派发');
+    const jobs = (await api('GET', '/api/v1/jobs?limit=50')).j.items;
+    const d = (await api('GET', `/api/v1/jobs/${jobs[0].id}/deliveries`)).j;
+    for (let i = 0; i < 30 && !d.items.every((p) => p.state === 'sent'); i++) { await sleep(100); Object.assign(d, (await api('GET', `/api/v1/jobs/${jobs[0].id}/deliveries`)).j); }
+    assert.deepEqual([...new Set(d.items.map((p) => `${p.connectorId}/${p.targetId}:${p.state}`))], ['c1/g1:sent'], '只投递到所选目标');
+    console.log('ok 确认派发：只投递到勾选的目标（假传输）');
+    return;
+  }
+  // delivery：三个目标部分失败 → 任务详情按目标显示；失败可重试
+  await openDispatch();
+  for (const t of ['飞书甲 · 摄影群', '飞书乙 · 客户群', '飞书乙 · 坏群']) await tick(t);
+  await waitFor(`/坏群/.test(${dlg}.querySelector('[data-testid="dispatch-preview"]').textContent)`, '预览未列出三个目标');
+  await tick('我确认');
+  await clickAt(await center(`() => [...${dlg}.querySelectorAll('button')].find(b => b.textContent.trim() === '派发' && !b.disabled)`));
+  await waitFor(`/已派发/.test(${dlg}.innerText)`, '确认后应显示已派发');
+  const job = (await api('GET', '/api/v1/jobs?limit=50')).j.items[0];
+  await evaluate(`location.href = '/?view=jobs&e2eMode=delivery&step=jobs'`);
+  await sleep(2000);
+  await waitFor(`[...document.querySelectorAll('button, li, [role="button"]')].find(e => e.textContent.includes('批注'))`, '任务列表为空');
+  await clickAt(await center(`() => [...document.querySelectorAll('button, [role="button"]')].find(e => e.textContent.includes('批注') && !e.textContent.includes('派发'))`));
+  const box = `document.querySelector('[data-testid="delivery-status"]')`;
+  await waitFor(`${box} && ${box}.querySelectorAll('[data-testid="delivery-row"]').length === 3`, '外传状态应按目标分 3 行');
+  await waitFor(`[...${box}.querySelectorAll('[data-testid="delivery-row"]')].filter(r => r.dataset.state === 'sent').length === 2`, '两个目标应已送达');
+  const rows = await evaluate(`[...${box}.querySelectorAll('[data-testid="delivery-row"]')].map(r => r.dataset.state + ':' + r.innerText.split('\\n')[0])`);
+  assert.equal(rows.filter((r) => r.startsWith('failed')).length, 1, `坏群应失败 ${rows}`);
+  await noOverflow('任务详情 390px');
+  const small = await evaluate(`[...${box}.querySelectorAll('button')].filter(e => e.getBoundingClientRect().height < 44).map(e => e.textContent)`);
+  assert.deepEqual(small, [], '重试按钮须≥44px');
+  console.log('ok 外传状态：两实例三目标，2 送达 1 失败，按目标显示；390px 无溢出');
+  await clickAt(await center(`() => [...${box}.querySelectorAll('[data-state="failed"] button')].find(b => b.textContent.trim() === '重试')`));
+  await waitFor(`/重新排队|ATTEMPT|失败/.test(${box}.querySelector('[role="status"]').textContent)`, '重试无反馈');
+  await sleep(500);
+  const d = (await api('GET', `/api/v1/jobs/${job.id}/deliveries`)).j.items;
+  const bad = d.filter((p) => p.targetId === 'bad');
+  assert.ok(bad.every((p) => p.attempts >= 2 && p.state === 'failed'), `失败目标应被重试一次且仍失败 ${JSON.stringify(bad)}`);
+  assert.ok(d.filter((p) => p.targetId !== 'bad').every((p) => p.attempts === 1), '已送达目标不得重发');
+  const dup = await api('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g1', acceptDuplicateRisk: false });
+  assert.equal(dup.j.code, 'NOTHING_TO_RETRY', '已送达目标不可重试');
+  console.log('ok 单目标重试：只重发失败目标；已送达不重发');
+}
+
 async function run(dir, { password, width, mode }) {
   const require = createRequire(join(REPO, 'server/package.json'));
   const sharp = require('sharp');
@@ -146,7 +245,7 @@ async function run(dir, { password, width, mode }) {
   await writeFile(config, JSON.stringify({ host: '127.0.0.1', port, password, dataDir: join(dir, `data-${mode}`), roots: [{ id: 'e2e', label: '连接器测试', path: library }] }));
   let log = '';
   const server = spawn(process.execPath, ['src/index.ts', `--config=${config}`], {
-    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret' }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', ...(mode === 'dispatch' || mode === 'delivery' ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (b) => { log += b; });
   server.stderr.on('data', (b) => { log += b; });
@@ -174,9 +273,14 @@ async function run(dir, { password, width, mode }) {
 
 async function main() {
   const scenario = (process.argv.find((a) => a.startsWith('--scenario=')) ?? '--scenario=settings').split('=')[1];
-  assert.equal(scenario, 'settings', `未知场景 ${scenario}（当前只有 settings）`);
+  assert.ok(['settings', 'dispatch', 'delivery'].includes(scenario), `未知场景 ${scenario}`);
   const dir = await mkdtemp(join(tmpdir(), 'frameflow-connectors-'));
   try {
+    if (scenario !== 'settings') {
+      await run(dir, { password: PASSWORD, width: 390, mode: scenario });
+      console.log(`PASS ${scenario} 回归（临时库，离线假传输）`);
+      return;
+    }
     await run(dir, { password: PASSWORD, width: 390, mode: 'auth' });
     await run(dir, { password: '', width: 390, mode: 'noauth' });
     console.log('PASS 设置页连接器管理回归（临时库，零外传）');
