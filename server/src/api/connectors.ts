@@ -34,7 +34,7 @@ function configError(reply: FastifyReply, e: unknown): FastifyReply {
   throw e;
 }
 
-function sameOrigin(req: FastifyRequest): boolean {
+export function sameOrigin(req: FastifyRequest): boolean {
   const host = req.headers.host;
   const origin = req.headers.origin;
   if (typeof origin === 'string' && origin) {
@@ -43,7 +43,16 @@ function sameOrigin(req: FastifyRequest): boolean {
   return req.headers['sec-fetch-site'] === 'same-origin';
 }
 
-function revisionOf(v: unknown): number | null {
+/** 外传管理面共用的门：须有应用密码、浏览器 session、写操作同源（连接器与投递策略共用） */
+export function managementGuard(authEnabled: () => boolean, via: (req: FastifyRequest) => string) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!authEnabled()) return err(reply, 403, 'PASSWORD_REQUIRED', '先设置应用密码才能管理外传');
+    if (via(req) !== 'session') return err(reply, 403, 'SESSION_REQUIRED', '外传只能在已登录的浏览器里管理');
+    if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return err(reply, 403, 'CSRF_REJECTED', '跨站请求被拒绝');
+  };
+}
+
+export function revisionOf(v: unknown): number | null {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : null;
 }
@@ -54,11 +63,7 @@ export function registerConnectorRoutes(app: FastifyInstance, deps: ConnectorApi
   const find = (id: string) => deps.store.current.instances.find((i) => i.id === id);
 
   app.register(async (scope) => {
-    scope.addHook('preHandler', async (req, reply) => {
-      if (!deps.authEnabled()) return err(reply, 403, 'PASSWORD_REQUIRED', '先设置应用密码才能管理连接器');
-      if (deps.via(req) !== 'session') return err(reply, 403, 'SESSION_REQUIRED', '连接器只能在已登录的设置页管理');
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return err(reply, 403, 'CSRF_REJECTED', '跨站请求被拒绝');
-    });
+    scope.addHook('preHandler', managementGuard(deps.authEnabled, deps.via));
 
     scope.get('/api/v1/connectors', async (req, reply) => {
       const q = req.query as { limit?: string; cursor?: string };

@@ -311,3 +311,48 @@ export interface ConnectorVerifyResultDto {
   ok: boolean;
   code?: string;
 }
+
+export type DeliveryEventDto = 'task.dispatched' | 'task.completed';
+
+export interface DeliveryTargetRefDto {
+  connectorId: string;
+  targetId: string;
+}
+
+export interface DeliveryPolicyInputDto {
+  id: string;
+  enabled: boolean;
+  /** 空数组不匹配任何项目 */
+  projectIds: string[];
+  event: DeliveryEventDto;
+  targets: DeliveryTargetRefDto[];
+}
+
+export interface DeliveryPolicyDto extends DeliveryPolicyInputDto {
+  revision: number;
+}
+
+export interface DeliveryPolicyPageDto {
+  revision: number;
+  items: DeliveryPolicyDto[];
+  nextCursor: string | null;
+}
+
+export interface DeliveryPolicyMutationDto {
+  revision: number;
+  policy: DeliveryPolicyDto | null;
+}
+
+export interface DeliveryPreviewDto {
+  previewId: string;
+  revision: string;
+  createdAt: string;
+  expiresAt: string;
+  projectId: string;
+  photoCount: number;
+  params: { alias: string | null; note: string | null; notifyOnComplete: boolean };
+  targets: Array<DeliveryTargetRefDto & { label: string }>;
+  policyRevision: number;
+  connectorRevision: number;
+  warnings: Array<'NO_TARGET' | 'POLICY_TARGET_UNAVAILABLE'>;
+}
