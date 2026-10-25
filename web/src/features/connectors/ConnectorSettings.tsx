@@ -33,6 +33,7 @@ export function ConnectorSettings({ authEnabled, projects }: { authEnabled: bool
   const [draft, setDraft] = useState<{ mode: 'new' | 'edit'; value: Draft } | null>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [testCard, setTestCard] = useState<{ connectorId: string; targetId: string } | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -108,14 +109,35 @@ export function ConnectorSettings({ authEnabled, projects }: { authEnabled: bool
               })}>{c.enabled ? '停用' : '启用'}</Button>
               <Button className="min-h-11" variant="outline" disabled={busy} onClick={() => run(async () => {
                 const r = await connectorsApi.test(c.id);
-                return r.ok ? '连接测试通过（未发送任何消息）' : Promise.reject(new ConnectorApiError(400, r.code ?? 'VERIFY_FAILED', '连接测试失败'));
-              })}>测试连接</Button>
+                return r.ok ? '验证通过（未发送任何消息）' : Promise.reject(new ConnectorApiError(400, r.code ?? 'VERIFY_FAILED', '验证失败'));
+              })}>无消息验证</Button>
+              <Button className="min-h-11" variant="outline" disabled={busy || !c.enabled || c.targets.length === 0} title={c.enabled ? '向一个目标真实发送一张测试卡，需二次确认' : '启用后才能发送测试卡'}
+                onClick={() => setTestCard({ connectorId: c.id, targetId: c.targets[0]?.id ?? '' })}>发送测试卡…</Button>
               <Button className="min-h-11 text-destructive" variant="ghost" disabled={busy} onClick={() => run(async () => {
                 if (!window.confirm(`删除连接器「${c.label}」？`)) return;
                 await connectorsApi.remove(c.id, revision); await reload();
                 return '已删除';
               })}>删除</Button>
             </div>
+            {testCard?.connectorId === c.id && (
+              <div className="min-w-0 space-y-2 rounded-md border border-destructive/40 p-2" data-testid="test-card-confirm">
+                <label className="flex min-w-0 flex-wrap items-center gap-2">发送到
+                  <select className="h-11 min-w-0 max-w-full rounded-md border bg-background px-2" aria-label="测试卡目标" value={testCard.targetId}
+                    onChange={(e) => setTestCard({ ...testCard, targetId: e.target.value })}>
+                    {c.targets.map((t) => <option key={t.id} value={t.id}>{t.label}（{t.kind === 'group' ? '群' : '私聊'} {t.externalId}）</option>)}
+                  </select>
+                </label>
+                <p className="break-all text-destructive">将真实发送一张测试卡到「{c.targets.find((t) => t.id === testCard.targetId)?.label}」，对方会看到这条消息。不含任何照片或任务信息。</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button className="min-h-11" variant="destructive" disabled={busy || !testCard.targetId} onClick={() => run(async () => {
+                    const r = await connectorsApi.testCard(c.id, testCard.targetId);
+                    setTestCard(null);
+                    return r.result.status === 'sent' ? '测试卡已发送' : Promise.reject(new ConnectorApiError(502, r.result.code ?? 'SEND_FAILED', '测试卡发送失败'));
+                  })}>确认发送测试卡</Button>
+                  <Button className="min-h-11" variant="ghost" disabled={busy} onClick={() => setTestCard(null)}>取消</Button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
         {draft && (

@@ -20,6 +20,8 @@ export interface JobContext {
   lib: Library;
   /** 签发任务范围 token（载荷 `annotate|<jobId>|<批注人>|<exp>|<签发它的 API token id>`），见 api/auth.ts */
   signRangeToken: (jobId: string, alias: string, tokenId?: string | null) => { token: string; expiresAt: string };
+  /** F29：任务进入 done 时回调（完成通知；generation = 第几次完成） */
+  onDone?: (job: Job, generation: number) => void;
 }
 
 /** 外部回流的原始一项（`by` 由凭据推出来，不由请求体决定） */

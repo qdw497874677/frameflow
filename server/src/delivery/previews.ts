@@ -25,6 +25,8 @@ export interface PreviewRequest {
   readonly params: DispatchParams;
   /** undefined = 按策略推荐；[] = 明确仅应用内 */
   readonly targets?: readonly TargetRef[];
+  /** F29a：追加目标到已有任务（targets 必须显式给出） */
+  readonly jobId?: string;
 }
 
 export type PreviewResult =
@@ -46,7 +48,7 @@ export function targetsStillAllowed(state: PreviewState, projectId: string, targ
 }
 
 function fingerprint(p: Omit<DeliveryPreview, 'revision' | 'previewId' | 'createdAt' | 'expiresAt' | 'warnings'>): string {
-  const canon = JSON.stringify([p.projectId, [...p.photoIds], p.params, p.targets.map((t) => [t.connectorId, t.targetId, t.label]), p.policyRevision, p.connectorRevision]);
+  const canon = JSON.stringify([p.jobId, p.projectId, [...p.photoIds], p.params, p.targets.map((t) => [t.connectorId, t.targetId, t.label]), p.policyRevision, p.connectorRevision]);
   return createHash('sha256').update(canon).digest('hex');
 }
 
@@ -73,7 +75,7 @@ export class PreviewService {
     }
     if (!targets.length) warnings.push('NO_TARGET');
     const now = this.#now();
-    const body = { projectId: req.projectId, photoIds, photoCount: photoIds.length, params: { ...req.params }, targets, policyRevision: state.policies.revision, connectorRevision: state.connectors.revision };
+    const body = { projectId: req.projectId, photoIds, photoCount: photoIds.length, params: { ...req.params }, targets, policyRevision: state.policies.revision, connectorRevision: state.connectors.revision, jobId: req.jobId ?? null };
     const preview: DeliveryPreview = deepFreeze({
       previewId: `pv_${randomUUID()}`, revision: fingerprint(body), createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + PREVIEW_TTL_MS).toISOString(), ...body, warnings: [...new Set(warnings)],

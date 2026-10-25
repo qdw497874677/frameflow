@@ -52,6 +52,8 @@ export interface DeliveryPreview {
   readonly policyRevision: number;
   readonly connectorRevision: number;
   readonly warnings: readonly string[];
+  /** F29a：追加目标预览绑定的已有任务；新建派发为 null */
+  readonly jobId: string | null;
 }
 
 export type PreviewCheck =

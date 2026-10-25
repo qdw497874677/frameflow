@@ -28,7 +28,7 @@ function fakeSdk(over = {}) {
         createMessage: async (r) => { calls.create.push(r); return over.create ? over.create(r, calls) : { code: 0, data: { message_id: `om_${calls.create.length}` } }; },
         patchMessage: async (r) => { calls.patch.push(r); return over.patch ? over.patch(r) : { code: 0 }; },
         uploadImage: async (b) => { calls.upload.push(b); return { code: 0, data: { image_key: `img_${calls.upload.length}` } }; },
-        uploadFile: async () => ({ code: 0, data: { file_key: 'f' } }),
+        uploadFile: async (r) => { (calls.files ??= []).push(r); return over.uploadFile ? over.uploadFile(r) : { code: 0, data: { file_key: 'f' } }; },
         verifyToken: async () => { calls.verify++; return over.verify ? over.verify() : { code: 0 }; },
       };
     },
@@ -181,4 +181,49 @@ test('F20 卡片更新：有效期受限；更新失败只返回结果', async (
   const c = JSON.parse(renderCard({ title: 't', lines: ['**x**'], sessionId: 's', actions: [{ label: '下一张', actionId: 'next' }] }));
   assert.equal(c.schema, '2.0'); assert.equal(c.config.update_multi, true);
   assert.equal(c.body.elements[0].content, '\\*\\*x\\*\\*');
+});
+
+test('F28 原图 JPEG：只发真实 JPEG 字节（hash 一致），RAW/伪 JPEG/空/超限/失联拒绝且不上传', async (t) => {
+  const { createHash } = await import('node:crypto');
+  const fsm = await import('node:fs');
+  const osm = await import('node:os');
+  const pm = await import('node:path');
+  const dir = fsm.mkdtempSync(pm.join(osm.tmpdir(), 'fs-jpeg-'));
+  t.after(() => fsm.rmSync(dir, { recursive: true, force: true }));
+  const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2048, 7)]);
+  fsm.writeFileSync(pm.join(dir, 'A.jpg'), jpg);
+  fsm.writeFileSync(pm.join(dir, 'fake.jpg'), Buffer.from('not a jpeg'));
+  fsm.writeFileSync(pm.join(dir, 'empty.jpg'), Buffer.alloc(0));
+  fsm.writeFileSync(pm.join(dir, 'B.ARW'), jpg);
+  const files = { a: ['A.jpg', 'A.jpg'], fake: ['fake.jpg', 'fake.jpg'], empty: ['empty.jpg', 'empty.jpg'], raw: ['B.ARW', 'B.ARW'], gone: ['missing.jpg', 'missing.jpg'] };
+  const original = async (id) => { const f = files[id]; if (!f) throw new Error('x'); return { path: pm.join(dir, f[0]), fileName: f[1] }; };
+  const f = fakeSdk();
+  const tr = new FeishuTransport({ instance: inst, secret: 's', sdk: f.sdk, original });
+  const r = await tr.send({ targetId: inst.targets[0].id, intentId: 'jpeg_1', content: { type: 'file', mediaRef: 'a' } });
+  assert.equal(r.status, 'sent');
+  assert.equal(createHash('sha256').update(f.calls.files[0].bytes).digest('hex'), createHash('sha256').update(jpg).digest('hex'), '上传字节与原片一致');
+  assert.equal(f.calls.create.at(-1).msgType, 'file');
+  assert.deepEqual(JSON.parse(f.calls.create.at(-1).content), { file_key: 'f' });
+  for (const [id, code] of [['fake', 'JPEG_UNSUPPORTED'], ['empty', 'JPEG_UNAVAILABLE'], ['raw', 'JPEG_UNSUPPORTED'], ['gone', 'JPEG_UNAVAILABLE'], ['nope', 'JPEG_UNAVAILABLE']]) {
+    const x = await tr.send({ targetId: inst.targets[0].id, intentId: `j_${id}`, content: { type: 'file', mediaRef: id } });
+    assert.equal(x.code, code, id);
+  }
+  assert.equal(f.calls.files.length, 1, '被拒的不上传');
+  const { readJpeg } = await import('../src/connectors/feishu/media.ts');
+  await assert.rejects(readJpeg(pm.join(dir, 'A.jpg'), 'A.jpg', 100), /JPEG_TOO_LARGE/);
+  const noOrig = new FeishuTransport({ instance: inst, secret: 's', sdk: f.sdk });
+  assert.equal((await noOrig.send({ targetId: inst.targets[0].id, intentId: 'j_x', content: { type: 'file', mediaRef: 'a' } })).code, 'JPEG_UNAVAILABLE');
+});
+
+test('F30 真联调工具：--help 可用；不带 opt-in 拒绝联网（退出码 2）', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const tool = new URL('./feishu-live-check.mjs', import.meta.url).pathname;
+  const help = spawnSync(process.execPath, [tool, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0); assert.match(help.stdout, /不连接网络、不发送消息/);
+  for (const a of [[], ['--live'], ['--i-understand-network'], ['--send-test-card', '--chat-id=oc_x']]) {
+    const r = spawnSync(process.execPath, [tool, ...a], { encoding: 'utf8', env: { PATH: process.env.PATH, FEISHU_LIVE_APP_ID: 'cli_x', FEISHU_LIVE_SECRET_ENV: 'S', S: 'v' } });
+    assert.equal(r.status, 2, `参数 ${a} 应拒绝`);
+  }
+  const noSend = spawnSync(process.execPath, [tool, '--live', '--i-understand-network', '--send-test-card', '--chat-id=oc_x'], { encoding: 'utf8', env: { PATH: process.env.PATH, FEISHU_LIVE_APP_ID: 'cli_x', FEISHU_LIVE_SECRET_ENV: 'S', S: 'v' } });
+  assert.equal(noSend.status, 2, '发送缺 --i-understand-sending 必须在联网前拒绝');
 });

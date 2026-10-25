@@ -56,3 +56,25 @@ export class MediaUploader {
     for (const [k, v] of this.#cache) if (v === imageKey) this.#cache.delete(k);
   }
 }
+
+/** F28：显式原图 JPEG 附件。只发真实 JPEG（扩展名 + SOI 魔数），非零且 ≤30MB；RAW/HEIC-only/视频一律拒绝。 */
+export const JPEG_MAX_BYTES = 30 * 1024 * 1024;
+
+/** 返回原片 JPEG 路径与文件名；没有 JPEG 变体（RAW/HEIC-only/视频）须抛 MediaError('JPEG_UNSUPPORTED') */
+export type OriginalJpegProvider = (photoId: string) => Promise<{ path: string; fileName: string }>;
+
+export async function readJpeg(path: string, fileName: string, max = JPEG_MAX_BYTES): Promise<Buffer> {
+  if (!/\.jpe?g$/i.test(fileName)) throw new MediaError('JPEG_UNSUPPORTED');
+  let fh;
+  try { fh = await fsp.open(path, 'r'); } catch { throw new MediaError('JPEG_UNAVAILABLE'); }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile() || st.size === 0) throw new MediaError('JPEG_UNAVAILABLE');
+    if (st.size > max) throw new MediaError('JPEG_TOO_LARGE');
+    const buf = Buffer.alloc(st.size);
+    const { bytesRead } = await fh.read(buf, 0, st.size, 0);
+    if (bytesRead !== st.size) throw new MediaError('JPEG_UNAVAILABLE');
+    if (buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) throw new MediaError('JPEG_UNSUPPORTED');
+    return buf;
+  } finally { await fh.close(); }
+}

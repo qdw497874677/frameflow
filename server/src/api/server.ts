@@ -34,6 +34,7 @@ import { JobsService } from '../jobs/service.ts';
 import { reconcileConfirmations } from '../jobs/confirmations.ts';
 import { FeishuController } from '../integrations/feishu/controller.ts';
 import { SessionStore } from '../integrations/feishu/sessions.ts';
+import { JpegLog } from '../integrations/feishu/jpegs.ts';
 import { CursorStore } from '../integrations/feishu/cursors.ts';
 import { ActionLog } from '../integrations/feishu/actions.ts';
 import type { CardModel } from '../connectors/feishu/cards.ts';
@@ -130,7 +131,10 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const jobs = new JobsService(new JobsStore(cfg.dataDir), registry, {
     lib,
     signRangeToken: (jobId, alias, tokenId) => auth.issueRangeToken(jobId, alias, tokenId),
+    // F29：完成通知（只发给确认时同意通知的目标；同代次不重发）
+    onDone: (job, generation) => { onJobDone(job.id, generation); },
   });
+  let onJobDone: (jobId: string, generation: number) => void = () => undefined;
   await app.register(cookie);
 
   // ── 连接器（F08/F09）：配置在 dataDir/connectors.json；尚未注册任何平台适配器，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED
@@ -158,6 +162,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const fsessions = new SessionStore(cfg.dataDir);
   const fcursors = new CursorStore(cfg.dataDir);
   feishu = new FeishuController({
+    jpegs: new JpegLog(cfg.dataDir),
     sessions: fsessions, actions: new ActionLog(cfg.dataDir), cursors: fcursors, config: () => connectorStore.current,
     jobs: {
       get: (id) => { try { return jobs.get(id); } catch { return undefined; } },
@@ -199,7 +204,9 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
           // 入口卡带 session（按钮只有不透明 sessionId）；发出后绑定消息与该目标游标
           const inst = connectorStore.current.instances.find((c) => c.id === r.connectorId);
           const session = fsessions.create({ kind: 'task-entry', connectorId: r.connectorId, tenantId: inst?.tenantId ?? '', targetId: r.targetId, jobId: r.jobId, photoId: null, revision: null, generation: null });
-          const out = await connectorRuntime.send(r.connectorId, { targetId: r.targetId, intentId: r.intentId, content: { type: 'task-entry', taskId: r.jobId }, sessionId: session.sessionId });
+          const content = r.part.kind === 'task.completed' ? { type: 'progress' as const, taskId: r.jobId } : { type: 'task-entry' as const, taskId: r.jobId };
+          const out = await connectorRuntime.send(r.connectorId, { targetId: r.targetId, intentId: r.intentId, content, sessionId: session.sessionId });
+          if (out.status === 'sent' && r.part.kind === 'task.completed') return { messageId: out.messageId };
           if (out.status === 'sent') {
             fsessions.bindMessage(session.sessionId, out.messageId);
             fcursors.set({ jobId: r.jobId, targetId: r.targetId, photoId: null, messageId: out.messageId, sessionId: session.sessionId });
@@ -214,6 +221,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const confirmations = new ConfirmationService(confirmStore, {
     previews, state: pstate, currentPhotoIds: selectIds,
     findJob: (id) => { try { return jobs.get(id); } catch { return undefined; } },
+    jobOpen: (id) => { try { return !['cancelled', 'failed'].includes(jobs.get(id).state); } catch { return false; } },
     createJob: (rec) => jobs.createConfirmed({
       jobId: rec.jobId, requestId: rec.requestId, kind: 'annotate', selection: { ids: [...rec.snapshot.photoIds], project: rec.snapshot.projectId },
       params: { channel: 'inapp', label: (rec.snapshot.params.alias ?? '').replace(/[|\n\r]/g, ' ').trim().slice(0, 40) || '外部批注', note: rec.snapshot.params.note, notifyOnComplete: rec.snapshot.params.notifyOnComplete, projectId: rec.snapshot.projectId },
@@ -222,6 +230,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
       ...(rec.snapshot.targets.length ? { confirmationMode: 'explicit' as const } : {}),
     }),
   });
+  onJobDone = (jobId, generation) => { dispatcher.notifyCompleted(jobId, generation); };
   try { confirmations.recover(); } catch (e) { app.log.warn({ err: e }, '确认恢复失败'); }
   // F23/F24 恢复：先按 marks 日志补已提交未投影的确认，再重放仍为 accepted 的卡片动作
   for (const j of jobs.list({})) {

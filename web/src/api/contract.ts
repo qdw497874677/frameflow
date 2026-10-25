@@ -355,7 +355,26 @@ export interface DeliveryPreviewDto {
   policyRevision: number;
   connectorRevision: number;
   warnings: Array<'NO_TARGET' | 'POLICY_TARGET_UNAVAILABLE'>;
+  /** F29a：追加目标预览绑定的已有任务 */
+  jobId?: string | null;
 }
+
+/** F29a：追加目标预览 = 普通预览 + 任务已有目标 */
+export interface DeliveryAppendPreviewDto extends DeliveryPreviewDto {
+  existingTargets: Array<DeliveryTargetRefDto & { label: string }>;
+}
+
+export interface DeliveryAppendDto {
+  accepted: boolean;
+  replayed: boolean;
+  requestId: string;
+  jobId: string;
+  targets: Array<DeliveryTargetRefDto & { label: string }>;
+  deliveries: DeliveryPartDto[];
+}
+
+/** partIndex ≥ 1000：完成通知分片（F29） */
+export const COMPLETION_PART_BASE = 1000;
 
 export type DeliveryPartState = 'pending' | 'sending' | 'sent' | 'failed' | 'unknown';
 

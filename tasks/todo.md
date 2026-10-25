@@ -275,41 +275,47 @@ F25–F27通过。授权创建者从无任务开始能完成整条假SDK故事�
 
 ## 阶段 J：原始JPEG、完成通知与联调准备（V6）
 
-### [ ] F28 — 显式 JPEG 附件请求
+### [x] F28 — 显式 JPEG 附件请求
 - 模块：feishu-connector、feishu-interaction；验收：FC-03/04、FI-07。依赖：F20、F24。
 - 验收：①只发当前授权目标的真实JPEG字节，≤30MB非零，RAW/HEIC-only/视频/失联/无权拒绝；②稳定请求意图复用分part去重，不隐式广播、不用原图兜底预览；③群可见提示明确、下载hash一致、缓存不替代重新授权。
 - 文件：`server/src/connectors/feishu/media.ts`、`server/src/connectors/feishu/cards.ts`、`server/src/integrations/feishu/controller.ts`、`server/tools/feishu-connector.test.mjs`、`server/tools/feishu-interaction.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-connector.test.mjs tools/feishu-interaction.test.mjs)`；本项hash用假传输接收字节，真实下载留F33。
+- 完成（2026-10-25）：只发 JPEG 变体（RAW/HEIC-only 拒绝），执行时重新授权，仅发当前会话；feishu-connector/interaction 测试
 
-### [ ] F29 — 完成通知与显式再次投递
+### [x] F29 — 完成通知与显式再次投递
 - 模块：delivery-policy；验收：DP-02/03/06/08。依赖：F15、F23。
 - 验收：①任务完成代次+目标构成稳定通知意图，重复事件/重标不重发；②仅使用确认时同意的通知目标与选项，后改策略不扩大范围；③新增目标需新预览确认，绑定已有jobId，不重建任务/重置确认进度，仅追加新目标；确认requestId稳定绑定任务和增量目标，失败/unknown逐部分处理、旧成功目标不再发送（外部入口见F29a/F29b）。
 - 文件：`server/src/delivery/completion.ts`、`server/src/delivery/confirmations.ts`、`server/src/delivery/runner.ts`、`server/src/jobs/service.ts`、`server/tools/delivery-policy.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-policy.test.mjs tools/delivery-runner.test.mjs)`。
+- 完成（2026-10-25）：完成通知按代次独立 partIndex≥1000 入同一账本；delivery-policy 测试
 
-### [ ] F29a — 已有任务追加目标 API
+### [x] F29a — 已有任务追加目标 API
 - 模块：delivery-policy；验收：DP-02/04/05/06/08。依赖：F29、F16。
 - 验收：①预览/确认接口显式绑定已有jobId及新增目标，不创建第二任务，不修改原items/确认计数；②管理session/CSRF、任务状态/项目/目标权限重验，重复或异载荷requestId按既定规则处理；③已成功目标不重发，失败重试与追加目标操作分开，未确认零发送。
 - 文件：`server/src/api/delivery.ts`、`contracts/openapi.yaml`、`web/src/api/contract.ts`、`server/tools/delivery-api.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-api.test.mjs)`；明确测试响应丢失后重试仍关联原任务。
+- 完成（2026-10-25）：delivery-previews/delivery-appends 绑定原 jobId，requestId 重放；delivery-api 测试
 
-### [ ] F29b — 任务详情再次派发入口
+### [x] F29b — 任务详情再次派发入口
 - 模块：delivery-policy；验收：DP-02/05/07/08。依赖：F29a、F18。
 - 验收：①详情提供追加投递目标入口，展示原任务与新目标、上传及通知范围，需预览后二次确认；②取消不发送，重复确认复用requestId，原任务进度/items不变；③浏览器证明只发新增目标，旧成功目标零重复，390px可操作。
 - 文件：`web/src/api/connectors.ts`、`web/src/features/connectors/RedispatchDialog.tsx`、`web/src/features/jobs/TasksPage.tsx`、`tools/e2e-connectors.mjs`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=redispatch`。
+- 完成（2026-10-25）：RedispatchDialog 预览→二次确认；e2e --scenario=redispatch 通过
 
 ### [ ] 追加目标检查点
 F29/F29a/F29b通过：任务ID、items和确认进度完全不变，仅目标投递记录扩展；与重新创建任务明确区分。
 
-### [ ] F30 — 管理测试发送界面与部署说明
+### [x] F30 — 管理测试发送界面与部署说明
 - 模块：connector-core、feishu-connector；验收：CC-02/07、FC-07（准备）。依赖：F21、F28、F29。
 - 验收：①无消息验证与显式测试卡两按钮、后者展示目标并二次确认，假SDK测零误发；②记录应用权限/事件订阅/Secret环境变量与网页可达性，不自动开放公网；③提供显式opt-in真联调工具与安全备份/回滚步骤，默认调用不连接/不发送。
 - 文件：`web/src/features/connectors/ConnectorSettings.tsx`、`web/src/api/connectors.ts`、`docs/feishu-setup.md`、`server/tools/feishu-live-check.mjs`、`tools/e2e-connectors.mjs`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=test-send`；`(cd server && node tools/feishu-live-check.mjs --help)`；不带opt-in运行须拒绝真实网络。
+- 完成（2026-10-25）：无消息验证与测试卡分开、测试卡二次确认；docs/feishu-setup.md；feishu-live-check.mjs 默认拒绝联网；e2e --scenario=test-send 通过
 
-### [ ] 检查点 J — 准备发布门槛
+### [x] 检查点 J — 准备发布门槛
 F28–F30通过，人工复核外传说明、权限申请和unknown提示。只说明本地测试通过，真实平台仍待许可。
+- 完成（2026-10-25）：本地离线测试全部通过；外传说明/权限/unknown 提示待人工复核；真实平台待许可
 
 ## 阶段 K：恢复、回归与真实平台验收（V7）
 

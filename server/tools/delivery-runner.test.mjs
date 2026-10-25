@@ -97,3 +97,20 @@ test('F21 传输明确报告 unknown：记 unknown，不自动重发', async (t)
   assert.equal(v[0].state, 'unknown');
   assert.equal(n, 1);
 });
+
+test('F29 partOffset：完成通知分片独立序号段，不与派发分片混账', async (t) => {
+  const { DeliveryRunner } = await import('../src/delivery/runner.ts');
+  const { DeliveryStore } = await import('../src/delivery/store.ts');
+  const fsm = await import('node:fs'); const osm = await import('node:os'); const pm = await import('node:path');
+  const dir = fsm.mkdtempSync(pm.join(osm.tmpdir(), 'runner-off-'));
+  t.after(() => fsm.rmSync(dir, { recursive: true, force: true }));
+  const store = DeliveryStore.open(dir);
+  const seen = [];
+  const r = new DeliveryRunner({ store, authorized: () => true, transport: { send: async (q) => { seen.push(q.partIndex); return { messageId: `m${q.partIndex}` }; } } });
+  const tg = [{ connectorId: 'c', targetId: 'g' }];
+  await r.run({ jobId: 'j', targets: tg, parts: ['entry'] });
+  await r.run({ jobId: 'j', targets: tg, parts: ['done'], partOffset: 1001 });
+  await r.run({ jobId: 'j', targets: tg, parts: ['done'], partOffset: 1001 });
+  assert.deepEqual(seen, [0, 1001]);
+  assert.deepEqual(store.listJob('j').map((v) => [v.partIndex, v.state]), [[0, 'sent'], [1001, 'sent']]);
+});

@@ -156,3 +156,25 @@ test('F22 过载拒绝；目标间游标独立；重启恢复只补投影不重�
   assert.ok(jobs.get('job1').items.find((i) => i.id === 'a').confirmedAt);
   assert.equal(new ActionLog(dir).pending().length, 0);
 });
+
+test('F28 原图请求：仅授权目标可见按钮；只发当前目标；稳定意图去重；撤权后缓存不替代复验', async (t) => {
+  const { mk, sent, setConfig } = await setup(t, { targets: [target('g1', 'group', 'oc_g1', { canRequestJpeg: true }), target('g2', 'group', 'oc_g2')] });
+  const { ctl } = mk();
+  const s = await review(ctl);
+  const card0 = await ctl.resolve(sent.find((x) => x.op === 'send').content, s.sessionId);
+  assert.ok(card0.actions.some((a) => a.actionId === 'jpeg' && /JPEG/.test(a.label)), '授权目标有按钮');
+  const s2 = await review(ctl, 'g2');
+  assert.ok(!(await ctl.resolve(sent.at(-1).content, s2.sessionId)).actions.some((a) => a.actionId === 'jpeg'), '未授权目标无按钮');
+  assert.equal((await ctl.handle('fs1', ev(s2, 'u1', 'jpeg', {}, 'oc_g2'))).code, 'JPEG_DENIED');
+  await ctl.handle('fs1', ev(s, 'u1', 'jpeg')); await ctl.idle();
+  const files = () => sent.filter((x) => x.content?.type === 'file');
+  assert.equal(files().length, 1); assert.equal(files()[0].targetId, 'g1'); assert.equal(files()[0].content.mediaRef, 'a');
+  assert.match(files()[0].intentId, /^jpeg_[0-9a-f]{40}$/);
+  await ctl.handle('fs1', ev(s, 'u2', 'jpeg')); await ctl.idle();
+  assert.equal(files().length, 1, '同一 (任务, 照片, 目标) 已送达不重发');
+  setConfig(doc([target('g1', 'group', 'oc_g1', { canRequestJpeg: false }), target('g2', 'group', 'oc_g2')]));
+  const r = await ctl.handle('fs1', ev(s, 'u1', 'jpeg'));
+  await ctl.idle();
+  assert.ok(r.code === 'JPEG_DENIED' || r.kind === 'accepted');
+  assert.equal(files().length, 1);
+});

@@ -104,7 +104,7 @@ async function setupF16(t, behave) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-f16-'));
   const connectors = ConnectorConfigStore.open(dir);
   const two = inst('c1');
-  connectors.create({ ...two, targets: [...two.targets, { ...two.targets[0], id: 'g2', externalId: 'oc_g2', label: '二群' }] }, 0);
+  connectors.create({ ...two, targets: [...two.targets, { ...two.targets[0], id: 'g2', externalId: 'oc_g2', label: '二群' }, { ...two.targets[0], id: 'g3', externalId: 'oc_g3', label: '三群' }] }, 0);
   connectors.replace(connectors.current.instances.map((i) => ({ ...i, enabled: true })), 1);
   const policies = PolicyStore.open(dir);
   const previews = new PreviewService();
@@ -119,12 +119,12 @@ async function setupF16(t, behave) {
     createJob: (rec) => { if (!jobs.has(rec.jobId)) jobs.set(rec.jobId, { id: rec.jobId, state: 'queued' }); return jobs.get(rec.jobId); },
   });
   const app = Fastify();
-  registerDeliveryRoutes(app, { policies, connectors, previews, confirmations, dispatcher, authEnabled: () => true, via: () => 'session',
+  registerDeliveryRoutes(app, { policies, connectors, previews, confirmations, dispatcher, authEnabled: () => true, via: (req) => req.headers['x-test-via'] ?? 'session',
     projectExists: (id) => id === 'p', selectPhotos: () => ['a', 'b'] });
   await app.ready();
   t.after(async () => { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
-  const call = (method, url, payload) => app.inject({ method, url, payload, headers: { host: 'ff.local', origin: 'http://ff.local' } });
-  return { call, sent, jobs, dispatcher, connectors };
+  const call = (method, url, payload, extra = {}) => app.inject({ method, url, payload, headers: { host: 'ff.local', origin: 'http://ff.local', ...extra } });
+  return { call, sent, jobs, dispatcher, connectors, confirmStore };
 }
 const both = [{ connectorId: 'c1', targetId: 'g1' }, { connectorId: 'c1', targetId: 'g2' }];
 
@@ -182,4 +182,56 @@ test('F16 重试：只重发失败目标；unknown 需显式风险参数；停�
   items = (await call('GET', `/api/v1/jobs/${job.id}/deliveries`)).json().items;
   assert.equal(items[1].error, 'AUTHORIZATION_REVOKED');
   assert.equal((await call('GET', '/api/v1/jobs/nope/deliveries')).statusCode, 404);
+});
+
+test('F29a 追加目标：绑定原 jobId、不建新任务；只发新目标；响应丢失重试仍关联原任务；异载荷/重叠/越权拒绝', async (t) => {
+  const { call, sent, jobs, dispatcher, confirmStore } = await setupF16(t, (req) => ({ messageId: `om_${req.targetId}_${req.partIndex}` }));
+  const pv = (await call('POST', '/api/v1/delivery-previews', { projectId: 'p', targets: [both[0]] })).json();
+  const job = (await call('POST', '/api/v1/delivery-confirmations', { previewId: pv.previewId, revision: pv.revision, requestId: 'req_app_base1', acknowledged: true })).json().job;
+  await dispatcher.idle();
+  assert.equal(sent.length, 1);
+  // 预览：零发送；已有目标不能"追加"（失败重试走 retry）
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/delivery-previews`, { targets: [both[0]] })).json().code, 'TARGET_ALREADY_IN_JOB');
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/delivery-previews`, { targets: [{ connectorId: 'c1', targetId: 'g2' }], projectId: 'x' })).json().code, 'UNKNOWN_FIELD');
+  assert.equal((await call('POST', '/api/v1/jobs/nope/delivery-previews', { targets: [both[1]] })).statusCode, 404);
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/delivery-previews`, { targets: [{ connectorId: 'c2', targetId: 'g1' }] })).statusCode, 409, '未授权该项目的目标');
+  const ap = await call('POST', `/api/v1/jobs/${job.id}/delivery-previews`, { targets: [both[1]] });
+  assert.equal(ap.statusCode, 201);
+  const apv = ap.json();
+  assert.equal(apv.jobId, job.id); assert.deepEqual(apv.existingTargets.map((x) => x.targetId), ['g1']);
+  assert.equal(sent.length, 1, '预览零发送');
+  // 未确认外传 → 拒绝且零发送
+  const body = { previewId: apv.previewId, revision: apv.revision, requestId: 'req_app_add01', notifyOnComplete: true, acknowledged: true };
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/delivery-appends`, { ...body, acknowledged: false })).json().code, 'CONSENT_REQUIRED');
+  // 绑定到别的任务 → 拒绝
+  const pv2 = (await call('POST', '/api/v1/delivery-previews', { projectId: 'p', targets: [] })).json();
+  const other = (await call('POST', '/api/v1/delivery-confirmations', { previewId: pv2.previewId, revision: pv2.revision, requestId: 'req_app_other' })).json().job;
+  assert.equal((await call('POST', `/api/v1/jobs/${other.id}/delivery-appends`, { ...body, requestId: 'req_app_x0001' })).json().code, 'PREVIEW_JOB_MISMATCH');
+  const r1 = await call('POST', `/api/v1/jobs/${job.id}/delivery-appends`, body);
+  assert.equal(r1.statusCode, 201, r1.body);
+  await dispatcher.idle();
+  assert.deepEqual(sent.map((x) => x.targetId), ['g1', 'g2'], '只给新目标发，旧成功目标不重发');
+  // 响应丢失：同 requestId 重试 → 200 replayed，同一任务，不再发送
+  const r2 = await call('POST', `/api/v1/jobs/${job.id}/delivery-appends`, body);
+  assert.equal(r2.statusCode, 200); assert.equal(r2.json().replayed, true); assert.equal(r2.json().jobId, job.id);
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/delivery-appends`, { ...body, notifyOnComplete: false })).json().code, 'REQUEST_ID_CONFLICT');
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/delivery-appends`, { ...body, requestId: 'req_app_add02' })).json().code, 'PREVIEW_ALREADY_CONFIRMED');
+  await dispatcher.idle();
+  assert.equal(sent.length, 2);
+  assert.equal(jobs.size, 2, '没有因为追加而新建任务');
+  assert.deepEqual(confirmStore.targetsOf(job.id).map((x) => x.targetId), ['g1', 'g2']);
+  // 追加目标失败后走单目标重试；重启后追加记录可读回
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g2' })).json().code, 'NOTHING_TO_RETRY');
+  assert.equal(ConfirmationStore.open(path.dirname(confirmStore.file)).appendsOf(job.id).length, 1);
+});
+
+test('F29a 管理门：追加接口同样需要 session 与同源', async (t) => {
+  const { call, sent } = await setupF16(t, () => ({ messageId: 'om' }));
+  for (const url of ['/api/v1/jobs/j1/delivery-previews', '/api/v1/jobs/j1/delivery-appends']) {
+    for (const extra of [{ 'x-test-via': 'token' }, { 'x-test-via': 'range' }, { origin: 'http://evil.example' }]) {
+      const r = await call('POST', url, { targets: [] }, extra);
+      assert.ok([401, 403].includes(r.statusCode), `${url} ${JSON.stringify(extra)} → ${r.statusCode}`);
+    }
+  }
+  assert.equal(sent.length, 0);
 });
