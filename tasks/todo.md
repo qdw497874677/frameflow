@@ -168,11 +168,12 @@ F13–F15通过；人工/独立复核故障矩阵与unknown语义。确认不重
 
 ## 阶段 F：网页派发闭环（V2）
 
-### [ ] F16 — 确认、投递查询与重试 API
+### [x] F16 — 确认、投递查询与重试 API
 - 模块：delivery-policy；验收：DP-03/04/05/08。依赖：F12、F15。
 - 验收：①确认返回稳定任务关联/受理状态，查询和单目标重试契约明确；②相同requestId异载荷409、unknown重试有显式重复风险参数；③无权限/停用时不调用发送，API无Secret/完整范围链接泄漏。
 - 文件：`server/src/api/delivery.ts`、`contracts/openapi.yaml`、`web/src/api/contract.ts`、`server/tools/delivery-api.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-api.test.mjs)`。
+- 完成（2026-10-25）：POST /delivery-confirmations、GET /jobs/{id}/deliveries、POST /jobs/{id}/deliveries/retry（acceptDuplicateRisk、ATTEMPT_IN_FLIGHT）；delivery/dispatcher.ts；server 装配（无传输时 NO_TRANSPORT）；delivery-api.test.mjs +2
 
 ### [ ] F17 — 策略编辑与网页确认入口
 - 模块：delivery-policy；验收：DP-01/02/05/07。依赖：F10、F16。

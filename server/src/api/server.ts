@@ -7,6 +7,9 @@ import { registerConnectorRoutes } from './connectors.ts';
 import { registerDeliveryRoutes } from './delivery.ts';
 import { PolicyStore } from '../delivery/policies.ts';
 import { PreviewService } from '../delivery/previews.ts';
+import { ConfirmationService, ConfirmationStore } from '../delivery/confirmations.ts';
+import { DeliveryDispatcher } from '../delivery/dispatcher.ts';
+import { DeliveryStore } from '../delivery/store.ts';
 import { ConnectorConfigStore } from '../connectors/config.ts';
 import { ConnectorRegistry } from '../connectors/registry.ts';
 import { ConnectorRuntime } from '../connectors/runtime.ts';
@@ -123,7 +126,27 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     store: connectorStore, runtime: connectorRuntime, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via,
     isReferenced: (cid) => policyStore.current.policies.some((p) => p.targets.some((t) => t.connectorId === cid)),
   });
+  // ── 确认与外传（F13–F16）：尚无平台传输适配器，发送一律 failed: NO_TRANSPORT（不触网）
+  const pstate = () => ({ connectors: connectorStore.current, policies: policyStore.current });
+  const confirmStore = ConfirmationStore.open(cfg.dataDir);
+  const dispatcher = new DeliveryDispatcher({
+    store: DeliveryStore.open(cfg.dataDir), confirmations: confirmStore, state: pstate,
+    transport: { send: async () => { throw new Error('NO_TRANSPORT'); } },
+  });
+  const selectIds = (projectId: string, ids: readonly string[]) =>
+    lib.select({ ids: [...ids], project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id);
+  const confirmations = new ConfirmationService(confirmStore, {
+    previews, state: pstate, currentPhotoIds: selectIds,
+    findJob: (id) => { try { return jobs.get(id); } catch { return undefined; } },
+    createJob: (rec) => jobs.createConfirmed({
+      jobId: rec.jobId, requestId: rec.requestId, kind: 'annotate', selection: { ids: [...rec.snapshot.photoIds], project: rec.snapshot.projectId },
+      params: { channel: 'inapp', label: (rec.snapshot.params.alias ?? '').replace(/[|\n\r]/g, ' ').trim().slice(0, 40) || '外部批注', note: rec.snapshot.params.note, notifyOnComplete: rec.snapshot.params.notifyOnComplete, projectId: rec.snapshot.projectId },
+      items: rec.snapshot.photoIds.map((id) => ({ id })), by: 'delivery-confirmation',
+    }),
+  });
+  try { confirmations.recover(); } catch (e) { app.log.warn({ err: e }, '确认恢复失败'); }
   registerDeliveryRoutes(app, {
+    confirmations, dispatcher,
     policies: policyStore, connectors: connectorStore, previews, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via,
     projectExists: (id) => lib.roots().some((r) => r.id === id),
     selectPhotos: (projectId, selection) => lib.select({ ...selection, project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id),

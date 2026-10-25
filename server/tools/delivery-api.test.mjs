@@ -94,3 +94,92 @@ test('管理门：无密码 / 非 session / 跨站 一律拒绝', async (t) => {
   assert.equal((await b.call('POST', '/api/v1/delivery-previews', { projectId: 'p' }, 'link')).json().code, 'SESSION_REQUIRED');
   assert.equal((await b.call('POST', '/api/v1/delivery-previews', { projectId: 'p' }, 'session', { origin: 'http://evil.example' })).json().code, 'CSRF_REJECTED');
 });
+
+// ── F16：确认、投递查询与单目标重试（假传输，零真实发送）
+import { ConfirmationService, ConfirmationStore } from '../src/delivery/confirmations.ts';
+import { DeliveryDispatcher } from '../src/delivery/dispatcher.ts';
+import { DeliveryStore } from '../src/delivery/store.ts';
+
+async function setupF16(t, behave) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-f16-'));
+  const connectors = ConnectorConfigStore.open(dir);
+  const two = inst('c1');
+  connectors.create({ ...two, targets: [...two.targets, { ...two.targets[0], id: 'g2', externalId: 'oc_g2', label: '二群' }] }, 0);
+  connectors.replace(connectors.current.instances.map((i) => ({ ...i, enabled: true })), 1);
+  const policies = PolicyStore.open(dir);
+  const previews = new PreviewService();
+  const state = () => ({ connectors: connectors.current, policies: policies.current });
+  const sent = [];
+  const transport = { send: async (req) => { sent.push({ ...req }); return behave(req, sent.length); } };
+  const confirmStore = ConfirmationStore.open(dir);
+  const dispatcher = new DeliveryDispatcher({ store: DeliveryStore.open(dir), confirmations: confirmStore, transport, state, timeoutMs: 20 });
+  const jobs = new Map();
+  const confirmations = new ConfirmationService(confirmStore, {
+    previews, state, currentPhotoIds: (_p, ids) => ids, findJob: (id) => jobs.get(id),
+    createJob: (rec) => { if (!jobs.has(rec.jobId)) jobs.set(rec.jobId, { id: rec.jobId, state: 'queued' }); return jobs.get(rec.jobId); },
+  });
+  const app = Fastify();
+  registerDeliveryRoutes(app, { policies, connectors, previews, confirmations, dispatcher, authEnabled: () => true, via: () => 'session',
+    projectExists: (id) => id === 'p', selectPhotos: () => ['a', 'b'] });
+  await app.ready();
+  t.after(async () => { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const call = (method, url, payload) => app.inject({ method, url, payload, headers: { host: 'ff.local', origin: 'http://ff.local' } });
+  return { call, sent, jobs, dispatcher, connectors };
+}
+const both = [{ connectorId: 'c1', targetId: 'g1' }, { connectorId: 'c1', targetId: 'g2' }];
+
+test('F16 确认：受理状态稳定、重放 200、异载荷 409、仅应用内零发送', async (t) => {
+  const { call, sent, jobs, dispatcher } = await setupF16(t, () => ({ messageId: 'om_1' }));
+  const pv = (await call('POST', '/api/v1/delivery-previews', { projectId: 'p', targets: both })).json();
+  const body = { previewId: pv.previewId, revision: pv.revision, requestId: 'req_api_0001', notifyOnComplete: false, acknowledged: true };
+  const r1 = await call('POST', '/api/v1/delivery-confirmations', body);
+  assert.equal(r1.statusCode, 201);
+  assert.equal(r1.json().job.state, 'queued');
+  const r2 = await call('POST', '/api/v1/delivery-confirmations', body);
+  assert.equal(r2.statusCode, 200);
+  assert.equal(r2.json().job.id, r1.json().job.id);
+  assert.equal((await call('POST', '/api/v1/delivery-confirmations', { ...body, notifyOnComplete: true })).json().code, 'REQUEST_ID_CONFLICT');
+  await dispatcher.idle();
+  assert.equal(sent.length, 2);
+  assert.equal(jobs.size, 1);
+  const text = JSON.stringify(sent) + (await call('GET', `/api/v1/jobs/${r1.json().job.id}/deliveries`)).body;
+  assert.ok(!/FF_X|secret|\?t=|oc_/.test(text), '消息与 API 不含 Secret / 范围链接 / 外部 chat_id');
+  const inApp = (await call('POST', '/api/v1/delivery-previews', { projectId: 'p', targets: [] })).json();
+  const r3 = await call('POST', '/api/v1/delivery-confirmations', { previewId: inApp.previewId, revision: inApp.revision, requestId: 'req_api_0002' });
+  assert.equal(r3.statusCode, 201);
+  await dispatcher.idle();
+  assert.equal(sent.length, 2);
+  assert.equal((await call('GET', `/api/v1/jobs/${r3.json().job.id}/deliveries`)).json().items.length, 0);
+});
+
+test('F16 重试：只重发失败目标；unknown 需显式风险参数；停用时不调用发送', async (t) => {
+  let mode = 'fail-g2';
+  const { call, sent, dispatcher, connectors } = await setupF16(t, (req) => {
+    if (mode === 'hang') return new Promise(() => {});
+    if (mode === 'fail-g2' && req.targetId === 'g2') throw new Error('boom');
+    return { messageId: `om_${req.targetId}` };
+  });
+  const pv = (await call('POST', '/api/v1/delivery-previews', { projectId: 'p', targets: both })).json();
+  const job = (await call('POST', '/api/v1/delivery-confirmations', { previewId: pv.previewId, revision: pv.revision, requestId: 'req_api_0003', acknowledged: true })).json().job;
+  await dispatcher.idle();
+  let items = (await call('GET', `/api/v1/jobs/${job.id}/deliveries`)).json().items;
+  assert.deepEqual(items.map((i) => i.state), ['sent', 'failed']);
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g1' })).json().code, 'NOTHING_TO_RETRY');
+  mode = 'hang';
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g2' })).statusCode, 202);
+  await dispatcher.idle();
+  items = (await call('GET', `/api/v1/jobs/${job.id}/deliveries`)).json().items;
+  assert.equal(items[1].state, 'unknown');
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g2', acceptDuplicateRisk: true })).json().code, 'ATTEMPT_IN_FLIGHT');
+  // 停用连接器：显式接受风险也不会调用传输
+  connectors.replace(connectors.current.instances.map((i) => ({ ...i, enabled: false })), connectors.current.revision);
+  const before = sent.length;
+  dispatcher.runner.inFlight.clear();
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g2' })).json().code, 'DUPLICATE_RISK');
+  assert.equal((await call('POST', `/api/v1/jobs/${job.id}/deliveries/retry`, { connectorId: 'c1', targetId: 'g2', acceptDuplicateRisk: true })).statusCode, 202);
+  await dispatcher.idle();
+  assert.equal(sent.length, before);
+  items = (await call('GET', `/api/v1/jobs/${job.id}/deliveries`)).json().items;
+  assert.equal(items[1].error, 'AUTHORIZATION_REVOKED');
+  assert.equal((await call('GET', '/api/v1/jobs/nope/deliveries')).statusCode, 404);
+});

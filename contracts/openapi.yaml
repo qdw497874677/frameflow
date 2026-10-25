@@ -699,6 +699,67 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /delivery-confirmations:
+    post:
+      summary: 确认预览并受理（幂等：同 requestId 同载荷重放 200，异载荷 409）
+      x-implemented: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [previewId, revision, requestId]
+              properties:
+                previewId: { type: string }
+                revision: { type: string }
+                requestId: { type: string, pattern: "^[A-Za-z0-9_-]{8,128}$" }
+                notifyOnComplete: { type: boolean }
+                acknowledged: { type: boolean, description: 有外部目标时必须为 true }
+      responses:
+        "201": { description: accepted, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryConfirmation" } } } }
+        "200": { description: replayed, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryConfirmation" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+  /jobs/{id}/deliveries:
+    get:
+      summary: 任务逐目标、逐分片外传状态
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPartPage" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /jobs/{id}/deliveries/retry:
+    post:
+      summary: 单目标重试（只重发 failed/pending；unknown 需 acceptDuplicateRisk）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [connectorId, targetId]
+              properties:
+                connectorId: { type: string }
+                targetId: { type: string }
+                acceptDuplicateRisk: { type: boolean }
+      responses:
+        "202": { description: queued, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPartPage" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error", description: "NOTHING_TO_RETRY / DUPLICATE_RISK / ATTEMPT_IN_FLIGHT" }
+
 components:
   securitySchemes:
     session:
@@ -1146,6 +1207,35 @@ components:
         policyRevision: { type: integer }
         connectorRevision: { type: integer }
         warnings: { type: array, items: { type: string, enum: [NO_TARGET, POLICY_TARGET_UNAVAILABLE] } }
+    DeliveryPart:
+      type: object
+      required: [jobId, connectorId, targetId, partIndex, state, attempts, messageId, error]
+      properties:
+        jobId: { type: string }
+        connectorId: { type: string }
+        targetId: { type: string }
+        partIndex: { type: integer }
+        state: { type: string, enum: [pending, sending, sent, failed, unknown] }
+        attempts: { type: integer }
+        currentIntentId: { type: string, nullable: true }
+        messageId: { type: string, nullable: true }
+        error: { type: string, nullable: true }
+    DeliveryPartPage:
+      type: object
+      required: [jobId, items]
+      properties:
+        jobId: { type: string }
+        items: { type: array, items: { $ref: "#/components/schemas/DeliveryPart" } }
+    DeliveryConfirmation:
+      type: object
+      required: [accepted, replayed, requestId, job, targets, deliveries]
+      properties:
+        accepted: { type: boolean }
+        replayed: { type: boolean }
+        requestId: { type: string }
+        job: { type: object, required: [id, state], properties: { id: { type: string }, state: { type: string } } }
+        targets: { type: array, items: { type: object } }
+        deliveries: { type: array, items: { $ref: "#/components/schemas/DeliveryPart" } }
     ConnectorVerifyResult:
       type: object
       required: [ok]

@@ -356,3 +356,31 @@ export interface DeliveryPreviewDto {
   connectorRevision: number;
   warnings: Array<'NO_TARGET' | 'POLICY_TARGET_UNAVAILABLE'>;
 }
+
+export type DeliveryPartState = 'pending' | 'sending' | 'sent' | 'failed' | 'unknown';
+
+export interface DeliveryPartDto {
+  jobId: string;
+  connectorId: string;
+  targetId: string;
+  partIndex: number;
+  state: DeliveryPartState;
+  attempts: number;
+  currentIntentId: string | null;
+  messageId: string | null;
+  error: string | null;
+}
+
+export interface DeliveryPartPageDto {
+  jobId: string;
+  items: DeliveryPartDto[];
+}
+
+export interface DeliveryConfirmationDto {
+  accepted: boolean;
+  replayed: boolean;
+  requestId: string;
+  job: { id: string; state: string };
+  targets: Array<DeliveryTargetRefDto & { label: string }>;
+  deliveries: DeliveryPartDto[];
+}
