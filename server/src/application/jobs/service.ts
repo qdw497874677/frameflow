@@ -339,6 +339,26 @@ export class JobsService {
     return this.ctx.lib.gates.run([OperationGates.job(id)], fn);
   }
 
+  /**
+   * 阶段操作：在 job gate 里跑 handler.actions[name]。只有进行中的任务收操作（interrupted 接着跑）；
+   * 收尾话术与 pump 一致：done → 收尾，failed → 失败，其余看 items 是否全有终态。
+   */
+  async action(id: string, name: string, body: Record<string, unknown>): Promise<Job> {
+    return this.withJob(id, async () => {
+      const job = this.get(id);
+      const run = this.registry[job.kind]?.actions?.[name];
+      if (!run) throw new JobError('invalid', `任务类型 ${job.kind} 没有操作 ${name}`);
+      if (!ACCEPTING.includes(job.state)) throw new JobError('conflict', `任务处于 ${job.state}，现在不收操作`);
+      const current = job.state === 'interrupted' ? this.store.setState(id, 'running') : job;
+      const outcome = await run(current, body, this.ctxFor(id), this.sinkFor(id));
+      if (outcome.note) this.store.addEvent(id, { type: 'note', note: outcome.note });
+      if (outcome.state === 'failed') this.fail(id, outcome.error ?? '任务失败');
+      else if (outcome.state === 'done') this.finish(id);
+      else this.settle(id);
+      return this.get(id);
+    });
+  }
+
   async cancel(id: string): Promise<Job> {
     return this.withJob(id, () => this.cancelLocked(id));
   }
