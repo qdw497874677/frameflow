@@ -110,3 +110,16 @@ export interface ConnectorPort {
   start(onEvent: (event: ConnectorEvent) => Promise<EventAck>): Promise<void>;
   stop(): Promise<void>;
 }
+
+/** 测试连接结果：只验证凭据/连接，绝不发消息（CC-07）。 */
+export type VerifyResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: string };
+
+/** 运行时持有的平台端口：在 ConnectorPort 之上加无消息的连接验证。 */
+export interface ManagedConnectorPort extends ConnectorPort {
+  verify(): Promise<VerifyResult>;
+}
+
+/** 平台适配器工厂：Secret 只在这里由运行时私有传入，不进入配置/日志。 */
+export type ConnectorFactory = (instance: ConnectorInstanceConfig, secret: string) => ManagedConnectorPort;
