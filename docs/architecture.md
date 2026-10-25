@@ -35,3 +35,10 @@
 - `adapters/outbound/fs/data-dir.ts`：端口实现 + `backupDataDir`（复制数据目录并写 sha256 manifest，跳过 thumbs / previews 与 *.tmp）。
 - `adapters/inbound/cli/backup.ts`：`npm run backup -- <目标目录>`。
 - 启动时在 `index.ts` 跑一次体检，只记日志不阻断。
+
+## 日志压缩
+
+- `domain/maintenance/compaction.ts`：阈值规则（行数 ≥ 1000 且 ≥ 有效状态 2 倍）。
+- `adapters/feishu/jsonl.ts` 的 `compact`：临时文件 → fsync → rename → fsync 目录，崩溃安全；损坏日志拒绝压缩。
+- 只压缩"最后状态即全部语义"的日志：飞书 `cursors.jsonl`（每个 job×target 一行）与 `sessions.jsonl`（message 行折叠，revoke 保留）。加载后与每次追加后按阈值触发。
+- `marks.jsonl` / `jobs.jsonl` / `deliveries.jsonl` / `actions.jsonl` 是审计与幂等依据（历史、opId 去重、投递结果），压缩会改变行为，故不压缩。
