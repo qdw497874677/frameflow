@@ -95,6 +95,22 @@ paths:
         "400": { description: 路径为空 / 已存在同样的项目, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: 路径不存在或 3 秒内无响应（挂死的挂载）, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /scan:
+    post:
+      summary: 立即强制重扫全部根目录（已有扫描在进行时排队补扫一次）
+      responses:
+        "202":
+          description: accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [started]
+                properties:
+                  started: { type: boolean }
+                  queued: { type: boolean }
+                  reason: { type: string }
+
   /fs/browse:
     get:
       summary: 列磁盘目录（供「选择目录」下钻，只列目录不列文件）

@@ -42,3 +42,7 @@
 - `adapters/feishu/jsonl.ts` 的 `compact`：临时文件 → fsync → rename → fsync 目录，崩溃安全；损坏日志拒绝压缩。
 - 只压缩"最后状态即全部语义"的日志：飞书 `cursors.jsonl`（每个 job×target 一行）与 `sessions.jsonl`（message 行折叠，revoke 保留）。加载后与每次追加后按阈值触发。
 - `marks.jsonl` / `jobs.jsonl` / `deliveries.jsonl` / `actions.jsonl` 是审计与幂等依据（历史、opId 去重、投递结果），压缩会改变行为，故不压缩。
+
+## 契约守卫
+
+`tools/openapi-routes.test.mjs` 在临时目录起真实 `buildServer`，把 `printRoutes` 的 /api/v1 路由与 `contracts/openapi.yaml` 的 (方法, 路径) 双向比对（参数名与 HEAD 不计）。新增或删除路由必须同步契约。
