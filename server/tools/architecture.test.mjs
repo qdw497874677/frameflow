@@ -9,8 +9,6 @@ const SRC = path.join(import.meta.dirname, '..', 'src');
 const LAYERS = ['domain', 'application', 'adapters'];
 const ROOT_FILES = ['index.ts'];
 /** 每层允许 import 的层与 node 内建模块（纯计算类，不含 I/O） */
-/** 已知待拆的历史文件：只允许减少，拆完即删（library.ts 仍直接做文件 I/O） */
-const PENDING = new Set(['application/library.ts']);
 const RULES = {
   domain: { layers: ['domain'], builtins: ['node:path'] },
   application: { layers: ['domain', 'application'], builtins: ['node:path', 'node:crypto', 'node:async_hooks'] },
@@ -54,11 +52,5 @@ test('源码只有三层加组装根', () => {
 });
 
 test('依赖只指向内层', () => {
-  const found = walk(SRC).flatMap((f) => (PENDING.has(rel(f)) ? [] : violations(f)));
-  assert.deepEqual(found, []);
-});
-
-test('待拆清单没有已经合规的文件', () => {
-  const clean = [...PENDING].filter((f) => violations(path.join(SRC, f)).length === 0);
-  assert.deepEqual(clean, []);
+  assert.deepEqual(walk(SRC).flatMap(violations), []);
 });

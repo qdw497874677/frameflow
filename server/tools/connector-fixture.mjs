@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { loadConfig } from '../src/adapters/outbound/config-file.ts';
-import { Library } from '../src/application/library.ts';
+import { Library } from '../src/adapters/outbound/fs/library.ts';
 import { buildServer } from '../src/adapters/inbound/http/server.ts';
 import { feishuFactory } from '../src/adapters/feishu/transport.ts';
 

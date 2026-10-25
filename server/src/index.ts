@@ -12,7 +12,7 @@ import { fakeE2eSdk } from './adapters/feishu/fake-sdk.ts';
 import { MediaError } from './adapters/feishu/media.ts';
 import { feishuFactory } from './adapters/feishu/transport.ts';
 import { endExif } from './adapters/outbound/exif.ts';
-import { Library } from './application/library.ts';
+import { Library } from './adapters/outbound/fs/library.ts';
 
 const cfg = loadConfig();
 const lib = new Library(cfg);
