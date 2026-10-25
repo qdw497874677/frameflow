@@ -5,6 +5,7 @@
  *   node tools/e2e-connectors.mjs --scenario=dispatch   # F17：派发框勾选目标/预览/确认/取消零发送
  *   node tools/e2e-connectors.mjs --scenario=delivery   # F18：两实例三目标部分失败、单目标重试、unknown 风险确认
  *   node tools/e2e-connectors.mjs --scenario=progress   # F27：显式确认进度（假飞书回流 + 网页共享，重标不重复计数）
+ *   node tools/e2e-connectors.mjs --scenario=redispatch # F29b：任务详情追加目标：预览→二次确认；取消零发送；不建新任务、已有目标不重发
  * dispatch/delivery 用 FRAMEFLOW_FAKE_TRANSPORT=e2e 的离线假传输（externalId 以 oc_fail 开头的失败），绝不触网。
  * 独立临时库与数据目录；后端未注册任何平台适配器（零外传），Secret 只用假环境变量；CDP 真鼠标/键盘。
  * 两轮：①设密码并登录（390px）：新建默认停用、目标编辑、secretConfigured、启用后真实错误状态、
@@ -27,6 +28,7 @@ const REPO = resolve(dirname(FILE), '..');
 const SHOT = join(REPO, 'tools/shot.mjs');
 const PASSWORD = 'e2e-local-password';
 const FAKE_ENV = 'FRAMEFLOW_E2E_FAKE_SECRET';
+const FLOW_MODES = ['dispatch', 'delivery', 'progress', 'redispatch'];
 
 export default async function probe(send) {
   const evaluate = async (expression) => {
@@ -73,7 +75,7 @@ export default async function probe(send) {
 
   const mode = await evaluate(`new URLSearchParams(location.search).get('e2eMode')`);
 
-  if (mode === 'dispatch' || mode === 'delivery' || mode === 'progress') return flow(mode, { evaluate, waitFor, clickAt, center, send });
+  if (FLOW_MODES.includes(mode)) return flow(mode, { evaluate, waitFor, clickAt, center, send });
   if (mode === 'noauth') {
     await waitFor(`${card}`, '设置页未显示连接器卡片');
     assert.match(await evaluate(`${card}.innerText`), /先在后端设置应用密码/);
@@ -229,6 +231,58 @@ async function flow(mode, { evaluate, waitFor, clickAt, center }) {
     console.log('ok 确认进度：假飞书回流与网页共享；已确认/剩余/不可用分开显示；重标不重复计数；390px 无溢出');
     return;
   }
+  if (mode === 'redispatch') {
+    await openDispatch();
+    await tick('飞书甲 · 摄影群');
+    await waitFor(`/飞书甲/.test(${dlg}.querySelector('[data-testid="dispatch-preview"]').textContent)`, '预览未刷新');
+    await tick('我确认');
+    await clickAt(await center(`() => [...${dlg}.querySelectorAll('button')].find(b => b.textContent.trim() === '派发' && !b.disabled)`));
+    await waitFor(`/已派发/.test(${dlg}.innerText)`, '确认后应显示已派发');
+    const jobsBefore = (await api('GET', '/api/v1/jobs?limit=50')).j.items;
+    const job = jobsBefore[0];
+    const parts = async () => (await api('GET', `/api/v1/jobs/${job.id}/deliveries`)).j.items;
+    for (let i = 0; i < 30 && !(await parts()).every((p) => p.state === 'sent'); i++) await sleep(100);
+    await evaluate(`location.href = '/?view=jobs&e2eMode=redispatch&step=jobs'`);
+    await sleep(2000);
+    await waitFor(`[...document.querySelectorAll('button, [role="button"]')].find(e => e.textContent.includes('批注') && !e.textContent.includes('派发'))`, '任务列表为空');
+    await clickAt(await center(`() => [...document.querySelectorAll('button, [role="button"]')].find(e => e.textContent.includes('批注') && !e.textContent.includes('派发'))`));
+    const rd = `document.querySelector('[data-testid="redispatch"]')`;
+    const q = (id) => `() => ${rd}.querySelector('[data-testid="${id}"]')`;
+    await waitFor(rd, '任务详情没有追加目标入口');
+    // 取消：零发送
+    await clickAt(await center(q('redispatch-open')));
+    await waitFor(`${rd}.querySelector('[data-key="c2/g1"]')`, '没有可选目标');
+    assert.equal(await evaluate(`${rd}.querySelector('[data-key="c1/g1"]').disabled`), true, '已有目标不可再选');
+    await clickAt(await center(`() => ${rd}.querySelector('[data-key="c2/g1"]')`));
+    await clickAt(await center(q('redispatch-preview')));
+    await waitFor(`${rd}.querySelector('[data-testid="redispatch-review"]')`, '未显示追加预览');
+    assert.match(await evaluate(`${rd}.innerText`), new RegExp(job.id));
+    assert.match(await evaluate(`${rd}.querySelector('[data-testid="redispatch-new"]').textContent`), /客户群/);
+    assert.equal(await evaluate(`${rd}.querySelector('[data-testid="redispatch-confirm"]').disabled`), true, '未二次确认不可外传');
+    await noOverflow('追加预览 390px');
+    const small = await evaluate(`[...${rd}.querySelectorAll('button')].filter(e => e.getBoundingClientRect().height < 44).map(e => e.textContent)`);
+    assert.deepEqual(small, [], '追加按钮须≥44px');
+    await clickAt(await center(q('redispatch-cancel')));
+    await sleep(800);
+    assert.equal((await parts()).filter((p) => p.connectorId === 'c2').length, 0, '取消不应外传');
+    console.log('ok 追加目标：预览列原任务/新增目标；须二次确认；取消零发送；390px 无溢出');
+    // 确认：只发新增目标，不建新任务
+    await clickAt(await center(q('redispatch-open')));
+    await waitFor(`${rd}.querySelector('[data-key="c2/g1"]')`, '没有可选目标');
+    await clickAt(await center(`() => ${rd}.querySelector('[data-key="c2/g1"]')`));
+    await clickAt(await center(q('redispatch-preview')));
+    await waitFor(`${rd}.querySelector('[data-testid="redispatch-ack"]')`, '未显示二次确认');
+    await clickAt(await center(q('redispatch-ack')));
+    await clickAt(await center(q('redispatch-confirm')));
+    await waitFor(`/已追加/.test(${rd}.querySelector('[data-testid="redispatch-msg"]').textContent)`, '追加无反馈');
+    let d = await parts();
+    for (let i = 0; i < 30 && !d.every((p) => p.state === 'sent'); i++) { await sleep(100); d = await parts(); }
+    assert.deepEqual([...new Set(d.map((p) => `${p.connectorId}/${p.targetId}:${p.state}`))].sort(), ['c1/g1:sent', 'c2/g1:sent']);
+    assert.ok(d.filter((p) => p.connectorId === 'c1').every((p) => p.attempts === 1), '已有目标不得重发');
+    assert.equal((await api('GET', '/api/v1/jobs?limit=50')).j.items.length, jobsBefore.length, '追加不建新任务');
+    console.log('ok 追加确认：只发新增目标；原目标不重发；不建新任务');
+    return;
+  }
   // delivery：三个目标部分失败 → 任务详情按目标显示；失败可重试
   await openDispatch();
   for (const t of ['飞书甲 · 摄影群', '飞书乙 · 客户群', '飞书乙 · 坏群']) await tick(t);
@@ -278,7 +332,7 @@ async function run(dir, { password, width, mode }) {
   await writeFile(config, JSON.stringify({ host: '127.0.0.1', port, password, dataDir: join(dir, `data-${mode}`), roots: [{ id: 'e2e', label: '连接器测试', path: library }] }));
   let log = '';
   const server = spawn(process.execPath, ['src/index.ts', `--config=${config}`], {
-    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: 'disabled', ...(mode === 'dispatch' || mode === 'delivery' || mode === 'progress' ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: 'disabled', ...(FLOW_MODES.includes(mode) ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (b) => { log += b; });
   server.stderr.on('data', (b) => { log += b; });
@@ -306,7 +360,7 @@ async function run(dir, { password, width, mode }) {
 
 async function main() {
   const scenario = (process.argv.find((a) => a.startsWith('--scenario=')) ?? '--scenario=settings').split('=')[1];
-  assert.ok(['settings', 'dispatch', 'delivery', 'progress'].includes(scenario), `未知场景 ${scenario}`);
+  assert.ok(['settings', ...FLOW_MODES].includes(scenario), `未知场景 ${scenario}`);
   const dir = await mkdtemp(join(tmpdir(), 'frameflow-connectors-'));
   try {
     if (scenario !== 'settings') {

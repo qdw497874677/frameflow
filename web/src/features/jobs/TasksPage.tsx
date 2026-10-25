@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DeliveryStatus } from './DeliveryStatus';
+import { RedispatchDialog } from '@/features/connectors/RedispatchDialog';
 import { describeEvent, eventTone, fmtTime, isActive, itemMark, kindLabel, STATE_LABEL, STATE_TONE } from './jobText';
 
 type Filter = 'all' | 'active' | 'done' | 'ended';
@@ -321,6 +322,7 @@ export function TasksPage() {
               </div>
 
               <DeliveryStatus jobId={detail.id} />
+              {detail.state !== 'cancelled' && detail.state !== 'failed' && <RedispatchDialog jobId={detail.id} />}
 
               {/* 产物：批注任务就是那张「打开就能批注」的链接 */}
               {detail.artifacts.length > 0 && (
