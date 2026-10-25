@@ -116,23 +116,26 @@ F07–F09通过。未设置密码、未启用、普通API token均不能启用�
 
 ## 阶段 D：网页管理与派发预览（V1/V2）
 
-### [ ] F10 — 设置页管理连接器
+### [x] F10 — 设置页管理连接器
 - 模块：connector-core；验收：CC-01/02/03/06/07。依赖：F09。
 - 验收：①设置页配置实例/群或私聊目标/允许用户与项目/创建权限，默认disabled；②显示secretConfigured、真实状态/错误与无消息连接测试，失败保留表单；③未认证入口禁用但后端仍校验，390px无溢出/主控件≥44px。
 - 文件：`web/src/api/connectors.ts`、`web/src/features/connectors/ConnectorSettings.tsx`、`web/src/features/connectors/TargetEditor.tsx`、`web/src/features/settings/SettingsPage.tsx`、`tools/e2e-connectors.mjs`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=settings`；脚本此项创建，使用假适配和临时库。
+- 完成（2026-10-25）：设置页新增「外部连接器（飞书）」卡：实例/群或私聊目标/允许用户/授权项目/创建权限编辑，新建默认停用；显示secretConfigured与真实状态/错误码，无消息测试连接；保存失败保留表单；未设密码时入口禁用且后端仍403。`node tools/e2e-connectors.mjs --scenario=settings` 两轮（登录390px / 未设密码）通过，主控件≥44px、无横向溢出。
 
-### [ ] F11 — 策略配置与不可变预览服务
+### [x] F11 — 策略配置与不可变预览服务
 - 模块：delivery-policy；验收：DP-01/02/05。依赖：F07。
 - 验收：①按项目/事件匹配、目标去重，空项目集合不表示全部；②预览绑定照片/目标/参数/策略版本、10分钟期限，零发送；③更改权限/策略/照片需重新预览，不静默换目标。
 - 文件：`server/src/delivery/policies.ts`、`server/src/delivery/previews.ts`、`server/src/delivery/types.ts`、`server/tools/delivery-policy.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-policy.test.mjs)`；假时间测试过期边界。
+- 完成（2026-10-25）：delivery/types、policies（原子0600存储、revision、未知字段拒绝、纯函数匹配+去重、空projectIds不匹配）、previews（不可变快照+sha256 revision、10分钟期限可注入时钟、陈旧/过期/取消、显式目标须在允许集合，零发送端口）。delivery-policy 3/3。
 
-### [ ] F12 — 策略与预览管理 API
+### [x] F12 — 策略与预览管理 API
 - 模块：delivery-policy；验收：DP-01/02/05、CC-03。依赖：F09、F11。
 - 验收：①策略CRUD/预览接口同一步写契约DTO，管理session+CSRF；②策略修改expectedRevision、目标引用/输入大小/分页限制完整；③任意外部chat_id/路径拒绝，预览与取消无发送。
 - 文件：`server/src/api/delivery.ts`、`server/src/api/server.ts`、`contracts/openapi.yaml`、`web/src/api/contract.ts`、`server/tools/delivery-api.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-api.test.mjs)`。
+- 完成（2026-10-25）：api/delivery.ts 策略CRUD+预览/取消，复用连接器管理门（密码+session+同源），expectedRevision、目标引用校验（存在且授权每个项目）、分页1–100、尺寸上限，外部chat_id/路径等未知字段一律UNKNOWN_FIELD；连接器删除接入策略引用检查；OpenAPI与DTO同步。delivery-api 3/3。
 
 ### [ ] 检查点 D — 网页配置与零外传
 F10–F12浏览器/接口回归通过，用户检查配置与权限文案。策略仅推荐，不得变成无确认群发。

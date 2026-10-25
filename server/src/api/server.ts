@@ -4,6 +4,9 @@
  */
 
 import { registerConnectorRoutes } from './connectors.ts';
+import { registerDeliveryRoutes } from './delivery.ts';
+import { PolicyStore } from '../delivery/policies.ts';
+import { PreviewService } from '../delivery/previews.ts';
 import { ConnectorConfigStore } from '../connectors/config.ts';
 import { ConnectorRegistry } from '../connectors/registry.ts';
 import { ConnectorRuntime } from '../connectors/runtime.ts';
@@ -113,7 +116,18 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   const connectorRuntime = new ConnectorRuntime(connectorStore, new ConnectorRegistry(), cfg.dataDir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }));
   await connectorRuntime.sync();
   app.addHook('onClose', async () => connectorRuntime.stopAll());
-  registerConnectorRoutes(app, { store: connectorStore, runtime: connectorRuntime, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via });
+  // ── 投递策略与预览（F11/F12）：策略在 dataDir/delivery-policies.json，预览只在内存、零发送
+  const policyStore = PolicyStore.open(cfg.dataDir);
+  const previews = new PreviewService();
+  registerConnectorRoutes(app, {
+    store: connectorStore, runtime: connectorRuntime, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via,
+    isReferenced: (cid) => policyStore.current.policies.some((p) => p.targets.some((t) => t.connectorId === cid)),
+  });
+  registerDeliveryRoutes(app, {
+    policies: policyStore, connectors: connectorStore, previews, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via,
+    projectExists: (id) => lib.roots().some((r) => r.id === id),
+    selectPhotos: (projectId, selection) => lib.select({ ...selection, project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id),
+  });
 
   // ── 认证：一条密码，三种凭据（见 api/auth.ts）──────────────────────────
   app.addHook('onRequest', async (req, reply) => {

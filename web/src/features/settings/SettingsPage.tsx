@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { ConnectorSettings } from '@/features/connectors/ConnectorSettings';
 
 /**
  * 设置：项目、数据源、后端状态。
@@ -240,6 +241,8 @@ export function SettingsPage() {
           </DevDetails>
         </CardContent>
       </Card>
+
+      <ConnectorSettings authEnabled={authEnabled} projects={roots.map((r) => ({ id: r.id, label: r.label }))} />
 
       {authEnabled && (
         <Card>

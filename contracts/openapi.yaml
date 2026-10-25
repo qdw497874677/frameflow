@@ -590,6 +590,115 @@ paths:
         "200": { description: ok, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/ConnectorTarget" } } } } } } }
         "404": { $ref: "#/components/responses/Error" }
 
+  /delivery-policies:
+    get:
+      summary: 投递策略列表（仅推荐目标；需管理 session）
+      x-implemented: true
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPolicyPage" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: 新建投递策略（目标只能引用已配置目标，且须授权给策略内每个项目）
+      x-implemented: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, policy]
+              properties:
+                expectedRevision: { type: integer, minimum: 0 }
+                policy: { $ref: "#/components/schemas/DeliveryPolicyInput" }
+      responses:
+        "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPolicyMutation" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /delivery-policies/{id}:
+    patch:
+      summary: 修改投递策略（expectedRevision 乐观并发）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, patch]
+              properties:
+                expectedRevision: { type: integer, minimum: 0 }
+                patch:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    enabled: { type: boolean }
+                    projectIds: { type: array, maxItems: 256, items: { type: string } }
+                    event: { type: string, enum: [task.dispatched, task.completed] }
+                    targets: { type: array, maxItems: 256, items: { $ref: "#/components/schemas/DeliveryTargetRef" } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPolicyMutation" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: 删除投递策略
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: expectedRevision, in: query, required: true, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPolicyMutation" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /delivery-previews:
+    post:
+      summary: 生成不可变派发预览（零发送；targets 省略=按策略推荐，[]=仅应用内）
+      x-implemented: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [projectId]
+              properties:
+                projectId: { type: string }
+                selection: { type: object }
+                params:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    alias: { type: string, nullable: true, maxLength: 500 }
+                    note: { type: string, nullable: true, maxLength: 500 }
+                    notifyOnComplete: { type: boolean }
+                targets: { type: array, maxItems: 64, items: { $ref: "#/components/schemas/DeliveryTargetRef" } }
+      responses:
+        "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPreview" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /delivery-previews/{id}:
+    delete:
+      summary: 取消预览（零发送）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: cancelled }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     session:
@@ -974,6 +1083,69 @@ components:
       properties:
         revision: { type: integer }
         item: { $ref: "#/components/schemas/Connector" }
+    DeliveryTargetRef:
+      type: object
+      additionalProperties: false
+      required: [connectorId, targetId]
+      properties:
+        connectorId: { type: string }
+        targetId: { type: string }
+    DeliveryPolicyInput:
+      type: object
+      additionalProperties: false
+      required: [id, enabled, projectIds, event, targets]
+      properties:
+        id: { type: string }
+        enabled: { type: boolean }
+        projectIds: { type: array, maxItems: 256, items: { type: string }, description: 空数组不匹配任何项目 }
+        event: { type: string, enum: [task.dispatched, task.completed] }
+        targets: { type: array, maxItems: 256, items: { $ref: "#/components/schemas/DeliveryTargetRef" } }
+    DeliveryPolicy:
+      allOf:
+        - { $ref: "#/components/schemas/DeliveryPolicyInput" }
+        - { type: object, required: [revision], properties: { revision: { type: integer } } }
+    DeliveryPolicyPage:
+      type: object
+      required: [revision, items, nextCursor]
+      properties:
+        revision: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/DeliveryPolicy" } }
+        nextCursor: { type: string, nullable: true }
+    DeliveryPolicyMutation:
+      type: object
+      required: [revision, policy]
+      properties:
+        revision: { type: integer }
+        policy: { allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }], nullable: true }
+    DeliveryPreview:
+      type: object
+      required: [previewId, revision, createdAt, expiresAt, projectId, photoCount, params, targets, policyRevision, connectorRevision, warnings]
+      properties:
+        previewId: { type: string }
+        revision: { type: string, description: 快照指纹，确认时原样带回 }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        projectId: { type: string }
+        photoCount: { type: integer }
+        params:
+          type: object
+          required: [alias, note, notifyOnComplete]
+          properties:
+            alias: { type: string, nullable: true }
+            note: { type: string, nullable: true }
+            notifyOnComplete: { type: boolean }
+        targets:
+          type: array
+          items:
+            type: object
+            required: [connectorId, targetId, label]
+            properties:
+              connectorId: { type: string }
+              targetId: { type: string }
+              label: { type: string }
+        policyRevision: { type: integer }
+        connectorRevision: { type: integer }
+        warnings: { type: array, items: { type: string, enum: [NO_TARGET, POLICY_TARGET_UNAVAILABLE] } }
     ConnectorVerifyResult:
       type: object
       required: [ok]
