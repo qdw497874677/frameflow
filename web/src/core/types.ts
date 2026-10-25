@@ -208,6 +208,15 @@ export interface JobItem {
   del?: boolean | null;
   clientRef?: string | null;
   at?: string | null;
+  /** grade（滤镜设置阶段）：这张的覆盖与过目时刻；缺省字段跟任务默认 */
+  grade?: { look?: string | null; strength?: number; reviewedAt?: string | null } | null;
+}
+
+/** 内置胶片风格（GET /looks） */
+export interface Look {
+  id: string;
+  name: string;
+  inspiredBy?: string;
 }
 
 /** 批注回流的一项：批注页给某一张的最终结论（`by` 不在里面 —— 由服务端从链接里的批注人推） */

@@ -449,6 +449,37 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
       return job;
     },
 
+    // 滤镜阶段：mock 没有风格文件（预览即原图），只演示状态流转
+    async jobAction(id: string, name: string, body: Record<string, unknown> = {}): Promise<Job> {
+      const job = await api.getJob(id);
+      if (name === 'set') {
+        const item = job.items.find((i) => i.id === body.photoId);
+        if (!item) throw new Error('这张照片不在这个任务里');
+        const prev = body.reset === true ? {} : { ...(item.grade ?? {}) };
+        if (body.look !== undefined) prev.look = body.look as string | null;
+        if (typeof body.strength === 'number') prev.strength = body.strength;
+        item.grade = { ...prev, reviewedAt: body.reviewed === false ? null : new Date().toISOString() };
+      } else if (name === 'defaults') {
+        job.params = { ...job.params, ...body };
+      } else if (name === 'complete') {
+        job.items.forEach((i) => { if (i.status === 'planned') i.status = 'done'; });
+        job.progress = { done: job.items.length, total: job.items.length };
+        job.state = 'done';
+        job.finishedAt = new Date().toISOString();
+        job.artifacts = [{ kind: 'dir', path: `exports/${id}` }];
+        pushEvent(id, { type: 'done', note: '（mock）导出完成' });
+      } else throw new Error(`没有操作 ${name}`);
+      return { ...job, items: job.items.map((i) => ({ ...i })) };
+    },
+
+    async listLooks() {
+      return [];
+    },
+
+    async lookCube(id: string): Promise<string> {
+      throw new Error(`mock 没有风格文件：${id}`);
+    },
+
     async undoJob(id: string): Promise<Job> {
       const job = await api.getJob(id);
       if (!job.reversible) throw new Error('这个任务不可撤销');

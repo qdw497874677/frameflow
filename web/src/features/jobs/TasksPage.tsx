@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Copy, ExternalLink, RefreshCw, Undo2, X } from 'lucide-react';
 import { cn } from 'cn';
 import { jobSource, source } from '@/api';
+import { GradeStage } from '@/features/grading/GradeStage';
 import { useAppState } from '@/core/store';
 import type { Job, JobEvent, Root } from '@/core/types';
 import { Badge } from '@/components/ui/badge';
@@ -359,6 +360,8 @@ export function TasksPage() {
                   </p>
                 </div>
               )}
+
+              {detail.kind === 'grade' && <GradeStage job={detail} busy={busy} onAct={act} />}
 
               {/* items 快照 */}
               <div className="mt-3 rounded-lg border border-border/60 p-3">

@@ -5,6 +5,7 @@ import type {
   Job,
   JobEvent,
   JobState,
+  Look,
   MarkChange,
   MarkInput,
   MarkResult,
@@ -137,6 +138,12 @@ export interface JobSource {
   undoJob(id: string): Promise<Job>;
   /** 已配置的**出站**通道（回流不走通道，走 POST /jobs/{id}/inbound） */
   listChannels(): Promise<Channel[]>;
+  /** 阶段操作（POST /jobs/{id}/actions/{name}），如 grade 的 set / defaults / complete */
+  jobAction(id: string, name: string, body?: Record<string, unknown>): Promise<Job>;
+  /** 内置胶片风格 */
+  listLooks(): Promise<Look[]>;
+  /** 风格的 .cube 原文（WebGL2 预览用，与导出同一份） */
+  lookCube(id: string): Promise<string>;
 }
 
 /* ── 批注页端口（外部批注人，手里只有一条 ?t= 范围 token）──────────────── */
