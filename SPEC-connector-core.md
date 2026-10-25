@@ -79,10 +79,10 @@ node tools/e2e-connectors.mjs
 
 ## Project Structure
 
-- `server/src/connectors/types.ts`：本模块提供的共享类型与生命周期接口。
-- `server/src/connectors/registry.ts`：实例注册/状态，不引入平台业务逻辑。
-- `server/src/connectors/config.ts`：配置持久化与脱敏。
-- `server/src/connectors/access.ts`：目标/身份授权。
+- `server/src/domain/connectors/types.ts`：本模块提供的共享类型与生命周期接口。
+- `server/src/application/connectors/registry.ts`：实例注册/状态，不引入平台业务逻辑。
+- `server/src/domain/connectors/config.ts`：配置校验与脱敏（持久化在 `adapters/outbound/fs/connector-config-store.ts`）。
+- `server/src/domain/connectors/access.ts`：目标/身份授权。
 - `web/src/features/connectors/`：设置页连接器区块。
 - `server/tools/connector-core.test.mjs`：独立临时配置测试。
 

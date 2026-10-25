@@ -5,8 +5,8 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { MarksStore } from '../src/core/marks.ts';
-import { readXmpMarks } from '../src/core/xmp.ts';
+import { MarksStore } from '../src/adapters/outbound/fs/marks-store.ts';
+import { readXmpMarks } from '../src/adapters/outbound/xmp.ts';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'artworks-marks-durability-'));

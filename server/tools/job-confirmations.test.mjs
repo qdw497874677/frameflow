@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { JobsStore, confirmationSummary } from '../src/core/jobs.ts';
-import { JobsService } from '../src/jobs/service.ts';
-import { OperationGates } from '../src/core/operation-gates.ts';
+import { JobsStore } from '../src/adapters/outbound/fs/jobs-store.ts';
+import { confirmationSummary } from '../src/domain/jobs/job.ts';
+import { JobsService } from '../src/application/jobs/service.ts';
+import { OperationGates } from '../src/application/operation-gates.ts';
 
 const handler = { undoable: false, validate: () => [], plan: () => [], apply: () => ({ state: 'running' }) };
 function setup(t) {
@@ -55,7 +56,7 @@ test('F23 非 explicit 任务拒绝投影；旧指纹不变', async (t) => {
 });
 
 test('F23 提交后投影前崩溃：对账只补投影一次', async (t) => {
-  const { reconcileConfirmations } = await import('../src/jobs/confirmations.ts');
+  const { reconcileConfirmations } = await import('../src/application/jobs/confirmations.ts');
   const { mk } = setup(t);
   const svc = mk();
   svc.createConfirmed({ ...input, jobId: 'job_r', requestId: 'req_r' });

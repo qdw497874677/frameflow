@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { WriterGuard } from '../src/connectors/writer.ts';
+import { WriterGuard } from '../src/adapters/outbound/fs/connector-writer.ts';
 
 const cleanups = new Map();
 function fixture(t) {
@@ -130,7 +130,7 @@ test('release never deletes a replacement lock; symlinks are refused', t => {
   next.release();
 });
 
-const moduleURL = new URL('../src/connectors/writer.ts', import.meta.url).href;
+const moduleURL = new URL('../src/adapters/outbound/fs/connector-writer.ts', import.meta.url).href;
 function child(dir) {
   return spawn(process.execPath, ['--input-type=module', '-e', `
     import { WriterGuard } from ${JSON.stringify(moduleURL)};

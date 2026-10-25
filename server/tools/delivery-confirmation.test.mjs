@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PreviewService } from '../src/delivery/previews.ts';
-import { ConfirmationService, ConfirmationStore } from '../src/delivery/confirmations.ts';
+import { PreviewService } from '../src/application/delivery/previews.ts';
+import { ConfirmationService } from '../src/application/delivery/confirmation-service.ts';
+import { ConfirmationStore } from '../src/adapters/outbound/fs/delivery-confirmations.ts';
 
 const target = { id: 'g1', connectorId: 'c1', label: '群', kind: 'group', externalId: 'oc_x', projectIds: ['p'], allowedActorIds: [], canAnnotate: false, canRequestJpeg: false };
 const conn = (enabled = true) => ({ version: 1, revision: 1, instances: [{ id: 'c1', kind: 'feishu', enabled, label: 'c', appId: 'cli', secretEnv: 'FF_X', tenantId: 't', targets: [target], creatorActorIds: [], creatorProjectIds: [] }] });

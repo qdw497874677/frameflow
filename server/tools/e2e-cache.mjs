@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CacheJanitor, touchIfStale } from '../src/core/cache.ts';
+import { CacheJanitor, touchIfStale } from '../src/adapters/outbound/fs/cache.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = join(HERE, '..');

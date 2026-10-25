@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ConnectorConfigStore } from '../src/connectors/config.ts';
-import { ConnectorRegistry } from '../src/connectors/registry.ts';
-import { ConnectorRuntime, WRITER_LOCK } from '../src/connectors/runtime.ts';
+import { ConnectorConfigStore } from '../src/adapters/outbound/fs/connector-config-store.ts';
+import { ConnectorRegistry } from '../src/application/connectors/registry.ts';
+import { ConnectorRuntime } from '../src/application/connectors/runtime.ts';
+import { PidFileLock, WRITER_LOCK } from '../src/adapters/outbound/fs/writer-lock.ts';
 
 function tmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'connector-runtime-'));
@@ -41,7 +42,7 @@ function setup(t, env = ENV) {
   const f = fakes();
   reg.register('feishu', f.factory);
   const events = [];
-  const rt = new ConnectorRuntime(store, reg, dir, async (id, ev) => { events.push([id, ev]); return { kind: 'accepted' }; }, env);
+  const rt = new ConnectorRuntime(store, reg, new PidFileLock(dir), async (id, ev) => { events.push([id, ev]); return { kind: 'accepted' }; }, env);
   t.after(() => rt.stopAll());
   return { dir, store, reg, rt, f, events };
 }
@@ -76,7 +77,7 @@ test('坏环境引用可诊断且不泄露；重启状态不假装 connected', a
   assert.deepEqual(rt.status('c2'), { state: 'error', reason: 'SECRET_ENV_EMPTY' });
   assert.equal(f.calls.length, 0);
   const reg2 = new ConnectorRegistry();
-  const rt2 = new ConnectorRuntime(ConnectorConfigStore.open(dir), reg2, dir, async () => ({ kind: 'accepted' }), ENV);
+  const rt2 = new ConnectorRuntime(ConnectorConfigStore.open(dir), reg2, new PidFileLock(dir), async () => ({ kind: 'accepted' }), ENV);
   assert.equal(rt2.status('c1').state, 'disabled');
   await rt.stopAll();
 });
@@ -124,8 +125,8 @@ test('停用后事件拒绝；跨实例身份拒绝', async t => {
 
 // ── F21：飞书适配器经运行时（假 SDK，零网络）
 import Fastify from 'fastify';
-import { feishuFactory } from '../src/connectors/feishu/transport.ts';
-import { registerConnectorRoutes } from '../src/api/connectors.ts';
+import { feishuFactory } from '../src/adapters/feishu/transport.ts';
+import { registerConnectorRoutes } from '../src/adapters/inbound/http/connectors.ts';
 
 function feishuSetup(t) {
   const dir = tmp(t);
@@ -141,7 +142,7 @@ function feishuSetup(t) {
   };
   const reg = new ConnectorRegistry();
   reg.register('feishu', feishuFactory({ sdk: () => sdk }));
-  const rt = new ConnectorRuntime(store, reg, dir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }), ENV);
+  const rt = new ConnectorRuntime(store, reg, new PidFileLock(dir), async () => ({ kind: 'rejected', code: 'NO_HANDLER' }), ENV);
   t.after(() => rt.stopAll());
   return { store, rt, n };
 }

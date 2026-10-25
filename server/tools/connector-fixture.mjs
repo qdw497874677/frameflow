@@ -7,10 +7,10 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { loadConfig } from '../src/config.ts';
-import { Library } from '../src/core/library.ts';
-import { buildServer } from '../src/api/server.ts';
-import { feishuFactory } from '../src/connectors/feishu/transport.ts';
+import { loadConfig } from '../src/adapters/outbound/config-file.ts';
+import { Library } from '../src/application/library.ts';
+import { buildServer } from '../src/adapters/inbound/http/server.ts';
+import { feishuFactory } from '../src/adapters/feishu/transport.ts';
 
 export const PASSWORD = 'fixture-local-password';
 export const SECRET_ENV = 'FRAMEFLOW_FIXTURE_FAKE_SECRET';

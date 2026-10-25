@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { FeishuTransport } from '../src/connectors/feishu/transport.ts';
-import { mapCardAction, mapMessage } from '../src/connectors/feishu/events.ts';
-import { SANITIZED_LOGGER } from '../src/connectors/feishu/client.ts';
-import { updateAllowed, CARD_UPDATE_WINDOW_MS, renderCard } from '../src/connectors/feishu/cards.ts';
+import { FeishuTransport } from '../src/adapters/feishu/transport.ts';
+import { mapCardAction, mapMessage } from '../src/adapters/feishu/events.ts';
+import { SANITIZED_LOGGER } from '../src/adapters/feishu/client.ts';
+import { updateAllowed, CARD_UPDATE_WINDOW_MS, renderCard } from '../src/adapters/feishu/cards.ts';
 
 const inst = {
   id: 'c1', kind: 'feishu', label: '飞书', appId: 'cli_a', secretEnv: 'X', tenantId: 'tk1', enabled: true,
@@ -162,7 +162,7 @@ test('F20 预览上传：只读 2048 预览、≤上限、按 app+源签名缓�
   assert.deepEqual(await send('i5', 'none'), { status: 'failed', code: 'PREVIEW_UNAVAILABLE', retryable: false });
   const small = new FeishuTransport({ instance: inst, secret: 's', sdk: f.sdk, resolve, preview });
   // 超上限：用小上限的 uploader 证明拒绝（通过 MediaUploader 直接）
-  const { MediaUploader } = await import('../src/connectors/feishu/media.ts');
+  const { MediaUploader } = await import('../src/adapters/feishu/media.ts');
   const mu = new MediaUploader({ api: f.sdk.api('cli_a', 's'), appId: 'cli_a', preview, maxBytes: 10 });
   await assert.rejects(mu.imageKey('big'), /PREVIEW_TOO_LARGE/);
   assert.equal(f.calls.create.length, before, '失败零发送');
@@ -209,7 +209,7 @@ test('F28 原图 JPEG：只发真实 JPEG 字节（hash 一致），RAW/伪 JPEG
     assert.equal(x.code, code, id);
   }
   assert.equal(f.calls.files.length, 1, '被拒的不上传');
-  const { readJpeg } = await import('../src/connectors/feishu/media.ts');
+  const { readJpeg } = await import('../src/adapters/feishu/media.ts');
   await assert.rejects(readJpeg(pm.join(dir, 'A.jpg'), 'A.jpg', 100), /JPEG_TOO_LARGE/);
   const noOrig = new FeishuTransport({ instance: inst, secret: 's', sdk: f.sdk });
   assert.equal((await noOrig.send({ targetId: inst.targets[0].id, intentId: 'j_x', content: { type: 'file', mediaRef: 'a' } })).code, 'JPEG_UNAVAILABLE');

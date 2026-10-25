@@ -5,14 +5,14 @@
  * 不能让人对着一个转圈的端口等；先能连上、能看见进度，扫完了自然就有照片了。
  */
 
-import { buildServer } from './api/server.ts';
-import { loadConfig } from './config.ts';
-import { loadRealSdk } from './connectors/feishu/client.ts';
-import { fakeE2eSdk } from './connectors/feishu/fake-sdk.ts';
-import { MediaError } from './connectors/feishu/media.ts';
-import { feishuFactory } from './connectors/feishu/transport.ts';
-import { endExif } from './core/exif.ts';
-import { Library } from './core/library.ts';
+import { buildServer } from './adapters/inbound/http/server.ts';
+import { loadConfig } from './adapters/outbound/config-file.ts';
+import { loadRealSdk } from './adapters/feishu/client.ts';
+import { fakeE2eSdk } from './adapters/feishu/fake-sdk.ts';
+import { MediaError } from './adapters/feishu/media.ts';
+import { feishuFactory } from './adapters/feishu/transport.ts';
+import { endExif } from './adapters/outbound/exif.ts';
+import { Library } from './application/library.ts';
 
 const cfg = loadConfig();
 const lib = new Library(cfg);

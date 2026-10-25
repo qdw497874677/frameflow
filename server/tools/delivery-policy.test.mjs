@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PolicyStore, matchTargets, POLICIES_FILE } from '../src/delivery/policies.ts';
-import { PreviewService, PREVIEW_TTL_MS } from '../src/delivery/previews.ts';
+import { PolicyStore, POLICIES_FILE } from '../src/adapters/outbound/fs/policy-store.ts';
+import { matchTargets } from '../src/domain/delivery/policy.ts';
+import { PreviewService, PREVIEW_TTL_MS } from '../src/application/delivery/previews.ts';
 
 function tmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-policy-'));
@@ -91,14 +92,15 @@ test('DP-01/DP-05 预览：零发送、不可变、去重、过期、陈旧、�
   assert.equal(Object.getOwnPropertyNames(PreviewService.prototype).some((n) => /send|deliver/i.test(n)), false);
 });
 
-import { ConfirmationService, ConfirmationStore } from '../src/delivery/confirmations.ts';
-import { DeliveryDispatcher } from '../src/delivery/dispatcher.ts';
-import { DeliveryStore } from '../src/delivery/store.ts';
-import { completionPartIndex, completionTargets } from '../src/delivery/completion.ts';
-import { ConnectorConfigStore } from '../src/connectors/config.ts';
-import { JobsService } from '../src/jobs/service.ts';
-import { JobsStore } from '../src/core/jobs.ts';
-import { OperationGates } from '../src/core/operation-gates.ts';
+import { ConfirmationService } from '../src/application/delivery/confirmation-service.ts';
+import { ConfirmationStore } from '../src/adapters/outbound/fs/delivery-confirmations.ts';
+import { DeliveryDispatcher } from '../src/application/delivery/dispatcher.ts';
+import { DeliveryStore } from '../src/adapters/outbound/fs/delivery-ledger.ts';
+import { completionPartIndex, completionTargets } from '../src/domain/delivery/completion.ts';
+import { ConnectorConfigStore } from '../src/adapters/outbound/fs/connector-config-store.ts';
+import { JobsService } from '../src/application/jobs/service.ts';
+import { JobsStore } from '../src/adapters/outbound/fs/jobs-store.ts';
+import { OperationGates } from '../src/application/operation-gates.ts';
 
 const proj = (op, stars) => ({ photoId: 'a', sourceOpId: op, by: 'u1', stars, del: false, channel: 'feishu', at: new Date().toISOString() });
 async function completionHarness(t) {
