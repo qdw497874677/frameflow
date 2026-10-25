@@ -1195,6 +1195,7 @@ components:
         message: { type: string }
         detail: { type: object, additionalProperties: true }
         code: { type: string, description: 连接器接口的稳定错误代码（如 REVISION_CONFLICT） }
+        field: { type: string, description: "配置校验失败时出错字段的路径（如 instance.targets[0].projectIds[1]），只含键名与下标" }
 
     ConnectorTarget:
       type: object

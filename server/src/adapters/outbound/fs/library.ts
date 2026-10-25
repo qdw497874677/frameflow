@@ -117,12 +117,16 @@ export class Library implements PhotoCatalog {
   /** 上一次自动补扫是什么时候（票 013，给 `/capabilities` 看） */
   private autoRescanAt: string | null = null;
 
+  /** 启动时截掉的 marks.jsonl 半截尾行（没有则 undefined） */
+  get marksTailRepair() { return this.marks.repair; }
+
   constructor(cfg: Config) {
     this.cfg = cfg;
     this.gates = new OperationGates();
     mkdirSync(cfg.dataDir, { recursive: true });
     this.thumbs = new Thumbs(cfg.dataDir);
-    this.marks = new MarksStore(cfg.dataDir);
+    // 崩溃留下的半截尾行不算提交：启动时安全截掉（只截没换行的那一段），由组装根记一条警告
+    this.marks = new MarksStore(cfg.dataDir, { repairTail: true });
     this.trash = new TrashStore(cfg.dataDir);
     this.files = new LibraryIndexFiles(cfg.dataDir);
     this.removedRoots = this.files.readRemovedRoots();

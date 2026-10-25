@@ -46,7 +46,6 @@ export function PolicyEditor({ connectors, projects }: { connectors: ConnectorDt
     <section className="min-w-0 space-y-2 rounded-lg border border-border/60 p-2" data-testid="policy-editor" aria-label="投递策略">
       <p className="font-medium">投递策略（推荐目标）</p>
       <p className="text-muted-foreground">策略只决定派发框里推荐哪些目标；派发默认仅应用内，勾选后才外传。</p>
-      <div role="status" aria-live="polite" className={msg?.kind === 'error' ? 'text-destructive' : 'text-ok'}>{msg?.text}</div>
       {items.map((p) => (
         <div key={p.id} className="min-w-0 space-y-1 rounded border border-border/60 p-2" data-testid="policy-row">
           <div className="break-all">
@@ -80,7 +79,10 @@ export function PolicyEditor({ connectors, projects }: { connectors: ConnectorDt
           </label>
         ))}
       </div>
-      <Button className="min-h-11" variant="outline" disabled={busy || !projectId} onClick={() => void add()}>添加策略</Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button className="min-h-11" variant="outline" disabled={busy || !projectId} onClick={() => void add()}>添加策略</Button>
+        <div role="status" aria-live="polite" className={msg?.kind === 'error' ? 'text-destructive' : 'text-ok'}>{msg?.text}</div>
+      </div>
     </section>
   );
 }

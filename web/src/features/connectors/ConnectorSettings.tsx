@@ -88,7 +88,7 @@ export function ConnectorSettings({ authEnabled, projects }: { authEnabled: bool
       </CardHeader>
       <CardContent className="min-w-0 space-y-2 text-xs">
         {disabledReason && <p role="note" className="rounded-md bg-muted p-2 text-muted-foreground">{disabledReason}</p>}
-        <div role="status" aria-live="polite" className={message?.kind === 'error' ? 'text-destructive' : 'text-ok'}>{message?.text}</div>
+        {!draft && <StatusLine message={message} />}
         {authEnabled && items.length === 0 && !draft && <p className="text-muted-foreground">还没有连接器。</p>}
         {items.map((c) => (
           <div key={c.id} className="min-w-0 space-y-1 rounded-lg border border-border/60 p-2" data-testid="connector-row">
@@ -164,6 +164,7 @@ export function ConnectorSettings({ authEnabled, projects }: { authEnabled: bool
             <div className="flex flex-wrap gap-2">
               <Button type="submit" className="min-h-11" disabled={busy}>保存</Button>
               <Button type="button" variant="ghost" className="min-h-11" onClick={() => setDraft(null)}>取消</Button>
+              <StatusLine message={message} />
             </div>
           </form>
         )}
@@ -172,4 +173,9 @@ export function ConnectorSettings({ authEnabled, projects }: { authEnabled: bool
       </CardContent>
     </Card>
   );
+}
+
+/** 保存结果就地显示（打开表单时紧挨着「保存」按钮，不用滚回顶部找） */
+function StatusLine({ message }: { message: { kind: 'ok' | 'error'; text: string } | null }) {
+  return <div role="status" aria-live="polite" className={`self-center ${message?.kind === 'error' ? 'text-destructive' : 'text-ok'}`}>{message?.text}</div>;
 }

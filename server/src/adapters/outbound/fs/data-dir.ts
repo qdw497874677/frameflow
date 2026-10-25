@@ -6,9 +6,9 @@
  * 照片原文件不复制：它们在用户自己的库目录里，体积大且本就由用户管理。
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import type { DataDirReader } from '../../../application/maintenance/ports.ts';
+import type { DataDirRepairer } from '../../../application/maintenance/ports.ts';
 
 function filesUnder(root: string, dir = root): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -18,7 +18,7 @@ function filesUnder(root: string, dir = root): string[] {
   });
 }
 
-export class DataDirFiles implements DataDirReader {
+export class DataDirFiles implements DataDirRepairer {
   readonly root: string;
   /** 缩略图 / 预览可再生，不体检也不备份 */
   readonly skip: string[];
@@ -33,6 +33,18 @@ export class DataDirFiles implements DataDirReader {
 
   read(file: string): string {
     return readFileSync(join(this.root, file), 'utf8');
+  }
+
+  backupAndReplace(file: string, text: string, now = new Date()): string {
+    const backup = `${file}.corrupt-${now.toISOString().replace(/[:.]/g, '-')}.bak`;
+    const abs = join(this.root, file);
+    copyFileSync(abs, join(this.root, backup));
+    const tmp = `${abs}.repair.tmp`;
+    writeFileSync(tmp, text, { mode: statSync(abs).mode & 0o777 });
+    const fd = openSync(tmp, 'r');
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    renameSync(tmp, abs);
+    return backup;
   }
 }
 

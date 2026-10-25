@@ -25,14 +25,22 @@ export interface ConnectorApiDeps {
 const MAX_LIMIT = 100;
 const PATCHABLE = new Set(['label', 'appId', 'secretEnv', 'tenantId', 'enabled', 'targets', 'creatorActorIds', 'creatorProjectIds']);
 
-const err = (reply: FastifyReply, status: number, code: string, error: string) => reply.code(status).send({ error, code });
+const err = (reply: FastifyReply, status: number, code: string, error: string, field?: string) =>
+  reply.code(status).send(field ? { error, code, field } : { error, code });
 
 function configError(reply: FastifyReply, e: unknown): FastifyReply {
   if (e instanceof ConnectorConfigError) {
-    // 只回代码与固定文案：校验细节可能夹带用户提交的原始值，这里不回显
-    return err(reply, e.code === 'REVISION_CONFLICT' ? 409 : 400, e.code, e.code === 'REVISION_CONFLICT' ? '配置已被修改，请刷新后重试' : '连接器配置不合法');
+    if (e.code === 'REVISION_CONFLICT') return err(reply, 409, e.code, '配置已被修改，请刷新后重试');
+    // 只回代码、固定文案与字段路径（不回显用户提交的值），前端据此把错误标到对应字段旁
+    const field = safeFieldPath(e.detail);
+    return err(reply, 400, e.code, field ? `连接器配置不合法：${field}` : '连接器配置不合法', field);
   }
   throw e;
+}
+
+/** 字段路径只由键名与下标组成；夹带其它字符（可能是用户提交的键名）就不回显 */
+export function safeFieldPath(detail: string | undefined): string | undefined {
+  return detail && /^[A-Za-z0-9_.[\]]{1,200}$/.test(detail) ? detail : undefined;
 }
 
 export function sameOrigin(req: FastifyRequest): boolean {
