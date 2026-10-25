@@ -32,6 +32,7 @@ import type {
   FolderListing,
   InboundItem,
   Job,
+  Look,
   MarkChange,
   MarkInput,
   MarkResult,
@@ -356,6 +357,21 @@ export function createHttpJobSource(base = '/api/v1'): JobSource {
 
     async undoJob(id: string): Promise<Job> {
       return toJob(await post<JobDto>(`/jobs/${encodeURIComponent(id)}/undo`));
+    },
+
+    async jobAction(id: string, name: string, body: Record<string, unknown> = {}): Promise<Job> {
+      return toJob(await post<JobDto>(`/jobs/${encodeURIComponent(id)}/actions/${encodeURIComponent(name)}`, body));
+    },
+
+    async listLooks() {
+      return (await request<{ items: Look[] }>(base, '/looks')).items.map(({ id, name, inspiredBy }) => ({ id, name, inspiredBy }));
+    },
+
+    async lookCube(id: string): Promise<string> {
+      const res = await fetch(`${base}/looks/${encodeURIComponent(id)}.cube`, { credentials: 'include' });
+      if (res.status === 401) throw new AuthRequiredError();
+      if (!res.ok) throw new Error(`读不到风格 ${id}：HTTP ${res.status}`);
+      return res.text();
     },
 
     async listChannels() {
