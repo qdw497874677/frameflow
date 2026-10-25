@@ -91,6 +91,18 @@ export function registerJobRoutes(app: FastifyInstance, { jobs, lib }: JobRouteD
     }
   });
 
+  // 阶段操作：长时间停在 running 的阶段型任务（如 grade）由主人一步步推；操作表在各 kind 的 handler 里
+  app.post('/api/v1/jobs/:id/actions/:name', async (req, reply) => {
+    const { id, name } = req.params as { id: string; name: string };
+    if (infoOf(req).via === 'annotate') return reply.code(403).send({ error: '批注链接不能操作任务' });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : {};
+    try {
+      return await jobs.action(id, name, body);
+    } catch (err) {
+      return jobError(reply, err);
+    }
+  });
+
   app.post('/api/v1/jobs/:id/cancel', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {

@@ -37,6 +37,15 @@ export interface JobItem {
   confirmedBy?: string | null;
   /** 最近一次投影的 marks 操作 id */
   sourceOpId?: string | null;
+  /** 滤镜设置阶段（kind=grade）：逐张覆盖与过目时刻；缺省跟任务默认 */
+  grade?: GradeItemState | null;
+}
+
+export interface GradeItemState {
+  /** 覆盖风格；null = 这张不套用；缺省 = 跟任务默认 */
+  look?: string | null;
+  strength?: number;
+  reviewedAt?: string | null;
 }
 
 /** 事件日志的一行（追加型，不回改；`seq` 单调递增，可当轮询游标） */

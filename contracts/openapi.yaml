@@ -482,6 +482,69 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /jobs/{id}/actions/{name}:
+    post:
+      summary: 阶段操作（停在 running 的阶段型任务由主人一步步推）
+      description: |
+        操作表在各 kind 的 handler 里（`handler.actions`），没有这个操作 400；任务不在 `running` / `interrupted` 409
+        （interrupted 收到操作会接着跑）。批注链接不能调用。
+
+        `grade`（滤镜设置阶段）的操作：
+        - `set`：`{ photoId, look?: string|null, strength?: 0–1, reviewed?: boolean, reset?: boolean }` ——
+          改一张的风格（`null` = 不套用）/ 强度，默认同时标「已过目」；`reset: true` 先清掉覆盖、恢复任务默认。写在 `item.grade`。
+        - `defaults`：`{ look?, strength? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
+        - `complete`：`{}` —— 按「任务默认 + 逐张覆盖」逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
+          （原片不动），每项 `done`（`to` = 文件名）或 `failed`（`note` = 原因），加一个 `dir` artifact，任务 `done`；
+          全部失败则任务 `failed`。
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: path, required: true, schema: { type: string, example: complete } }
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: 操作后的任务, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { description: 没这个操作或参数不对 }
+        "409": { description: 任务不在进行中 }
+
+  /looks:
+    get:
+      summary: 内置胶片风格列表（grade 任务的 params.look）
+      description: |
+        7 个中性命名风格，由 RawTherapee Film Simulation HaldCLUT 转换为 33³ .cube，CC BY-SA 4.0
+        （Pat David / Pavlov Dmitry / Michael Ezra），见 `server/assets/looks/NOTICE`。
+      x-implemented: true
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, cube]
+                      properties:
+                        id: { type: string, example: portrait400 }
+                        name: { type: string, example: Portrait 400 }
+                        inspiredBy: { type: string, description: 近似的胶卷（只作说明） }
+                        cube: { type: string, example: /api/v1/looks/portrait400.cube }
+                  license: { type: string }
+
+  /looks/{file}:
+    get:
+      summary: 风格的原始 .cube（浏览器 WebGL2 预览与服务端导出读同一份）
+      x-implemented: true
+      parameters:
+        - { name: file, in: path, required: true, schema: { type: string, example: portrait400.cube } }
+      responses:
+        "200": { description: Adobe .cube 文本, content: { text/plain: { schema: { type: string } } } }
+        "404": { description: 没这个风格 }
+
   /jobs/{id}/cancel:
     post:
       summary: 取消任务（已完成的部分回滚或保留，由 handler 的 undo 决定）
@@ -1059,6 +1122,14 @@ components:
         del: { type: boolean, nullable: true, description: annotate：是否标了待删 }
         clientRef: { type: string, nullable: true, description: 回流幂等键（外部系统重发整批时用来去重） }
         at: { type: string, format: date-time, nullable: true, description: 最后一次变更的时刻 }
+        grade:
+          type: object
+          nullable: true
+          description: grade：这张的覆盖（缺省字段跟任务默认）与过目时刻
+          properties:
+            look: { type: string, nullable: true, description: 覆盖风格；null = 不套用 }
+            strength: { type: number, minimum: 0, maximum: 1 }
+            reviewedAt: { type: string, format: date-time, nullable: true }
 
     JobEvent:
       type: object

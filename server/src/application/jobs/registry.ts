@@ -13,7 +13,9 @@ import type { Job, JobEventInput, JobItem, JobProblem } from '../../domain/jobs/
 import type { PhotoCatalog } from '../library/ports.ts';
 import type { MarkResultDto } from '../../domain/marks.ts';
 import type { Selection } from '../../domain/selection.ts';
+import type { GradingPorts } from '../grading/ports.ts';
 import { annotate } from './annotate.ts';
+import { grade } from './grade.ts';
 
 /** handler 拿到的东西：库（读照片/写标注）+ 任务层给的能力 */
 export interface JobContext {
@@ -22,7 +24,12 @@ export interface JobContext {
   signRangeToken: (jobId: string, alias: string, tokenId?: string | null) => { token: string; expiresAt: string };
   /** F29：任务进入 done 时回调（完成通知；generation = 第几次完成） */
   onDone?: (job: Job, generation: number) => void;
+  /** 滤镜阶段的端口（风格 / 渲染 / 导出）；没接上时 grade 任务建不了 */
+  grading?: GradingPorts;
 }
+
+/** 阶段操作（`POST /jobs/{id}/actions/{name}`）：长时间停在 running 的阶段型任务，由主人一步步推 */
+export type JobAction = (job: Job, body: Record<string, unknown>, ctx: JobContext, sink: JobSink) => JobOutcome | Promise<JobOutcome>;
 
 /** 外部回流的原始一项（`by` 由凭据推出来，不由请求体决定） */
 export interface InboundInput {
@@ -85,11 +92,14 @@ export interface JobHandler {
   /** 外部回流（`POST /jobs/{id}/inbound`）；不支持回流的 kind 不实现 */
   inbound?: (job: Job, items: InboundWrite[], ctx: JobContext, sink: JobSink) => InboundOutcome | Promise<InboundOutcome>;
   undo?: (job: Job, ctx: JobContext, sink: JobSink) => JobOutcome | Promise<JobOutcome>;
+  /** 阶段操作表；缺省 = 这个 kind 没有阶段操作 */
+  actions?: Record<string, JobAction>;
 }
 
-/** 注册表：v1 只有 annotate */
+/** 注册表：加一个阶段 = 加一个文件 + 这里一行 */
 export const registry: Record<string, JobHandler> = {
   [annotate.kind]: annotate,
+  [grade.kind]: grade,
 };
 
 export function getHandler(kind: string): JobHandler | undefined {
