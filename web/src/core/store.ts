@@ -286,7 +286,7 @@ class AppStore {
       const found = photoId ? items.findIndex((p) => p.id === photoId) : 0;
       const cursor = resume && found < 0 ? 0 : found;
       if (cursor < 0) throw new Error('照片列表已变化，请重新点击照片');
-      const { total, hiddenDeleted } = listCounts({ loaded: items.length, pageTotal: first.total, folderCount: listing.photoCount, showingDeleted: sel.where?.del === true });
+      const { total, hiddenDeleted } = listCounts({ loaded: items.length, pageTotal: first.total, deletedInFolder: listing.deletedCount, showingDeleted: sel.where?.del === true });
       this.patch({
         listing, selection: sel, items, cursor, nextCursor: nextCursor ?? null, total,
         loading: false, entryDir: 0, entryToken: this.state.entryToken + 1,
@@ -615,6 +615,16 @@ class AppStore {
     this.patch({ expanded });
   }
 
+  /** 待删状态变了：侧边栏目录计数（不含待删）跟着刷新，只刷已经展开载入过的层 */
+  private async refreshLoadedTree() {
+    const paths = Object.keys(this.state.tree);
+    if (!paths.length) return;
+    const fresh = await Promise.all(paths.map((p) => source.listFolders(p).then((l) => [p, l] as const, () => null)));
+    const tree = { ...this.state.tree };
+    for (const entry of fresh) if (entry) tree[entry[0]] = entry[1];
+    this.patch({ tree });
+  }
+
   private async loadTree(path: string) {
     try {
       const listing = await source.listFolders(path);
@@ -694,7 +704,7 @@ class AppStore {
       pendingTrash: [],
       cursor: 0,
     });
-    await this.loadTrash();
+    await Promise.all([this.loadTrash(), this.refreshLoadedTree()]);
     this.flash(`已移入回收站 ${res.ok} 张（可整批还原）`);
   }
 
@@ -702,7 +712,7 @@ class AppStore {
     const res = await source.restore(ids);
     this.patch({ markOverrides: Object.fromEntries(Object.entries(this.state.markOverrides).filter(([id]) => !ids.includes(id))) });
     this.patch({ libraryRevision: this.state.libraryRevision + 1 });
-    await this.loadTrash();
+    await Promise.all([this.loadTrash(), this.refreshLoadedTree()]);
     this.flash(`已还原 ${res.ok} 张`);
   }
 
@@ -946,13 +956,13 @@ class AppStore {
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => {
       void this.flushSave()
-        .then(() => this.loadPendingTrash())
+        .then(() => Promise.all([this.loadPendingTrash(), this.refreshLoadedTree()]))
         .catch((err: unknown) => this.flash(`保存失败：${err instanceof Error ? err.message : String(err)}`));
     }, 400);
   }
 
   async retrySave() {
-    try { await this.flushSave(); await this.loadPendingTrash(); } catch { /* 状态栏保留错误 */ }
+    try { await this.flushSave(); await Promise.all([this.loadPendingTrash(), this.refreshLoadedTree()]); } catch { /* 状态栏保留错误 */ }
   }
 
   private async flushSave() {

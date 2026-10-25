@@ -6,7 +6,7 @@
  * 照片原文件不复制：它们在用户自己的库目录里，体积大且本就由用户管理。
  */
 import { createHash } from 'node:crypto';
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import type { DataDirRepairer } from '../../../application/maintenance/ports.ts';
 
@@ -36,9 +36,14 @@ export class DataDirFiles implements DataDirRepairer {
   }
 
   backupAndReplace(file: string, text: string, now = new Date()): string {
-    const backup = `${file}.corrupt-${now.toISOString().replace(/[:.]/g, '-')}.bak`;
     const abs = join(this.root, file);
-    copyFileSync(abs, join(this.root, backup));
+    const stamp = `${file}.corrupt-${now.toISOString().replace(/[:.]/g, '-')}`;
+    // 备份绝不覆盖已有备份：同一毫秒重复修复时追加序号；EXCL 让竞态也只会失败不会覆盖
+    let backup = `${stamp}.bak`;
+    for (let n = 1; existsSync(join(this.root, backup)); n++) backup = `${stamp}-${n}.bak`;
+    copyFileSync(abs, join(this.root, backup), constants.COPYFILE_EXCL);
+    const fd0 = openSync(join(this.root, backup), 'r');
+    try { fsyncSync(fd0); } finally { closeSync(fd0); }
     const tmp = `${abs}.repair.tmp`;
     writeFileSync(tmp, text, { mode: statSync(abs).mode & 0o777 });
     const fd = openSync(tmp, 'r');

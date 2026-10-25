@@ -42,11 +42,25 @@ export function checkFile(file: string, text: string): Finding[] {
 }
 
 export interface JsonlRepair { text: string; droppedLines: number[]; tailRemoved: boolean }
+export interface JsonlRefusal { refused: string; droppedLines: number[] }
 
-/** 剔除 jsonl 里不是合法 JSON 的完整行和没写完的尾行；无需修复时返回 null。 */
-export function repairJsonl(text: string): JsonlRepair | null {
+/** 带版本号的行（标注事务信封）：解析得出 version 字段，或坏行里看得出 "version" 键 */
+function versioned(line: string): boolean {
+  try {
+    const v: unknown = JSON.parse(line);
+    return typeof v === 'object' && v !== null && 'version' in v;
+  } catch { return /"version"\s*:/.test(line); }
+}
+
+/**
+ * 剔除 jsonl 里不是合法 JSON 的完整行和没写完的尾行；无需修复时返回 null。
+ * preserveVersioned（标注日志用）：带版本的事务行按 revision 链环环相扣，
+ * 剔掉其中一行或剔掉它们前面的任何一行都会让后面所有版本作废 —— 这种情况拒绝改写，交给人处理。
+ */
+export function repairJsonl(text: string, opts: { preserveVersioned?: boolean } = {}): JsonlRepair | JsonlRefusal | null {
   const lines = text.split('\n');
-  const tailRemoved = (lines.pop() ?? '').trim() !== '';
+  const tail = lines.pop() ?? '';
+  const tailRemoved = tail.trim() !== '';
   const droppedLines: number[] = [];
   const kept = lines.filter((l, i) => {
     const ok = !l.trim() || parses(l);
@@ -54,5 +68,11 @@ export function repairJsonl(text: string): JsonlRepair | null {
     return ok;
   });
   if (!tailRemoved && droppedLines.length === 0) return null;
+  if (opts.preserveVersioned) {
+    const first = droppedLines[0];
+    const breaksChain = droppedLines.some((n) => versioned(lines[n - 1])) ||
+      (first !== undefined && lines.slice(first).some((l) => l.trim() && versioned(l)));
+    if (breaksChain) return { refused: '坏行涉及带版本的标注事务，剔除会丢失版本链；文件未改动，请从备份恢复', droppedLines };
+  }
   return { text: kept.map((l) => `${l}\n`).join(''), droppedLines, tailRemoved };
 }
