@@ -303,7 +303,7 @@ F25–F27通过。授权创建者从无任务开始能完成整条假SDK故事�
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=redispatch`。
 - 完成（2026-10-25）：RedispatchDialog 预览→二次确认；e2e --scenario=redispatch 通过
 
-### [ ] 追加目标检查点
+### [x] 追加目标检查点
 F29/F29a/F29b通过：任务ID、items和确认进度完全不变，仅目标投递记录扩展；与重新创建任务明确区分。
 
 ### [x] F30 — 管理测试发送界面与部署说明
@@ -319,17 +319,19 @@ F28–F30通过，人工复核外传说明、权限申请和unknown提示。只�
 
 ## 阶段 K：恢复、回归与真实平台验收（V7）
 
-### [ ] F31 — 集成故障注入与兼容回滚演练
+### [x] F31 — 集成故障注入与兼容回滚演练
 - 模块：四模块；验收：CC-05/06、DP-04/08、FI-03/04/05/09。依赖：F24、F29。
 - 验收：①覆盖意图/marks提交/任务投影/平台响应/messageId保存各中断点，包括SDK迟到成功；②恢复后先对账再开接收，损坏拒绝外传，终态/权限/换源检查不能绕过；③临时dataDir备份/恢复演练记录旧格式降级限制，不触碰用户数据。
 - 文件：`server/tools/connector-recovery.test.mjs`、`server/tools/connector-fixture.mjs`、`docs/marks-log-compatibility.md`。
 - 验证：`(cd server && node --test tools/connector-recovery.test.mjs)`；此票是集成验证，发现实现缺陷单独开小修任务，不把所有源码塞入本票。
+- 完成（2026-10-25）：connector-recovery.test 8 项通过；修复账本损坏只读、确认记录 STORE_CORRUPT、恢复前拒收入站
 
-### [ ] F32 — 全量假SDK、浏览器与移动端验收
+### [x] F32 — 全量假SDK、浏览器与移动端验收
 - 模块：四模块；验收：全部CC/DP/FI及FC-01～06。依赖：F26、F27、F29b、F30、F31。
 - 验收：①完整管理→预览→多目标→确认/重标→JPEG请求→完成通知可走通，负向调用次数正确；②桌面/390px截图、键盘、读屏状态验证，旧导航与应用内任务通过；③按规格编号记录测试/人工证据，未通过不勾选，不改门槛。
 - 文件：`tools/e2e-connectors.mjs`、`docs/feishu-acceptance.md`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=all` 与 `node tools/e2e-project-navigation.mjs`；`(cd server && node tools/e2e-marks-durability.mjs && node tools/e2e-jobs.mjs && node tools/e2e-annotate.mjs)`；在最终代码版本执行全部新增服务端测试 `(cd server && node --test tools/*.test.mjs)`（覆盖SDK/存储/锁/版本/授权/投递/故障恢复，不以浏览器测试替代）；`(cd server && npm audit)`。
+- 完成（2026-10-25）：--scenario=all 6 场景、导航回归、全量服务端测试通过；DP-07 人工读屏与 FC-07 未勾选，见 docs/feishu-acceptance.md
 
 ### [ ] F33 — 专用真实应用群聊/私聊验收
 - 模块：四模块；验收：FC-07及平台侧FI-02/03/07/08。依赖：F32、用户明确提供专用应用/目标及发送许可。
