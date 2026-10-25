@@ -106,6 +106,9 @@ export interface Job {
   createdAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  /** 确认式创建（F13）：稳定 requestId 与创建载荷指纹；旧随机 id 路径为空 */
+  requestId?: string | null;
+  requestFingerprint?: string | null;
 }
 
 /** 参数校验的一处问题（`validate` 返回；HTTP 层放进 Error.detail.problems） */
@@ -159,6 +162,10 @@ export interface JobCreateRecord {
   reversible: boolean;
   state?: JobState;
   by?: string | null;
+  /** 预分配 jobId（确认式创建）；缺省随机 */
+  id?: string;
+  requestId?: string | null;
+  requestFingerprint?: string | null;
 }
 
 /** `jobs.jsonl` 的一行 */
@@ -180,6 +187,7 @@ export class JobsStore {
   private readonly eventsFile: string;
   private readonly byId = new Map<string, Job>();
   private readonly eventsById = new Map<string, JobEvent[]>();
+  private readonly byRequest = new Map<string, string>();
   private nextSeq = 1;
 
   constructor(dataDir: string) {
@@ -200,6 +208,7 @@ export class JobsStore {
         const rec = JSON.parse(line) as JobLine & Job;
         if (rec?.t !== 'job' || typeof rec.id !== 'string' || !rec.state || !Array.isArray(rec.items)) continue;
         this.byId.set(rec.id, rec);
+        if (typeof rec.requestId === 'string') this.byRequest.set(rec.requestId, rec.id);
       } catch {
         // 半行（写到一半被杀）跳过：任务快照本来就是「后写的赢」，丢最后一行只丢一次更新
       }
@@ -267,6 +276,12 @@ export class JobsStore {
     return this.byId.get(id)?.items.some((i) => i.id === photoId) ?? false;
   }
 
+  /** 确认式创建的幂等查找 */
+  byRequestId(requestId: string): Job | undefined {
+    const id = this.byRequest.get(requestId);
+    return id ? this.get(id) : undefined;
+  }
+
   hasEvent(id: string, type: JobEventType): boolean {
     return (this.eventsById.get(id) ?? []).some((e) => e.type === type);
   }
@@ -275,8 +290,11 @@ export class JobsStore {
 
   create(input: JobCreateRecord): Job {
     const items = input.items.map((i) => ({ ...i, status: i.status ?? ('planned' as const) }));
+    const id = input.id ?? randomBytes(8).toString('base64url');
+    if (this.byId.has(id)) throw new JobError('conflict', `任务 id 已存在：${id}`);
+    if (input.requestId && this.byRequest.has(input.requestId)) throw new JobError('conflict', `requestId 已用于另一个任务`);
     const job: Job = {
-      id: randomBytes(8).toString('base64url'),
+      id,
       kind: input.kind,
       state: input.state ?? 'planned',
       selection: input.selection,
@@ -291,8 +309,10 @@ export class JobsStore {
       createdAt: new Date().toISOString(),
       startedAt: null,
       finishedAt: null,
+      ...(input.requestId ? { requestId: input.requestId, requestFingerprint: input.requestFingerprint ?? null } : {}),
     };
     this.byId.set(job.id, job);
+    if (input.requestId) this.byRequest.set(input.requestId, job.id);
     this.save(job);
     this.appendEvent(job.id, {
       type: 'created',

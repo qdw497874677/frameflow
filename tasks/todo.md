@@ -142,23 +142,26 @@ F10–F12浏览器/接口回归通过，用户检查配置与权限文案。策�
 
 ## 阶段 E：确认只创建一次（V2）
 
-### [ ] F13 — 任务从确认快照幂等创建
+### [x] F13 — 任务从确认快照幂等创建
 - 模块：delivery-policy；验收：DP-04、FI-09。依赖：F06、F11。
 - 验收：①内部预分配jobId与requestId只创建一个任务，不重新展开快照；②重放/并发相同请求返回同一任务，异载荷拒绝；③新网页仅应用内也经过requestId幂等确认（目标集合为空），并发/响应丢失重试只建一次且零发送；旧/jobs plan不落实际任务，旧随机ID客户端路径保持兼容。
 - 文件：`server/src/core/jobs.ts`、`server/src/jobs/service.ts`、`server/tools/confirmed-job.test.mjs`。
 - 验证：`(cd server && node --test tools/confirmed-job.test.mjs && node tools/e2e-jobs.mjs)`。
+- 完成（2026-10-25）：JobsService.createConfirmed + JobsStore 预分配 id/requestId 索引；tools/confirmed-job.test.mjs（3）
 
-### [ ] F14 — 持久确认与崩溃恢复
+### [x] F14 — 持久确认与崩溃恢复
 - 模块：delivery-policy；验收：DP-01/04/05。依赖：F13、F02。
 - 验收：①requestId原子接受绑定全部快照/参数/通知选择/外传同意；②accepted不随preview到期遗忘，先查接受记录再查期限；③意图/建任务间各点中断可恢复同一任务，恢复前重新校验授权。
 - 文件：`server/src/delivery/confirmations.ts`、`server/src/delivery/previews.ts`、`server/src/delivery/types.ts`、`server/tools/delivery-confirmation.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-confirmation.test.mjs)`；必须含过期后重试和并发双确认。
+- 完成（2026-10-25）：src/delivery/confirmations.ts（delivery-confirmations.jsonl，先记录后建任务、过期后重试、并发、恢复前复核授权）；tools/delivery-confirmation.test.mjs（4）
 
-### [ ] F15 — 分目标、分消息部分投递账本
+### [x] F15 — 分目标、分消息部分投递账本
 - 模块：delivery-policy；验收：DP-03/04/08、FC-05。依赖：F14、F08。
 - 验收：①每目标part意图先落盘再发送，所有必要部分成功才sent；②pending可恢复、遗留sending为unknown，成功部分不重发；③失败单独重试，unknown复核/风险确认，原SDK attempt活跃时禁止重叠替代，迟到成功归原意图。
 - 文件：`server/src/delivery/store.ts`、`server/src/delivery/runner.ts`、`server/src/delivery/types.ts`、`server/tools/delivery-runner.test.mjs`。
 - 验证：`(cd server && node --test tools/delivery-runner.test.mjs)`；用可控制迟到响应的假传输，不用随机sleep证明去重。
+- 完成（2026-10-25）：src/delivery/store.ts + runner.ts（deliveries.jsonl 意图/结果账本、sending→unknown、迟到成功归属原意图）；tools/delivery-runner.test.mjs（4）
 
 ### [ ] 检查点 E — 确认与投递恢复
 F13–F15通过；人工/独立复核故障矩阵与unknown语义。确认不重复建任务，任务成功不等于所有目标成功。

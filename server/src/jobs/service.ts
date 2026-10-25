@@ -12,6 +12,7 @@
  * HTTP 语义（哪个错误对哪个状态码）不在这里：抛 `JobError`，由 api/server.ts 映射。
  */
 
+import { createHash } from 'node:crypto';
 import { OperationGates } from '../core/operation-gates.ts';
 import { JobError, JobsStore, itemsSettled, type Job, type JobEvent, type JobItem, type JobProblem } from '../core/jobs.ts';
 import type { MarkResultDto } from '../core/marks.ts';
@@ -32,6 +33,30 @@ export interface JobCreateInput {
   by?: string | null;
   /** 签发范围 token 时绑上的 API token id（会话/免认证签发时为 null）：撤销即失效 */
   tokenId?: string | null;
+}
+
+/** 从确认快照创建（F13）：jobId 由调用方预分配，items 即快照，不再重新展开选择集 */
+export interface ConfirmedJobInput {
+  jobId: string;
+  requestId: string;
+  kind: string;
+  selection: Selection;
+  params: Record<string, unknown>;
+  /** 快照里的照片（顺序即 items 顺序） */
+  items: Array<{ id: string; displayName?: string }>;
+  by?: string | null;
+  tokenId?: string | null;
+}
+
+export function confirmedFingerprint(input: Pick<ConfirmedJobInput, 'jobId' | 'kind' | 'selection' | 'params' | 'items'>): string {
+  const canon = JSON.stringify([input.jobId, input.kind, canonical(input.selection), canonical(input.params), input.items.map((i) => i.id)]);
+  return createHash('sha256').update(canon).digest('hex');
+}
+
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]));
+  return v;
 }
 
 export class JobsService {
@@ -139,6 +164,51 @@ export class JobsService {
     this.issuedBy.set(job.id, input.tokenId ?? null);
     this.queue.push(job.id);
     // 让 201 先带着 queued 出去（契约：创建返回 planned|queued），执行在下一个 tick 开始
+    setTimeout(() => void this.pump(), 0);
+    return queued;
+  }
+
+  /**
+   * 确认式幂等创建（F13）。同步完成「查 requestId → 落库 → 入队」，中间没有 await，
+   * 所以并发的同一请求只会有一个落库；重放返回同一任务，异载荷 409。
+   * 若之前崩在「落库后、入队前」（state 仍 planned），重放会把它补入队列。
+   */
+  createConfirmed(input: ConfirmedJobInput): Job {
+    const kind = input.kind.trim();
+    const handler = this.registry[kind];
+    if (!handler) throw new JobError('invalid', `没注册这个任务类型：${kind || '(空)'}`);
+    if (!input.requestId || !input.jobId) throw new JobError('invalid', '确认式创建要带 jobId 与 requestId');
+    const fp = confirmedFingerprint({ ...input, kind });
+    const existing = this.store.byRequestId(input.requestId) ?? this.store.get(input.jobId);
+    if (existing) {
+      if (existing.requestId !== input.requestId || existing.requestFingerprint !== fp) {
+        throw new JobError('conflict', '同一 requestId 的确认内容不一致（或 jobId 已被占用），请重新预览');
+      }
+      if (existing.state === 'planned') return this.enqueue(existing.id, input.tokenId ?? null);
+      return existing;
+    }
+    if (!input.items.length) throw new JobError('invalid', '快照里没有照片');
+    const problems = handler.validate({ kind, selection: input.selection, params: input.params }, this.ctx);
+    if (problems.length) throw new JobError('invalid', `任务参数不对：${problems.map((p) => `${p.field} ${p.message}`).join('；')}`, problems);
+    const job = this.store.create({
+      id: input.jobId,
+      requestId: input.requestId,
+      requestFingerprint: fp,
+      kind,
+      selection: input.selection,
+      params: input.params,
+      items: input.items.map((i) => ({ id: i.id, ...(i.displayName ? { displayName: i.displayName } : {}), status: 'planned' as const })),
+      reversible: handler.undoable,
+      state: 'planned',
+      by: input.by ?? null,
+    });
+    return this.enqueue(job.id, input.tokenId ?? null);
+  }
+
+  private enqueue(id: string, tokenId: string | null): Job {
+    const queued = this.store.setState(id, 'queued');
+    this.issuedBy.set(id, tokenId);
+    this.queue.push(id);
     setTimeout(() => void this.pump(), 0);
     return queued;
   }
