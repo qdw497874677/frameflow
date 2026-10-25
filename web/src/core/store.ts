@@ -4,6 +4,7 @@ import { readSession, writeSession } from './session';
 import { AuthRequiredError } from '../api/source';
 import { selectionFromQuery, selectionToQuery } from './selection';
 import { listPendingTrash } from './trash';
+import { listCounts } from './counts';
 import {
   EMPTY_SELECTION,
   ME,
@@ -104,7 +105,7 @@ export interface AppState {
   error: string | null;
   /** 当前列表还没取完时的下一页游标（null = 已到底） */
   nextCursor: string | null;
-  /** 当前作用域里的照片总数（含被默认藏起来的待删），底栏用它说「载入 N/M 张」 */
+  /** 当前列表口径的照片总数（不含默认藏起来的待删，见 core/counts.ts），底栏用它说「载入 N/M 张」 */
   total: number;
   /** 底部提示（最近一次动作；供人确认「刚才发生了什么」） */
   notice: string;
@@ -285,7 +286,7 @@ class AppStore {
       const found = photoId ? items.findIndex((p) => p.id === photoId) : 0;
       const cursor = resume && found < 0 ? 0 : found;
       if (cursor < 0) throw new Error('照片列表已变化，请重新点击照片');
-      const total = Math.max(first.total ?? items.length, listing.photoCount);
+      const { total, hiddenDeleted } = listCounts({ loaded: items.length, pageTotal: first.total, folderCount: listing.photoCount, showingDeleted: sel.where?.del === true });
       this.patch({
         listing, selection: sel, items, cursor, nextCursor: nextCursor ?? null, total,
         loading: false, entryDir: 0, entryToken: this.state.entryToken + 1,
@@ -293,7 +294,7 @@ class AppStore {
       });
       this.syncUrl();
       this.flash(photoId ? `已定位 ${items[cursor]?.displayName} · ${dir}`
-        : total > items.length ? `载入 ${items.length}/${total} 张 · ${dir}` : `载入 ${items.length} 张 · ${dir}`);
+        : `${total > items.length ? `载入 ${items.length}/${total} 张` : `载入 ${items.length} 张`}${hiddenDeleted ? `（另有 ${hiddenDeleted} 张待删未显示）` : ''} · ${dir}`);
       void this.loadPendingTrash();
     } catch (err) {
       if (request === this.listRequest) this.patch({ loading: false, error: err instanceof Error ? err.message : String(err) });

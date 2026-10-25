@@ -1,5 +1,16 @@
 /** 标注（星级 / 待删）的输入、状态、变更与事务结果。落盘见 adapters/outbound/fs/marks-*.ts。 */
 
+/** 星级只收 0–5 的整数；越界或小数直接拒绝（不悄悄夹到边界，免得调用方以为写进去了） */
+export function isValidStars(v: unknown): v is number {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 5;
+}
+
+/** 请求体 items 里有没有不合法的 stars（缺省不算） */
+export function hasInvalidStars(items: unknown): boolean {
+  return Array.isArray(items) && items.some((it) => it && typeof it === 'object' && 'stars' in it
+    && (it as { stars?: unknown }).stars !== undefined && !isValidStars((it as { stars?: unknown }).stars));
+}
+
 export interface MarkInput {
   id: string;
   stars?: number;

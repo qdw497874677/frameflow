@@ -4,7 +4,6 @@
  * 顺序有意为之：**先监听，再后台扫描**。库在 NAS 上时第一次扫描要跑很久，
  * 不能让人对着一个转圈的端口等；先能连上、能看见进度，扫完了自然就有照片了。
  */
-
 import { buildServer } from './adapters/inbound/http/server.ts';
 import { loadConfig } from './adapters/outbound/config-file.ts';
 import { feishuConnector, loadFeishuSdk } from './adapters/feishu/index.ts';
@@ -12,6 +11,7 @@ import { endExif } from './adapters/outbound/exif.ts';
 import { Library } from './adapters/outbound/fs/library.ts';
 import { DataDirFiles } from './adapters/outbound/fs/data-dir.ts';
 import { checkDataDir } from './application/maintenance/check-data-dir.ts';
+import { listenFailureMessage } from './adapters/inbound/cli/listen-error.ts';
 
 const cfg = loadConfig();
 
@@ -35,7 +35,13 @@ const app = await buildServer(cfg, lib, {
   connectorFactories: feishuSdk ? { feishu: (l, ctx) => feishuConnector(feishuSdk, l, ctx.resolve) } : {},
 });
 
-await app.listen({ host: cfg.host, port: cfg.port });
+try {
+  await app.listen({ host: cfg.host, port: cfg.port });
+} catch (err) {
+  console.error(listenFailureMessage(err, cfg.host, cfg.port));
+  await app.close().catch(() => undefined);
+  process.exit(1);
+}
 
 app.log.info(
   {

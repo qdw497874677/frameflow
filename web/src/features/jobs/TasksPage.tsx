@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DeliveryStatus } from './DeliveryStatus';
+import { jobActions } from './jobActions';
 import { RedispatchDialog } from '@/features/connectors/RedispatchDialog';
 import { describeEvent, eventTone, fmtTime, isActive, itemMark, kindLabel, STATE_LABEL, STATE_TONE } from './jobText';
 
@@ -153,9 +154,7 @@ export function TasksPage() {
   const shown = useMemo(() => jobs.filter((j) => matchesFilter(j, filter)), [jobs, filter]);
   const itemOf = useCallback((id: string) => detail?.items.find((i) => i.id === id), [detail]);
   const undone = events.some((e) => e.type === 'undone');
-  const canCancel = detail ? detail.state !== 'done' && detail.state !== 'failed' && detail.state !== 'cancelled' : false;
-  // 取消的提示里写着「要退回请 undo」—— 服务端也允许对已取消的任务撤销（只回滚标注，不再迁状态）
-  const canUndo = Boolean(detail?.reversible) && !undone;
+  const actions = detail ? jobActions(detail, undone) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
@@ -236,14 +235,15 @@ export function TasksPage() {
       </div>
 
       {/* 详情 */}
-      <div className={cn('min-h-0 flex-1 overflow-hidden', selectedId ? 'flex flex-col' : 'hidden md:flex md:flex-col')}>
+      <div className={cn('min-h-0 min-w-0 flex-1 overflow-hidden', selectedId ? 'flex flex-col' : 'hidden md:flex md:flex-col')}>
         {!detail ? (
           <p className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground">
             左边选一个任务看进度与流水
           </p>
         ) : (
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="mx-auto max-w-3xl px-4 py-3 pb-10">
+          // Radix 的 viewport 子元素默认 display:table，长链接会把它撑出窗口（1280 宽时右侧被裁）
+          <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
+            <div className="mx-auto w-full min-w-0 max-w-3xl px-4 py-3 pb-10">
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
@@ -274,13 +274,13 @@ export function TasksPage() {
                 <div className="flex items-baseline justify-between text-sm">
                   <span>进度</span>
                   <span className="font-mono text-xs text-muted-foreground">
-                    {detail.progress.done}/{detail.progress.total}
+                    {actions?.progress.label}
                   </span>
                 </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded bg-muted-foreground/20">
                   <div
                     className={cn('h-full rounded', detail.state === 'failed' ? 'bg-destructive' : 'bg-gold')}
-                    style={{ width: `${detail.progress.total ? Math.round((detail.progress.done / detail.progress.total) * 100) : 0}%` }}
+                    style={{ width: `${actions?.progress.percent ?? 0}%` }}
                   />
                 </div>
                 {detail.confirmation && (
@@ -291,34 +291,28 @@ export function TasksPage() {
                   </dl>
                 )}
                 {detail.error && <p className="mt-2 text-xs text-destructive">{detail.error}</p>}
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button
+                {(actions?.canCancel || actions?.canUndo) && <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {actions.canCancel && <Button
                     variant="outline"
                     size="sm"
-                    disabled={!canCancel || busy}
+                    disabled={busy}
                     onClick={() => void act(() => jobSource.cancelJob(detail.id))}
-                    title={canCancel ? '停在这个状态，批注链接当场失效' : '已经收尾的任务取消不了'}
+                    title="停在这个状态，批注链接当场失效"
                   >
                     <X />
                     取消任务
-                  </Button>
-                  <Button
+                  </Button>}
+                  {actions.canUndo && <Button
                     variant="outline"
                     size="sm"
-                    disabled={!canUndo || busy}
+                    disabled={busy}
                     onClick={() => void act(() => jobSource.undoJob(detail.id))}
-                    title={
-                      !detail.reversible
-                        ? '这个任务不可撤销'
-                        : undone
-                          ? '已经撤销过了'
-                          : '把本任务写下的标注回滚到任务开始前'
-                    }
+                    title="把本任务写下的标注回滚到任务开始前"
                   >
                     <Undo2 />
                     撤销（退回标注）
-                  </Button>
-                </div>
+                  </Button>}
+                </div>}
               </div>
 
               <DeliveryStatus jobId={detail.id} />
@@ -337,7 +331,8 @@ export function TasksPage() {
                           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/70" title={a.path}>
                             {href ?? a.path}
                           </span>
-                          {href && (
+                          {href && !actions?.linkUsable && <span className="shrink-0 text-muted-foreground">已失效</span>}
+                          {href && actions?.linkUsable && (
                             <>
                               <Button
                                 variant="secondary"
@@ -360,7 +355,7 @@ export function TasksPage() {
                     })}
                   </ul>
                   <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                    这条链接自带凭据（范围 token）：批注人不用登录，只能看这个任务里的照片、只能写回这个任务。
+                    {actions?.linkUsable ? '这条链接自带凭据（范围 token）：批注人不用登录，只能看这个任务里的照片、只能写回这个任务。' : '任务已取消或失败，这条链接已失效。'}
                   </p>
                 </div>
               )}

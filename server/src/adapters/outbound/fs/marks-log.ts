@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import { dirname } from 'node:path';
+import { isValidStars } from '../../../domain/marks.ts';
 import { createHash } from 'node:crypto';
 import type { MarkChange, MarkInput, MarkState, MarkTransactionRequest, MarkTransactionResult } from '../../../domain/marks.ts';
 
@@ -54,7 +55,7 @@ export function canonical(value: unknown): string {
 export const hash = (value: unknown): string => createHash('sha256').update(canonical(value)).digest('hex');
 export function validInput(v: unknown): v is MarkInput {
   if (!object(v) || !id(v.id)) return false;
-  return (v.stars === undefined || (typeof v.stars === 'number' && Number.isFinite(v.stars))) &&
+  return (v.stars === undefined || isValidStars(v.stars)) &&
     (v.del === undefined || typeof v.del === 'boolean') &&
     ['by', 'channel', 'at'].every(k => v[k] === undefined || text(v[k])) &&
     (v.jobId === undefined || v.jobId === null || text(v.jobId));

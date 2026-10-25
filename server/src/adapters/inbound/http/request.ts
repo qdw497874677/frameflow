@@ -1,6 +1,7 @@
 /** 请求上下文：凭据来源、操作者与入参的最小解析（各路由共用） */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { isValidStars } from '../../../domain/marks.ts';
 import { JobError, type JobProblem } from '../../../domain/jobs/job.ts';
 import type { InboundInput } from '../../../application/jobs/registry.ts';
 import type { ApiTokenMeta } from './auth.ts';
@@ -42,9 +43,7 @@ export function inboundItemsOf(body: unknown): InboundInput[] {
     const it = entry as Record<string, unknown>;
     if (typeof it['photoId'] !== 'string' || !it['photoId']) continue;
     const item: InboundInput = { photoId: it['photoId'] };
-    if (typeof it['stars'] === 'number' && Number.isFinite(it['stars'])) {
-      item.stars = Math.max(0, Math.min(5, Math.round(it['stars'])));
-    }
+    if (isValidStars(it['stars'])) item.stars = it['stars'];
     if (typeof it['del'] === 'boolean') item.del = it['del'];
     if (typeof it['at'] === 'string' && it['at']) item.at = it['at'];
     if (typeof it['clientRef'] === 'string' && it['clientRef']) item.clientRef = it['clientRef'];

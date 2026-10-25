@@ -4,7 +4,7 @@ import { source } from '@/api';
 import type { Photo } from '@/core/types';
 import { store, useAppState } from '@/core/store';
 import { cn } from '@/lib/utils';
-import { matchesFileName, projectListVisible } from '@/core/file-search';
+import { emptyHintVisible, matchesFileName, projectListVisible } from '@/core/file-search';
 import { SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem } from '@/components/ui/sidebar';
 
 /** 项目 → 目录 → 已识别照片。只加载展开的目录，RAW+JPEG 作为一个照片实体显示。 */
@@ -111,7 +111,7 @@ function Node({ path, name, diskPath, depth, isRoot, projectTotal, flat = false,
             <Node key={child.path} path={child.path} name={child.name} depth={depth + 1}
               tree={tree} expanded={expanded} currentDir={currentDir} currentId={currentId} />
           ))}
-          <DirectoryPhotos key={`${path}:${flat}`} path={path} currentId={currentId} recursive={flat} />
+          <DirectoryPhotos key={`${path}:${flat}`} path={path} currentId={currentId} recursive={flat} subfolders={flat ? 0 : children.length} />
         </SidebarMenuSub>
       )}
     </SidebarMenuSubItem>
@@ -140,7 +140,7 @@ interface FileListing {
 }
 
 /** 待删也在文件树中可见；两种列表独立分页，点击时由 store 确认照片最新状态。 */
-function DirectoryPhotos({ path, currentId, recursive = false }: { path: string; currentId?: string; recursive?: boolean }) {
+function DirectoryPhotos({ path, currentId, recursive = false, subfolders = 0 }: { path: string; currentId?: string; recursive?: boolean; subfolders?: number }) {
   const [listing, setListing] = useState<FileListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +208,7 @@ function DirectoryPhotos({ path, currentId, recursive = false }: { path: string;
   return (
     <>
       {visiblePhotos.map((photo, position) => <PhotoRow key={photo.id} photo={photo} currentId={currentId} position={position} relativeTo={recursive ? path : undefined} />)}
-      {!loading && !error && listing && !visiblePhotos.length && <li className="px-7 py-1 text-xs text-muted-foreground">暂无照片或视频</li>}
+      {!loading && !error && listing && emptyHintVisible({ photos: visiblePhotos.length, subfolders }) && <li className="px-7 py-1 text-xs text-muted-foreground">暂无照片或视频</li>}
       {loading && <li className="px-7 py-1 text-[11px] text-muted-foreground" role="status">正在读取照片…</li>}
       {error && <li className="px-7 py-1 text-[11px] text-danger">
         <span>{error}</span>
@@ -301,7 +301,7 @@ function ProjectSearch({ path, currentId, onActiveChange }: { path: string; curr
       <div className="grid grid-cols-2 gap-1 px-2 pb-2">
         <SearchFilter label="筛选已看状态" value={seenFilter} onChange={setSeenFilter} options={[["all", "全部进度"], ["unseen", "未看"], ["seen", "已看"]]} />
         <SearchFilter label="筛选星级" value={rating} onChange={setRating} options={[["all", "全部星级"], ["starred", "有星标"], ["0", "无星标"], ...[1, 2, 3, 4, 5].map(n => [String(n), `${n} 星`] as [string, string])]} />
-        <SearchFilter label="筛选待删状态" value={deletion} onChange={setDeletion} options={[["all", "全部（含待删）"], ["normal", "非待删"], ["deleted", "待删"]]} />
+        <SearchFilter label="筛选待删状态" value={deletion} onChange={setDeletion} options={[["all", "含待删"], ["normal", "不含待删"], ["deleted", "只看待删"]]} />
         <SearchFilter label="筛选文件类型" value={kind} onChange={setKind} options={[["all", "全部类型"], ["photo", "照片"], ["video", "视频"]]} />
         {filtering && <button type="button" className="col-span-2 py-1 text-xs text-muted-foreground underline" onClick={() => {
           setSeenFilter('all'); setRating('all'); setDeletion('all'); setKind('all');

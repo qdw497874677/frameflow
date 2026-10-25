@@ -197,8 +197,9 @@ export function Grid() {
                 </div>
 
                 {p.mark.stars > 0 && (
-                  <Badge className="absolute top-1.5 left-1.5 bg-black/60 text-[11px] text-gold backdrop-blur-sm">
-                    {'★'.repeat(p.mark.stars)}
+                  // 紧凑写法「★5」：窄卡片上五颗星会盖住右上角的看片台按钮
+                  <Badge aria-label={`${p.mark.stars} 星`} className="absolute top-1.5 left-1.5 bg-black/60 text-[11px] tabular-nums text-gold backdrop-blur-sm">
+                    ★{p.mark.stars}
                   </Badge>
                 )}
 
