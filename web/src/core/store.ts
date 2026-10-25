@@ -3,6 +3,7 @@ import { source } from '../api';
 import { readSession, writeSession } from './session';
 import { AuthRequiredError } from '../api/source';
 import { selectionFromQuery, selectionToQuery } from './selection';
+import { listPendingTrash } from './trash';
 import {
   EMPTY_SELECTION,
   ME,
@@ -650,37 +651,28 @@ class AppStore {
   async loadTrash() {
     this.patch({ busy: true });
     try {
-      const dir = this.state.dir;
-      const request = this.listRequest;
-      const [trash, pending] = await Promise.all([
-        source.listTrash(),
-        // 没选定目录时不问：后端要求 dir，空串会被 400 顶回来（boot 还没定目录时就是这种状态）
-        dir
-          ? source.listPhotos({ dir, selection: { ...EMPTY_SELECTION, where: { del: true } }, limit: 500, recursive: true })
-          : Promise.resolve({ items: [] as Photo[] }),
-      ]);
-      // 没定目录时不碰 pendingTrash：boot 的这次调用与 open() 的 loadPendingTrash() 会并发，
-      // 后到的空数组会把已经拿到的待删覆盖掉。
-      this.patch(dir && request === this.listRequest
-        ? { trash, pendingTrash: pending.items, busy: false } : { trash, busy: false });
+      const [trash] = await Promise.all([source.listTrash(), this.loadPendingTrash()]);
+      this.patch({ trash, busy: false });
     } catch (err) {
       this.patch({ busy: false, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  /** 单独刷新「待删」（打完 tag 之后、换目录之后调用） */
+  private pendingRequest = 0;
+
+  /** 刷新「待删」（打完 tag、换目录、增删项目之后调用）。口径是所有在线项目，不随当前目录变。 */
   async loadPendingTrash() {
-    const dir = this.state.dir;
-    const request = this.listRequest;
-    if (!dir) return;
+    const request = ++this.pendingRequest;
+    if (!this.state.roots.length) return;
     try {
-      const page = await source.listPhotos({
+      const items = await listPendingTrash(this.state.roots, async (dir) => (await source.listPhotos({
         dir,
         selection: { ...EMPTY_SELECTION, where: { del: true } },
         limit: 500,
         recursive: true,
-      });
-      if (request === this.listRequest) this.patch({ pendingTrash: page.items });
+      })).items);
+      // 并发刷新时只认最后一次，免得旧结果覆盖新结果
+      if (request === this.pendingRequest) this.patch({ pendingTrash: items });
     } catch {
       /* 回收站页会显示错误，这里的失败不影响挑片 */
     }

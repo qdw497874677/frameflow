@@ -7,7 +7,8 @@
  *    它是把批注任务推给外部渠道（飞书、其他客户端）、再把别人的批注并回来时的对账凭据。
  *
  * 降级：XMP 写不进去时（只读共享、相机卡、权限不够），状态退到 marks.jsonl，
- * 也就是「服务端日志成为这一张的真相」，后续显式写入可再尝试回写（恢复不自动写侧车）—— 不因为盘只读就让打星失败。
+ * 也就是「服务端日志成为这一张的真相」—— 不因为盘只读就让打星失败。写失败的 sidecar 记进待补写表，
+ * 之后每次标注提交与每次扫描完都会按最新状态补写一次（`retryXmp()`）；只读的 XMP 文件不会被覆盖。
  */
 
 import { mkdirSync } from 'node:fs';
@@ -15,7 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { MarksLog, hash, validInput, validateRequest, type MarkEnvelope, type MarkEntry, type MarksLogOptions } from './marks-log.ts';
 import type { MarkChange, MarkInput, MarkResultDto, MarkState, MarkTransactionRequest, MarkTransactionResult } from '../../../domain/marks.ts';
 import { join } from 'node:path';
-import { writeXmpMarks, type XmpMarks } from '../xmp.ts';
+import { writeXmpMarks, xmpFailureReason, type XmpMarks } from '../xmp.ts';
 
 
 
@@ -43,6 +44,8 @@ export class MarksStore {
   private readonly generations = new Map<string, string>();
   private readonly operations = new Map<string, { hash: string; result: MarkTransactionResult; confirmation?: Record<string, unknown> }>();
   private readonly changes: MarkChange[] = [];
+  /** XMP 回写失败、待补写的 sidecar → 照片 id（补写时取该照片的最新状态） */
+  private readonly xmpPending = new Map<string, string>();
 
   constructor(dataDir: string, options: MarksLogOptions = {}) {
     mkdirSync(dataDir, { recursive: true });
@@ -198,7 +201,7 @@ export class MarksStore {
     const stagedRevisions = new Map<string, number>();
     const stagedGenerations = new Map<string, string>();
     const entries: MarkEntry[] = [];
-    const xmpJobs: { sidecarPath: string; stars: number; del: boolean }[] = [];
+    const xmpJobs: { sidecarPath: string; id: string }[] = [];
 
     for (const item of request.items) {
       if (!validInput(item)) {
@@ -239,7 +242,7 @@ export class MarksStore {
       if (generation) stagedGenerations.set(item.id, generation);
       stagedState.set(item.id, state);
       stagedRevisions.set(item.id, newRevision);
-      if (target.sidecarPath) xmpJobs.push({ sidecarPath: target.sidecarPath, stars, del });
+      if (target.sidecarPath) xmpJobs.push({ sidecarPath: target.sidecarPath, id: item.id });
       results.push({ id: item.id, ok: true, stars, del, error: null });
     }
     const result: MarkTransactionResult = { opId: request.opId, results, revisions: Object.fromEntries(stagedRevisions) };
@@ -256,21 +259,42 @@ export class MarksStore {
     // No await before the durable index/publication. Concurrent duplicate calls replay it.
     const failed = new Map<string, string>();
     for (const job of xmpJobs) {
-      try { await writeXmpMarks(job.sidecarPath, { stars: job.stars, del: job.del }); }
-      catch (err) {
-        failed.set(job.sidecarPath, String(err));
-        if (!reportXmp) console.warn('MARKS_XMP_WRITE_FAILED', request.opId, String(err));
-      }
+      const reason = await this.writeSidecar(job.sidecarPath, job.id, request.opId);
+      if (reason) failed.set(job.sidecarPath, reason);
     }
+    await this.retryXmp(new Set(xmpJobs.map((j) => j.sidecarPath)));
     if (reportXmp && failed.size) {
-      const sample = failed.values().next().value ?? '';
       for (const r of results) {
         const target = lookup(r.id);
-        if (r.ok && target?.sidecarPath && failed.has(target.sidecarPath)) {
-          r.error = `照片旁写不进 XMP（${sample.slice(0, 120)}）：状态已记在服务端日志里`;
-        }
+        const reason = r.ok && target?.sidecarPath ? failed.get(target.sidecarPath) : undefined;
+        if (reason) r.error = `照片旁的 XMP 没写进去（${reason}）：标注已保存，之后会自动补写`;
       }
     }
     return result;
+  }
+
+  /** 按照片最新状态写 sidecar；失败记入待补写表并返回不含路径的原因，成功返回 null */
+  private async writeSidecar(sidecarPath: string, photoId: string, context: string): Promise<string | null> {
+    const state = this.state.get(photoId);
+    try {
+      await writeXmpMarks(sidecarPath, { stars: state?.stars ?? 0, del: state?.del ?? false });
+      this.xmpPending.delete(sidecarPath);
+      return null;
+    } catch (err) {
+      this.xmpPending.set(sidecarPath, photoId);
+      console.warn('MARKS_XMP_WRITE_FAILED', context, String(err));
+      return xmpFailureReason(err);
+    }
+  }
+
+  /** 待补写的 sidecar 数（`/capabilities` 等处可展示） */
+  get xmpPendingCount(): number { return this.xmpPending.size; }
+
+  /** 补写之前失败的 sidecar（跳过 `skip` 里刚写过的）；返回仍失败的个数 */
+  async retryXmp(skip: ReadonlySet<string> = new Set()): Promise<number> {
+    for (const [sidecarPath, photoId] of [...this.xmpPending]) {
+      if (!skip.has(sidecarPath)) await this.writeSidecar(sidecarPath, photoId, 'retry');
+    }
+    return this.xmpPending.size;
   }
 }

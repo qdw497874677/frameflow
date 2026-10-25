@@ -167,7 +167,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   registerSystemRoutes(app, { cfg, auth, lib, connectorRegistry, connectorStore, connectorRuntime, loginLimiter: deps.loginLimiter ?? new LoginLimiter() });
   registerLibraryRoutes(app, { lib });
   registerMarksRoutes(app, { lib });
-  registerTokenRoutes(app, { auth });
+  registerTokenRoutes(app, { auth, via: (req) => infoOf(req).via });
   registerJobRoutes(app, { jobs, lib });
   // ── 生产形态：顺手把 web/dist 端上来（一个进程、一个端口）─────────────
   const dist = join(process.cwd(), '..', 'web', 'dist');

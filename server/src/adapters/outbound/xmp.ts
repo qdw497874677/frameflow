@@ -16,7 +16,7 @@
  * 显影参数（`crs:*`）与历史一概不动。落盘用 同目录 tmp + rename（网络共享上也是原子的）。
  */
 
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { access, constants, readFile, rename, rm, writeFile } from 'node:fs/promises';
 
 const RATING_ATTR = /\bxmp:Rating\s*=\s*"(-1|[0-5])"/;
 const RATING_EL = /<xmp:Rating>\s*(-1|[0-5])\s*<\/xmp:Rating>/;
@@ -64,6 +64,24 @@ export async function readXmpMarks(sidecarPath: string): Promise<XmpMarks | null
 
 export type SidecarWrite = 'created' | 'updated' | 'unchanged';
 
+export class XmpWriteError extends Error {
+  readonly code: string;
+  constructor(code: string) { super(code); this.code = code; }
+}
+
+/** 写失败的原因翻成一句不含路径的话（完整错误只进服务端日志） */
+export function xmpFailureReason(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  switch (code) {
+    case 'XMP_READ_ONLY': return 'XMP 文件是只读的';
+    case 'EACCES': case 'EPERM': return '没有写权限';
+    case 'EROFS': return '所在磁盘是只读的';
+    case 'ENOSPC': return '磁盘已满';
+    case 'ENOENT': return '照片所在目录不可达';
+    default: return '写入失败';
+  }
+}
+
 /**
  * 把 `{stars, del}` 写进 sidecar。抛错表示写不进去（只读共享、权限、盘掉了），
  * 调用方据此把状态退回本地日志（见 marks.ts），不把它当致命错误。
@@ -77,10 +95,17 @@ export async function writeXmpMarks(sidecarPath: string, marks: { stars: number;
     existing = null; // 不存在 / 读不动但可能写得动 —— 继续，按新建处理
   }
   if (existing !== null && currentRating(existing) === rating) return 'unchanged';
+  // 用户把 sidecar 设成只读 = 不许改：tmp + rename 会绕过文件权限把它换掉，所以先检查
+  if (existing !== null) await access(sidecarPath, constants.W_OK).catch(() => { throw new XmpWriteError('XMP_READ_ONLY'); });
   const xml = existing === null ? packet(rating) : upsertRating(existing, rating);
   const tmp = `${sidecarPath}.aw-${process.pid}.tmp`;
-  await writeFile(tmp, xml, 'utf8');
-  await rename(tmp, sidecarPath);
+  try {
+    await writeFile(tmp, xml, 'utf8');
+    await rename(tmp, sidecarPath);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
   return existing === null ? 'created' : 'updated';
 }
 
