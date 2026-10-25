@@ -57,6 +57,12 @@ export class ActionLog {
     }
   }
 
+  /** 该 session 上某动作是否已成功处理（任一操作者） */
+  doneFor(sessionId: string, actionId: string): boolean {
+    for (const a of this.#intents.values()) if (a.sessionId === sessionId && a.actionId === actionId && this.#outcomes.get(a.key)?.status === 'done') return true;
+    return false;
+  }
+
   pending(): ActionIntent[] { return [...this.#intents.values()].filter((a) => !this.#outcomes.has(a.key)); }
 
   accept(input: Omit<ActionIntent, 'key' | 'opId' | 'payloadHash' | 'at'>, now = Date.now()): AcceptResult {

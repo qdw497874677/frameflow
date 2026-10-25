@@ -6,7 +6,7 @@
 /** 飞书消息更新窗口（保守取 14 天） */
 export const CARD_UPDATE_WINDOW_MS = 14 * 24 * 3600 * 1000;
 
-export interface CardAction { readonly label: string; readonly actionId: string; readonly primary?: boolean }
+export interface CardAction { readonly label: string; readonly actionId: string; readonly primary?: boolean; /** 子 session（列表项/项目选项各自独立） */ readonly sessionId?: string }
 
 export interface CardModel {
   readonly title: string;
@@ -41,7 +41,8 @@ export function renderCard(m: CardModel, imageKey?: string): string {
     });
   }
   for (const a of m.actions ?? []) {
-    elements.push({ tag: 'button', type: a.primary ? 'primary' : 'default', text: { tag: 'plain_text', content: a.label }, behaviors: [{ type: 'callback', value: value(a.actionId) }] });
+    const v = a.sessionId ? { sessionId: a.sessionId, actionId: a.actionId } : value(a.actionId);
+    elements.push({ tag: 'button', type: a.primary ? 'primary' : 'default', text: { tag: 'plain_text', content: a.label.slice(0, 40) }, behaviors: [{ type: 'callback', value: v }] });
   }
   return JSON.stringify({ schema: '2.0', config: { update_multi: true }, header: { title: { tag: 'plain_text', content: m.title.slice(0, 100) } }, body: { elements } });
 }

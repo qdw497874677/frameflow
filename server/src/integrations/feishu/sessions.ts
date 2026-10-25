@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { JsonlLog } from './jsonl.ts';
 
-export type SessionKind = 'task-entry' | 'photo-review' | 'progress';
+export type SessionKind = 'task-entry' | 'photo-review' | 'progress' | 'task-list' | 'help' | 'create-project' | 'create-preview';
 
 export interface CardSession {
   readonly sessionId: string;
@@ -22,15 +22,27 @@ export interface CardSession {
   readonly expiresAt: number;
   readonly messageId: string | null;
   readonly createdAt: number;
+  /** F25：photo-review 的浏览模式（继续未确认 / 复核已确认） */
+  readonly mode?: 'confirm' | 'review';
+  /** F25：列表页码 */
+  readonly page?: number;
+  /** F26：创建流程绑定的项目 / 预览 */
+  readonly projectId?: string;
+  readonly previewId?: string;
+  readonly previewRevision?: string;
+  readonly photoCount?: number;
+  /** 子按钮（各自独立 session）：列表里的任务、可选项目 */
+  readonly children?: ReadonlyArray<{ readonly label: string; readonly sessionId: string; readonly actionId: string }>;
 }
 
-type Row = { t: 'session'; s: CardSession } | { t: 'message'; sessionId: string; messageId: string };
+type Row = { t: 'session'; s: CardSession } | { t: 'message'; sessionId: string; messageId: string } | { t: 'revoke'; sessionId: string };
 
 export const SESSION_TTL_MS = 14 * 24 * 3600 * 1000;
 
 export class SessionStore {
   readonly #log: JsonlLog<Row>;
   readonly #byId = new Map<string, CardSession>();
+  readonly #revoked = new Set<string>();
 
   constructor(dataDir: string) {
     this.#log = new JsonlLog<Row>(path.join(dataDir, 'feishu', 'sessions.jsonl'));
@@ -39,6 +51,7 @@ export class SessionStore {
 
   #apply(r: Row): void {
     if (r.t === 'session') this.#byId.set(r.s.sessionId, r.s);
+    else if (r.t === 'revoke') this.#revoked.add(r.sessionId);
     else { const s = this.#byId.get(r.sessionId); if (s) this.#byId.set(s.sessionId, { ...s, messageId: r.messageId }); }
   }
 
@@ -60,13 +73,23 @@ export class SessionStore {
 
   get(sessionId: string): CardSession | undefined { return this.#byId.get(sessionId); }
 
+  /** F25：重开后旧 session 失效（旧卡片按钮一律拒绝） */
+  revoke(sessionId: string): void {
+    if (!this.#byId.has(sessionId) || this.#revoked.has(sessionId)) return;
+    const row: Row = { t: 'revoke', sessionId };
+    this.#log.append(row);
+    this.#apply(row);
+  }
+
+  revoked(sessionId: string): boolean { return this.#revoked.has(sessionId); }
+
   /**
    * 校验事件与 session 绑定一致：实例、租户、来源目标、消息（转发卡片 messageId 不同 → 拒绝）与期限。
    */
   check(sessionId: unknown, ev: { connectorId: string; tenantId: string; targetId: string | null; messageId?: string }, now = Date.now()):
     { ok: true; session: CardSession } | { ok: false; code: 'SESSION_NOT_FOUND' | 'SESSION_EXPIRED' | 'SESSION_MISMATCH' } {
     const s = typeof sessionId === 'string' ? this.#byId.get(sessionId) : undefined;
-    if (!s) return { ok: false, code: 'SESSION_NOT_FOUND' };
+    if (!s || this.#revoked.has(s.sessionId)) return { ok: false, code: 'SESSION_NOT_FOUND' };
     if (now >= s.expiresAt) return { ok: false, code: 'SESSION_EXPIRED' };
     if (s.connectorId !== ev.connectorId || s.tenantId !== ev.tenantId || s.targetId !== ev.targetId) return { ok: false, code: 'SESSION_MISMATCH' };
     if (s.messageId && ev.messageId && s.messageId !== ev.messageId) return { ok: false, code: 'SESSION_MISMATCH' };

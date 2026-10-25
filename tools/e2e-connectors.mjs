@@ -4,6 +4,7 @@
  *   node tools/e2e-connectors.mjs --scenario=settings
  *   node tools/e2e-connectors.mjs --scenario=dispatch   # F17：派发框勾选目标/预览/确认/取消零发送
  *   node tools/e2e-connectors.mjs --scenario=delivery   # F18：两实例三目标部分失败、单目标重试、unknown 风险确认
+ *   node tools/e2e-connectors.mjs --scenario=progress   # F27：显式确认进度（假飞书回流 + 网页共享，重标不重复计数）
  * dispatch/delivery 用 FRAMEFLOW_FAKE_TRANSPORT=e2e 的离线假传输（externalId 以 oc_fail 开头的失败），绝不触网。
  * 独立临时库与数据目录；后端未注册任何平台适配器（零外传），Secret 只用假环境变量；CDP 真鼠标/键盘。
  * 两轮：①设密码并登录（390px）：新建默认停用、目标编辑、secretConfigured、启用后真实错误状态、
@@ -72,7 +73,7 @@ export default async function probe(send) {
 
   const mode = await evaluate(`new URLSearchParams(location.search).get('e2eMode')`);
 
-  if (mode === 'dispatch' || mode === 'delivery') return flow(mode, { evaluate, waitFor, clickAt, center, send });
+  if (mode === 'dispatch' || mode === 'delivery' || mode === 'progress') return flow(mode, { evaluate, waitFor, clickAt, center, send });
   if (mode === 'noauth') {
     await waitFor(`${card}`, '设置页未显示连接器卡片');
     assert.match(await evaluate(`${card}.innerText`), /先在后端设置应用密码/);
@@ -197,6 +198,37 @@ async function flow(mode, { evaluate, waitFor, clickAt, center }) {
     console.log('ok 确认派发：只投递到勾选的目标（假传输）');
     return;
   }
+  if (mode === 'progress') {
+    // 外传到一个目标 → 显式确认任务；假飞书回流（channel=feishu）与网页共享同一进度
+    await openDispatch();
+    await tick('飞书甲 · 摄影群');
+    await waitFor(`/飞书甲/.test(${dlg}.querySelector('[data-testid="dispatch-preview"]').textContent)`, '预览未刷新');
+    await tick('我确认');
+    await clickAt(await center(`() => [...${dlg}.querySelectorAll('button')].find(b => b.textContent.trim() === '派发' && !b.disabled)`));
+    await waitFor(`/已派发/.test(${dlg}.innerText)`, '确认后应显示已派发');
+    let job = (await api('GET', '/api/v1/jobs?limit=50')).j.items[0];
+    assert.equal(job.confirmationMode, 'explicit', '外传任务应为显式确认');
+    assert.equal(job.confirmation.confirmed, 0);
+    const total = job.items.length;
+    const p0 = job.items[0].id;
+    for (const stars of [3, 4]) {
+      const r = await api('POST', `/api/v1/jobs/${job.id}/inbound`, { items: [{ photoId: p0, stars, channel: 'feishu' }] });
+      assert.ok(r.s < 300, JSON.stringify(r));
+    }
+    job = (await api('GET', `/api/v1/jobs/${job.id}`)).j;
+    assert.deepEqual(job.confirmation, { confirmed: 1, remaining: total - 1, blocked: 0, total }, '重标不重复计数');
+    await evaluate(`location.href = '/?view=jobs&e2eMode=progress&step=jobs'`);
+    await sleep(2000);
+    await waitFor(`[...document.querySelectorAll('button, [role="button"]')].find(e => e.textContent.includes('批注') && !e.textContent.includes('派发'))`, '任务列表为空');
+    await clickAt(await center(`() => [...document.querySelectorAll('button, [role="button"]')].find(e => e.textContent.includes('批注') && !e.textContent.includes('派发'))`));
+    const box = `document.querySelector('[data-testid="job-confirmation"]')`;
+    await waitFor(box, '任务页没有确认进度');
+    const v = await evaluate(`Object.fromEntries([...${box}.querySelectorAll('dd')].map(d => [d.dataset.k, Number(d.textContent)]))`);
+    assert.deepEqual(v, { confirmed: 1, remaining: total - 1, blocked: 0 }, '网页确认进度应与回流一致');
+    await noOverflow('任务详情 390px');
+    console.log('ok 确认进度：假飞书回流与网页共享；已确认/剩余/不可用分开显示；重标不重复计数；390px 无溢出');
+    return;
+  }
   // delivery：三个目标部分失败 → 任务详情按目标显示；失败可重试
   await openDispatch();
   for (const t of ['飞书甲 · 摄影群', '飞书乙 · 客户群', '飞书乙 · 坏群']) await tick(t);
@@ -236,6 +268,7 @@ async function run(dir, { password, width, mode }) {
   const library = join(dir, `lib-${mode}`);
   await mkdir(library, { recursive: true });
   await writeFile(join(library, 'A.jpg'), await sharp({ create: { width: 60, height: 40, channels: 3, background: '#888' } }).jpeg().toBuffer());
+  if (mode === 'progress') await writeFile(join(library, 'B.jpg'), await sharp({ create: { width: 60, height: 40, channels: 3, background: '#666' } }).jpeg().toBuffer());
   const socket = createServer();
   socket.listen(0, '127.0.0.1');
   await once(socket, 'listening');
@@ -245,7 +278,7 @@ async function run(dir, { password, width, mode }) {
   await writeFile(config, JSON.stringify({ host: '127.0.0.1', port, password, dataDir: join(dir, `data-${mode}`), roots: [{ id: 'e2e', label: '连接器测试', path: library }] }));
   let log = '';
   const server = spawn(process.execPath, ['src/index.ts', `--config=${config}`], {
-    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: 'disabled', ...(mode === 'dispatch' || mode === 'delivery' ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: 'disabled', ...(mode === 'dispatch' || mode === 'delivery' || mode === 'progress' ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (b) => { log += b; });
   server.stderr.on('data', (b) => { log += b; });
@@ -273,7 +306,7 @@ async function run(dir, { password, width, mode }) {
 
 async function main() {
   const scenario = (process.argv.find((a) => a.startsWith('--scenario=')) ?? '--scenario=settings').split('=')[1];
-  assert.ok(['settings', 'dispatch', 'delivery'].includes(scenario), `未知场景 ${scenario}`);
+  assert.ok(['settings', 'dispatch', 'delivery', 'progress'].includes(scenario), `未知场景 ${scenario}`);
   const dir = await mkdtemp(join(tmpdir(), 'frameflow-connectors-'));
   try {
     if (scenario !== 'settings') {

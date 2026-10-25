@@ -76,6 +76,6 @@ export function mapMessage(d: Record<string, unknown>, inst: ConnectorInstanceCo
   }
   return {
     ok: true,
-    event: { identity: { connectorId: inst.id, tenantId: inst.tenantId!, actorId }, source, messageId: str(msg?.['message_id']) ?? undefined, eventId: str(d['event_id']) ?? undefined, payload: { type: 'message', text } },
+    event: { identity: { connectorId: inst.id, tenantId: inst.tenantId!, actorId }, source, messageId: str(msg?.['message_id']) ?? undefined, eventId: str(d['event_id']) ?? undefined, payload: { type: 'message', text: text.replace(/@_user_\d+/g, '').trim(), mentioned: Array.isArray(msg?.['mentions']) && (msg['mentions'] as unknown[]).length > 0 } },
   };
 }
