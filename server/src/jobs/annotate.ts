@@ -131,6 +131,9 @@ async function inbound(job: Job, items: InboundWrite[], ctx: JobContext, sink: J
       from,
       to,
       note: changed ? null : asked ? '标注本来就是这样的，没写日志' : '这项没带 stars/del，只记了一次回执',
+      // F23：明确确认模式下，网页里带了星级/待删的提交也算一次明确确认（未变化也算）；旧任务语义不变
+      ...(job.confirmationMode === 'explicit' && asked && !job.items.find((i) => i.id === result.id)?.confirmedAt
+        ? { status: 'done' as const, confirmedAt: at ?? new Date().toISOString(), confirmedBy: input.by ?? null } : {}),
     });
     if (prev?.by && prev.by !== input.by) {
       sink.event({

@@ -50,6 +50,11 @@ export interface JobItem {
   /** 回流幂等键（外部系统重发整批时用来去重） */
   clientRef?: string | null;
   at?: string | null;
+  /** 明确确认（F23，仅 confirmationMode=explicit）：首次确认时刻/确认人；重标不改计数 */
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
+  /** 最近一次投影的 marks 操作 id */
+  sourceOpId?: string | null;
 }
 
 /** 事件日志的一行（追加型，不回改；`seq` 单调递增，可当轮询游标） */
@@ -64,6 +69,8 @@ export interface JobEvent {
   channel?: string | null;
   clientRef?: string | null;
   note?: string | null;
+  /** 确认投影（F23）：对应 marks 事务 opId；同一 opId 只投影一次 */
+  sourceOpId?: string | null;
 }
 
 /** 事件入参（seq/at 由存储补） */
@@ -76,6 +83,7 @@ export interface JobEventInput {
   channel?: string | null;
   clientRef?: string | null;
   note?: string | null;
+  sourceOpId?: string | null;
   at?: string;
 }
 
@@ -109,6 +117,39 @@ export interface Job {
   /** 确认式创建（F13）：稳定 requestId 与创建载荷指纹；旧随机 id 路径为空 */
   requestId?: string | null;
   requestFingerprint?: string | null;
+  /** 确认模式（F23）：explicit = 按唯一照片的明确确认计数；缺省为旧语义（跳过也算处理） */
+  confirmationMode?: 'explicit' | null;
+}
+
+/** 确认进度摘要（F23/F27）：仅 explicit 模式；跳过/失败不计入 confirmed */
+export interface ConfirmationSummary {
+  confirmed: number;
+  remaining: number;
+  blocked: number;
+  total: number;
+}
+
+export function confirmationSummary(job: Job, accessible: (photoId: string) => boolean = () => true): ConfirmationSummary | null {
+  if (job.confirmationMode !== 'explicit') return null;
+  let confirmed = 0;
+  let blocked = 0;
+  for (const i of job.items) {
+    if (i.confirmedAt) confirmed++;
+    else if (!accessible(i.id)) blocked++;
+  }
+  // 失联项不减总数：仍在 total 里，只是暂时无法确认
+  return { confirmed, remaining: job.items.length - confirmed - blocked, blocked, total: job.items.length };
+}
+
+/** 一次确认投影的入参（来自已提交的 marks 事务） */
+export interface ConfirmationProjection {
+  photoId: string;
+  sourceOpId: string;
+  by: string;
+  stars: number;
+  del: boolean;
+  channel: string;
+  at?: string;
 }
 
 /** 参数校验的一处问题（`validate` 返回；HTTP 层放进 Error.detail.problems） */
@@ -166,6 +207,7 @@ export interface JobCreateRecord {
   id?: string;
   requestId?: string | null;
   requestFingerprint?: string | null;
+  confirmationMode?: 'explicit' | null;
 }
 
 /** `jobs.jsonl` 的一行 */
@@ -188,6 +230,8 @@ export class JobsStore {
   private readonly byId = new Map<string, Job>();
   private readonly eventsById = new Map<string, JobEvent[]>();
   private readonly byRequest = new Map<string, string>();
+  /** jobId → 已投影的 sourceOpId（由事件流重建） */
+  private readonly projected = new Map<string, Set<string>>();
   private nextSeq = 1;
 
   constructor(dataDir: string) {
@@ -220,6 +264,7 @@ export class JobsStore {
         const list = this.eventsById.get(ev.jobId) ?? [];
         list.push(ev);
         this.eventsById.set(ev.jobId, list);
+        if (ev.sourceOpId) this.markProjected(ev.jobId, ev.sourceOpId);
         if (ev.seq >= this.nextSeq) this.nextSeq = ev.seq + 1;
       } catch {
         // 同上：跳过坏行
@@ -310,6 +355,7 @@ export class JobsStore {
       startedAt: null,
       finishedAt: null,
       ...(input.requestId ? { requestId: input.requestId, requestFingerprint: input.requestFingerprint ?? null } : {}),
+      ...(input.confirmationMode === 'explicit' ? { confirmationMode: 'explicit' as const } : {}),
     };
     this.byId.set(job.id, job);
     if (input.requestId) this.byRequest.set(input.requestId, job.id);
@@ -366,6 +412,47 @@ export class JobsStore {
     return structuredClone(job);
   }
 
+  /** 这条 marks 操作是否已投影到任务 */
+  hasProjected(id: string, sourceOpId: string): boolean {
+    return this.projected.get(id)?.has(sourceOpId) ?? false;
+  }
+
+  /**
+   * 确认投影（F23）：把已提交的 marks 事务投影成任务确认。调用方须持 job gate。
+   * - 同一 sourceOpId 只投影一次（重复/恢复补投影不重复事件与计数）；
+   * - 按唯一照片计数：首次确认写 confirmedAt，之后的重标只更新值；
+   * - 零星（stars=0）明确确认同样有效。
+   */
+  projectConfirmation(id: string, p: ConfirmationProjection): { replayed: boolean; item: JobItem | null } {
+    const job = this.mustGet(id);
+    if (job.confirmationMode !== 'explicit') throw new JobError('invalid', '这个任务不是明确确认模式');
+    if (this.hasProjected(id, p.sourceOpId)) return { replayed: true, item: structuredClone(job.items.find((i) => i.id === p.photoId) ?? null) };
+    const idx = job.items.findIndex((i) => i.id === p.photoId);
+    if (idx < 0) throw new JobError('notfound', `这张照片不在这个任务里：${p.photoId}`);
+    const prev = job.items[idx]!;
+    const at = p.at ?? new Date().toISOString();
+    const to = describeMark(p.stars, p.del);
+    const next: JobItem = {
+      ...prev, status: 'done', stars: p.stars, del: p.del, at, sourceOpId: p.sourceOpId,
+      from: prev.confirmedAt ? (prev.to ?? null) : (prev.from ?? null), to,
+      confirmedAt: prev.confirmedAt ?? at, confirmedBy: prev.confirmedBy ?? p.by,
+    };
+    job.items = job.items.map((i, n) => (n === idx ? next : i));
+    job.progress = jobProgress(job.items);
+    this.save(job);
+    this.appendEvent(id, {
+      type: 'applied', photoId: p.photoId, from: prev.to ?? null, to, by: p.by, channel: p.channel, sourceOpId: p.sourceOpId,
+      note: prev.confirmedAt ? '重新标记（不增加确认数）' : '明确确认',
+    });
+    return { replayed: false, item: structuredClone(next) };
+  }
+
+  private markProjected(id: string, op: string): void {
+    const set = this.projected.get(id) ?? new Set<string>();
+    set.add(op);
+    this.projected.set(id, set);
+  }
+
   /** 追加一条事件；`seq` 由这里发号（全局单调，进程内唯一） */
   addEvent(id: string, input: JobEventInput): JobEvent {
     return this.appendEvent(id, input);
@@ -383,7 +470,9 @@ export class JobsStore {
       channel: input.channel ?? null,
       clientRef: input.clientRef ?? null,
       note: input.note ?? null,
+      ...(input.sourceOpId ? { sourceOpId: input.sourceOpId } : {}),
     };
+    if (input.sourceOpId) this.markProjected(id, input.sourceOpId);
     const list = this.eventsById.get(id) ?? [];
     list.push(ev);
     this.eventsById.set(id, list);
@@ -401,6 +490,10 @@ export class JobsStore {
     this.byId.set(job.id, job);
     appendLines(this.jobsFile, [JSON.stringify({ t: 'job', ...job })]);
   }
+}
+
+function describeMark(stars: number, del: boolean): string {
+  return del ? 'del' : `stars:${stars}`;
 }
 
 /** 只覆盖明确给出的字段：`undefined` = 不动，`null` = 清空 */

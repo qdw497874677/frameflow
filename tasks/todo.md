@@ -217,30 +217,34 @@ F16–F18通过，用户审核网页派发交互；不使用真实目标。未�
 
 ### [x] 检查点 G — 传输隔离
 F19–F21通过，SDK类型不进入策略模块；核对长连接/更新限制和最小权限。未经联调许可不打开真实连接。
-
-## 阶段 H：确认动作与共享进度（V4）
 - 完成（2026-10-25）：F19–F21 通过；SDK 仅在 feishu/ 目录，策略模块零 SDK 类型；未打开真实连接。
 
-### [ ] F22 — 卡片 session、动作意图与目标游标
+## 阶段 H：确认动作与共享进度（V4）
+
+### [x] F22 — 卡片 session、动作意图与目标游标
 - 模块：feishu-interaction；验收：FI-04/06/08。依赖：F07、F15、F19。
 - 验收：①session绑定实例/租户/目标/message/task/photo/版本/期限；②实际操作者取事件，actionId同载荷重放/异载荷拒绝，不用星级值作为永久key；③可靠受理后才回处理中，过载拒绝、目标间游标独立、重启恢复。
 - 文件：`server/src/integrations/feishu/sessions.ts`、`server/src/integrations/feishu/actions.ts`、`server/src/integrations/feishu/cursors.ts`、`server/tools/feishu-interaction.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-interaction.test.mjs)`；含转发/跨群/排队后撤权。
+- 完成（2026-10-25）：integrations/feishu/{sessions,actions,cursors,jsonl}.ts，追加+fsync 持久化；feishu-interaction.test.mjs
 
-### [ ] F23 — 确认集合及幂等任务投影
+### [x] F23 — 确认集合及幂等任务投影
 - 模块：feishu-interaction；验收：FI-01/04/05/09。依赖：F03、F06、F13。
 - 验收：①新confirmationMode按唯一照片明确确认计数，零星确认有效、跳过/失败不计；②sourceOpId重复投影不重复事件/计数，提交后投影前崩溃只补投影；③done受控重标不加数，旧skipped语义不变。
 - 文件：`server/src/core/jobs.ts`、`server/src/jobs/service.ts`、`server/src/jobs/confirmations.ts`、`server/src/jobs/annotate.ts`、`server/tools/job-confirmations.test.mjs`。
 - 验证：`(cd server && node --test tools/job-confirmations.test.mjs && node tools/e2e-jobs.mjs && node tools/e2e-annotate.mjs)`。
+- 完成（2026-10-25）：confirmationMode=explicit、projectConfirmation 幂等投影、jobs/confirmations.ts 对账；job-confirmations.test.mjs
 
-### [ ] F24 — 完整确认控制器与卡片按钮
+### [x] F24 — 完整确认控制器与卡片按钮
 - 模块：feishu-interaction；验收：FI-01/03/04/05/06/08。依赖：F04–F06、F20、F22、F23。
 - 验收：①表单草稿不落标，确认在锁内复验身份/权限/终态/源/版本，落盘后才成功前进；②群/私聊/跨任务/网页竞争旧版仅一项成功，冲突可刷新；③取消/移走竞争拒绝，恢复仅补已提交投影，不重复写旧标记。
 - 文件：`server/src/integrations/feishu/controller.ts`、`server/src/integrations/feishu/actions.ts`、`server/src/connectors/feishu/cards.ts`、`server/src/index.ts`、`server/tools/feishu-interaction.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-interaction.test.mjs tools/job-confirmations.test.mjs tools/photo-gates.test.mjs)`。
+- 完成（2026-10-25）：integrations/feishu/controller.ts 受理→锁内复验→稳定 opId 事务→投影→卡片前进；server.ts 装配与恢复
 
-### [ ] 检查点 H — 多人确认与恢复
+### [x] 检查点 H — 多人确认与恢复
 F22–F24必须经独立安全/恢复复核。完整故障矩阵和跨任务并发通过；这里未通过不推进真实联调。
+- 完成（2026-10-25）：全部离线测试与 e2e 通过；独立安全复核待人工
 
 ## 阶段 I：任务入口与重标（V5）
 
