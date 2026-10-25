@@ -9,9 +9,11 @@ import { PolicyStore } from '../delivery/policies.ts';
 import { PreviewService } from '../delivery/previews.ts';
 import { ConfirmationService, ConfirmationStore } from '../delivery/confirmations.ts';
 import { DeliveryDispatcher } from '../delivery/dispatcher.ts';
+import { UnknownOutcome } from '../delivery/runner.ts';
 import { DeliveryStore } from '../delivery/store.ts';
 import { ConnectorConfigStore } from '../connectors/config.ts';
 import { ConnectorRegistry } from '../connectors/registry.ts';
+import type { ConnectorFactory, ConnectorKind } from '../connectors/types.ts';
 import { ConnectorRuntime } from '../connectors/runtime.ts';
 import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -103,7 +105,12 @@ function jobError(reply: FastifyReply, err: unknown): FastifyReply {
   return reply.code(500).send({ error: msg });
 }
 
-export async function buildServer(cfg: Config, lib: Library): Promise<FastifyInstance> {
+/** 组合根注入（F21）：平台适配器工厂由入口传入；测试注入假 SDK，默认不注册任何适配器（零外网） */
+export interface ServerDeps {
+  readonly connectorFactories?: Partial<Record<ConnectorKind, (lib: Library) => ConnectorFactory>>;
+}
+
+export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: cfg.logLevel }, bodyLimit: 8 * 1024 * 1024 });
   const auth = new Auth(cfg.dataDir, cfg.password);
   // 任务层：磁盘上两份追加日志（core/jobs.ts），执行由进程内一个队列兜（jobs/service.ts）。
@@ -116,7 +123,9 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
 
   // ── 连接器（F08/F09）：配置在 dataDir/connectors.json；尚未注册任何平台适配器，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED
   const connectorStore = ConnectorConfigStore.open(cfg.dataDir);
-  const connectorRuntime = new ConnectorRuntime(connectorStore, new ConnectorRegistry(), cfg.dataDir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }));
+  const connectorRegistry = new ConnectorRegistry();
+  for (const [kind, make] of Object.entries(deps.connectorFactories ?? {})) if (make) connectorRegistry.register(kind as ConnectorKind, make(lib));
+  const connectorRuntime = new ConnectorRuntime(connectorStore, connectorRegistry, cfg.dataDir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }));
   await connectorRuntime.sync();
   app.addHook('onClose', async () => connectorRuntime.stopAll());
   // ── 投递策略与预览（F11/F12）：策略在 dataDir/delivery-policies.json，预览只在内存、零发送
@@ -126,7 +135,7 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     store: connectorStore, runtime: connectorRuntime, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via,
     isReferenced: (cid) => policyStore.current.policies.some((p) => p.targets.some((t) => t.connectorId === cid)),
   });
-  // ── 确认与外传（F13–F16）：尚无平台传输适配器，发送一律 failed: NO_TRANSPORT（不触网）
+  // ── 确认与外传（F13–F16）：经连接器运行时发送；未注册适配器/未启用即 failed（不触网）
   const pstate = () => ({ connectors: connectorStore.current, policies: policyStore.current });
   const confirmStore = ConfirmationStore.open(cfg.dataDir);
   const dispatcher = new DeliveryDispatcher({
@@ -138,7 +147,13 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
           if (!t || t.externalId.startsWith('oc_fail')) throw new Error('FAKE_FAIL');
           return { messageId: `fake_${r.intentId}` };
         } }
-      : { send: async () => { throw new Error('NO_TRANSPORT'); } },
+      : { send: async (r) => {
+          // 真实外传经运行时：执行时刻重新授权（实例停用/目标删除即拒绝）
+          const out = await connectorRuntime.send(r.connectorId, { targetId: r.targetId, intentId: r.intentId, content: { type: 'task-entry', taskId: r.jobId } });
+          if (out.status === 'sent') return { messageId: out.messageId };
+          if (out.status === 'unknown') throw new UnknownOutcome(out.code);
+          throw new Error(out.code);
+        } },
   });
   const selectIds = (projectId: string, ids: readonly string[]) =>
     lib.select({ ids: [...ids], project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id);
@@ -241,6 +256,11 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
       { kind: 'anthropic', model: '', local: false, status: 'planned' },
     ],
     library: lib.status,
+    // 连接器能力摘要：只反映真实注册/启用/运行状态，不含配置细节与凭据
+    connectors: {
+      adapters: (['feishu'] as const).filter((k) => connectorRegistry.factory(k) !== undefined),
+      instances: connectorStore.current.instances.map((i) => ({ id: i.id, kind: i.kind, enabled: i.enabled, state: connectorRuntime.status(i.id).state })),
+    },
     notes: '任务层已开（POST /jobs 先 plan 再 apply；批注回流走 POST /jobs/{id}/inbound）；通道 v1 只有内置 inapp。AI 接入用 pull 形态：Bearer token + GET /photos + PUT /marks（见 docs/agent-access.md）；executors 均为 planned（push 未实现）。',
   }));
 

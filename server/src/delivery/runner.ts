@@ -9,6 +9,9 @@ import type { TargetRef } from './types.ts';
 import type { DeliveryStore, PartKey, PartView } from './store.ts';
 
 export interface SendRequest<P> extends PartKey { readonly intentId: string; readonly part: P }
+/** 传输明确报告「无法确认是否送达」：记 unknown，而不是 failed */
+export class UnknownOutcome extends Error {}
+
 export interface Transport<P> { send(req: SendRequest<P>): Promise<{ messageId: string }> }
 
 export interface RunInput<P> {
@@ -73,6 +76,7 @@ export class DeliveryRunner<P> {
       store.settle(key, intentId, 'sent', { messageId: r.messageId });
       return true;
     } catch (e) {
+      if (e instanceof UnknownOutcome) { store.settle(key, intentId, 'unknown', { error: e.message.slice(0, 200) }); return false; }
       store.settle(key, intentId, 'failed', { error: e instanceof Error ? e.message.slice(0, 200) : 'SEND_FAILED' });
       return false;
     } finally { clearTimeout(timer); }

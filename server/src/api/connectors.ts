@@ -128,6 +128,23 @@ export function registerConnectorRoutes(app: FastifyInstance, deps: ConnectorApi
       return deps.runtime.test(id);
     });
 
+    // 显式测试卡（F21）：与无消息测试分开；须 confirm=true，且只发往该实例已配置、已授权项目的目标
+    scope.post('/api/v1/connectors/:id/test-card', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const cur = find(id);
+      if (!cur) return err(reply, 404, 'CONNECTOR_NOT_FOUND', '没有这个连接器');
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      if (Object.keys(body).some((k) => k !== 'targetId' && k !== 'confirm')) return err(reply, 400, 'UNKNOWN_FIELD', '只接受 targetId 与 confirm');
+      if (body['confirm'] !== true) return err(reply, 400, 'CONFIRM_REQUIRED', '发送测试卡需要明确确认');
+      const target = cur.targets.find((t) => t.id === body['targetId']);
+      if (!target) return err(reply, 400, 'TARGET_NOT_FOUND', '目标不属于这个连接器');
+      if (target.projectIds.length === 0) return err(reply, 403, 'TARGET_NOT_AUTHORIZED', '目标未授权任何项目');
+      if (!cur.enabled) return err(reply, 409, 'CONNECTOR_DISABLED', '连接器未启用');
+      const intentId = `test_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+      const result = await deps.runtime.send(id, { targetId: target.id, intentId, content: { type: 'test-card' } });
+      return reply.code(result.status === 'sent' ? 200 : 502).send({ targetId: target.id, result });
+    });
+
     scope.get('/api/v1/connectors/:id/targets', async (req, reply) => {
       const { id } = req.params as { id: string };
       const cur = find(id);

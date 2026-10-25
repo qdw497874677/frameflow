@@ -580,6 +580,25 @@ paths:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorVerifyResult" } } } }
         "404": { $ref: "#/components/responses/Error" }
 
+  /connectors/{id}/test-card:
+    post:
+      summary: 显式发送测试卡（须 confirm=true；只发往该实例已配置且已授权项目的目标；需管理 session）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [targetId, confirm], properties: { targetId: { type: string }, confirm: { type: boolean, enum: [true] } } }
+      responses:
+        "200": { description: 已发送, content: { application/json: { schema: { type: object, required: [targetId, result], properties: { targetId: { type: string }, result: { type: object } } } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { description: 发送失败或结果未知（result.status = failed / unknown）, content: { application/json: { schema: { type: object } } } }
+
   /connectors/{id}/targets:
     get:
       summary: 已配置的接收目标（不拉取通讯录）
