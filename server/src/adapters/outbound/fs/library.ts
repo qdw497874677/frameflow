@@ -10,35 +10,39 @@
  * 里面存的是按 `path+mtime+size` 判脏的元数据缓存，坏了/删了只是下次扫慢一点。
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
-import { expandHome, persistRoots, type Config } from '../adapters/outbound/config-file.ts';
-import { CacheJanitor, type CacheEvictResult, type CacheStats } from '../adapters/outbound/fs/cache.ts';
-import { extOf, IMAGE_EXTS, RAW_EXTS } from '../domain/exts.ts';
-import type { FileRef } from '../domain/photo.ts';
+import { byName, FolderTree } from '../../../domain/library/folder-tree.ts';
+import { encodeCursor, pageAfter } from '../../../domain/library/paging.ts';
+import { fileOf, sidecarOf, type FileVariant } from '../../../domain/library/photo-files.ts';
+import { LibraryIndexFiles } from './library-index.ts';
+import type { PhotoCatalog } from '../../../application/library/ports.ts';
+import { expandHome, persistRoots, type Config } from '../config-file.ts';
+import { CacheJanitor, type CacheEvictResult, type CacheStats } from './cache.ts';
+import { extOf, IMAGE_EXTS, RAW_EXTS } from '../../../domain/exts.ts';
+import type { FileRef } from '../../../domain/photo.ts';
 import {
   toPhotoDto,
   toTrashEntryDto,
-  type FolderDto,
   type FolderListingDto,
   type OpFailureDto,
   type OpResultDto,
   type PhotoDto,
   type RootDto,
   type TrashEntryDto,
-} from '../adapters/inbound/http/dto.ts';
-import { dirPath, parseDirPath } from '../domain/ids.ts';
-import { OperationGates } from './operation-gates.ts';
-import { sourceGeneration, verifySourceGeneration } from '../adapters/outbound/fs/source-generation.ts';
-import { MarksStore } from '../adapters/outbound/fs/marks-store.ts';
-import { type MarkChange, type MarkInput, type MarkResultDto } from '../domain/marks.ts';
-import type { MarkTransactionRequest, MarkTransactionResult } from '../domain/marks.ts';
-import type { PhotoRecord } from '../domain/photo.ts';
-import { matchesSelection, selectionIsEmpty, type Selection } from '../domain/selection.ts';
-import { scanLibrary, type CachedMeta } from '../adapters/outbound/fs/scan.ts';
-import { Thumbs } from '../adapters/outbound/thumbs.ts';
-import { moveFile, removeTrashDir, TrashStore, TRASH_DIR, uniqueDirName, uniqueFilePath, type TrashFileMove, type TrashRecord } from '../adapters/outbound/fs/trash-store.ts';
+} from '../../inbound/http/dto.ts';
+import { dirPath, parseDirPath } from '../../../domain/ids.ts';
+import { OperationGates } from '../../../application/operation-gates.ts';
+import { sourceGeneration, verifySourceGeneration } from './source-generation.ts';
+import { MarksStore } from './marks-store.ts';
+import { type MarkChange, type MarkInput, type MarkResultDto } from '../../../domain/marks.ts';
+import type { MarkTransactionRequest, MarkTransactionResult } from '../../../domain/marks.ts';
+import type { PhotoRecord } from '../../../domain/photo.ts';
+import { matchesSelection, selectionIsEmpty, type Selection } from '../../../domain/selection.ts';
+import { scanLibrary, type CachedMeta } from './scan.ts';
+import { Thumbs } from '../thumbs.ts';
+import { moveFile, removeTrashDir, TrashStore, TRASH_DIR, uniqueDirName, uniqueFilePath, type TrashFileMove, type TrashRecord } from './trash-store.ts';
 
 export interface ListPhotosArgs {
   dir: string;
@@ -77,51 +81,10 @@ export interface LibraryStatus {
   autoRescan: { afterDays: number; lastScanAt: string | null; triggeredAt: string | null };
 }
 
-interface DirStat {
-  /** 本目录直接含有的照片对数 */
-  direct: number;
-  /** 含子目录在内的照片对数 */
-  recursive: number;
-  children: Set<string>;
-}
-
-/**
- * 索引文件版本。
- * 1 → 只存 `metaCache`（EXIF 缓存），照片列表靠每次启动重扫；
- * 2 → 连 `records` 一起存，冷启动可以**不碰文件系统**先把列表端出来（随后后台扫描校正）。
- */
-const INDEX_VERSION = 2;
-
 /** 扫描超时过的根，多久之内不再去碰（熔断）。手动「重扫」会立即重试。 */
 const HUNG_COOLDOWN_MS = 10 * 60_000;
 
-/** `index.json` 的形状。缓存坏了、版本不认，就当没有 —— 扫描能重建一切。 */
-interface IndexFile {
-  version?: number;
-  savedAt?: string;
-  lastScanAt?: string | null;
-  fileCount?: number;
-  online?: Record<string, boolean>;
-  /** 每个根上次判离线的原因（给 `/roots` 的 `lastError`） */
-  rootErrors?: Record<string, string>;
-  records?: PhotoRecord[];
-  metaCache?: Record<string, CachedMeta>;
-}
-
-/** 反序列化的最小校验：缺胳膊少腿的记录宁可丢掉，不能让它带坏整棵目录树。 */
-function isPhotoRecord(v: unknown): v is PhotoRecord {
-  if (!v || typeof v !== 'object') return false;
-  const r = v as Partial<PhotoRecord>;
-  return (
-    typeof r.id === 'string' &&
-    typeof r.rootId === 'string' &&
-    typeof r.relDir === 'string' &&
-    typeof r.previewPath === 'string' &&
-    (r.kind === 'photo' || r.kind === 'video')
-  );
-}
-
-export class Library {
+export class Library implements PhotoCatalog {
   readonly thumbs: Thumbs;
   readonly marks: MarksStore;
   readonly trash: TrashStore;
@@ -134,8 +97,8 @@ export class Library {
   private records = new Map<string, PhotoRecord>();
   /** 已经搬进回收站的照片：从 `records` 里拿走了，但缩略图/预览还得找得到文件 */
   private trashedById = new Map<string, PhotoRecord>();
-  private byDir = new Map<string, PhotoRecord[]>();
-  private dirs = new Map<string, DirStat>();
+  private readonly tree = new FolderTree();
+  private readonly files: LibraryIndexFiles;
   private metaCache = new Map<string, CachedMeta>();
   private online = new Map<string, boolean>();
   /** 每个根上一次判离线的原因（`/roots` 的 `lastError`） */
@@ -161,7 +124,8 @@ export class Library {
     this.thumbs = new Thumbs(cfg.dataDir);
     this.marks = new MarksStore(cfg.dataDir);
     this.trash = new TrashStore(cfg.dataDir);
-    this.loadRemovedRoots();
+    this.files = new LibraryIndexFiles(cfg.dataDir);
+    this.removedRoots = this.files.readRemovedRoots();
     this.cache = new CacheJanitor({
       dirs: this.thumbs.cacheDirs(),
       maxBytes: cfg.cache.maxBytes,
@@ -467,38 +431,7 @@ export class Library {
   }
 
   private reindex(): void {
-    this.byDir.clear();
-    this.dirs.clear();
-    for (const rec of this.records.values()) {
-      const dir = dirPath(rec.rootId, rec.relDir);
-      const bucket = this.byDir.get(dir);
-      if (bucket) bucket.push(rec);
-      else this.byDir.set(dir, [rec]);
-
-      // 目录统计：本层 + 每一层祖先（递归数），并且把**每一级父子边**都补上。
-      // 只连「照片所在目录的上一级」是不够的 —— 那样 `/test` 到 `/test/项目/机身` 中间没有边，
-      // 目录树从根往下走不动（前端侧边栏会显示成一个空壳子）。
-      const stat = this.stat(dir);
-      stat.direct++;
-      const parts = dir.split('/').filter(Boolean); // [rootId, ...relDir]
-      for (let i = parts.length; i >= 1; i--) {
-        const ancestor = `/${parts.slice(0, i).join('/')}`;
-        this.stat(ancestor).recursive++;
-        if (i > 1) this.stat(`/${parts.slice(0, i - 1).join('/')}`).children.add(ancestor);
-      }
-    }
-    for (const list of this.byDir.values()) list.sort(byName);
-    // 根目录自身：即使一张照片都没有也要在树里可见
-    for (const root of this.cfg.roots) this.stat(`/${root.id}`);
-  }
-
-  private stat(dir: string): DirStat {
-    let s = this.dirs.get(dir);
-    if (!s) {
-      s = { direct: 0, recursive: 0, children: new Set() };
-      this.dirs.set(dir, s);
-    }
-    return s;
+    this.tree.rebuild(this.records.values(), this.cfg.roots.map((r) => r.id));
   }
 
   // ── 目录与照片 ──────────────────────────────────────────────────────────
@@ -510,7 +443,7 @@ export class Library {
       path: `/${r.id}`,
       label: r.label,
       diskPath: resolvePath(r.path),
-      photoCount: this.dirs.get(`/${r.id}`)?.recursive ?? 0,
+      photoCount: this.tree.photoCount(`/${r.id}`),
       // 没探过的根先当在线（乐观）；probeRoots()/refresh() 几毫秒内就会给出真实状态
       online: this.online.get(r.id) ?? true,
       lastError: this.rootErrors.get(r.id) ?? null,
@@ -543,32 +476,15 @@ export class Library {
       return {
         path: '/',
         parent: null,
-        folders: this.cfg.roots.map((r) => ({
-          name: r.label,
-          path: `/${r.id}`,
-          photoCount: this.dirs.get(`/${r.id}`)?.recursive ?? 0,
-          hasSubfolders: Boolean(this.dirs.get(`/${r.id}`)?.children.size),
-        })),
+        folders: this.cfg.roots.map((r) => this.tree.entry(`/${r.id}`, r.label)),
         photoCount: 0,
       };
     }
 
     const dir = dirPath(at.rootId, at.relDir);
-    const stat = this.dirs.get(dir);
-    if (!stat) return null;
+    if (!this.tree.has(dir)) return null;
     const parent = dir.slice(0, dir.lastIndexOf('/')) || '/';
-    const folders: FolderDto[] = [...stat.children]
-      .sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }))
-      .map((child) => {
-        const childStat = this.dirs.get(child);
-        return {
-          name: child.slice(child.lastIndexOf('/') + 1),
-          path: child,
-          photoCount: childStat?.recursive ?? 0,
-          hasSubfolders: Boolean(childStat?.children.size),
-        };
-      });
-    return { path: dir, parent, folders, photoCount: stat.direct };
+    return { path: dir, parent, folders: this.tree.subfolders(dir), photoCount: this.tree.directCount(dir) };
   }
 
   listPhotos(args: ListPhotosArgs): PhotoPageDto | null {
@@ -579,24 +495,14 @@ export class Library {
     const wantDel = sel?.where?.del;
     const lastBy = (photoId: string): string | null => this.marks.lastBy(photoId);
 
-    let list = (args.recursive ? this.recordsUnder(dir) : (this.byDir.get(dir) ?? [])).filter((rec) => {
+    const list = (args.recursive ? this.tree.under(dir) : this.tree.direct(dir)).filter((rec) => {
       // 产品默认：待删的照片不进挑片视图（它们在回收站里）；显式写了 del:true 才要
       if (wantDel === true ? !this.marks.delOf(rec.id) : this.marks.delOf(rec.id)) return false;
       if (!sel || selectionIsEmpty(sel)) return true;
       return matchesSelection(this.live(rec), sel, lastBy);
     });
 
-    const limit = Math.max(1, Math.min(1000, args.limit ?? 200));
-    let start = 0;
-    if (args.cursor) {
-      const decoded = decodeCursor(args.cursor);
-      if (decoded) {
-        const idx = list.findIndex((r) => r.id === decoded);
-        if (idx >= 0) start = idx + 1;
-      }
-    }
-    const page = list.slice(start, start + limit);
-    const nextStart = start + page.length;
+    const { page, more } = pageAfter(list, args.cursor, args.limit);
     const items = page.map((rec) => {
       const dto = toPhotoDto(rec);
       dto.stars = this.marks.starsOf(rec.id);
@@ -606,23 +512,9 @@ export class Library {
     const last = page[page.length - 1];
     return {
       items,
-      nextCursor: nextStart < list.length && last ? encodeCursor(last.id) : null,
+      nextCursor: more && last ? encodeCursor(last.id) : null,
       total: list.length,
     };
-  }
-
-  /** 目录之下（含自身）所有层级的照片：先按目录、再按文件名排（一个子目录一段） */
-  private recordsUnder(dir: string): PhotoRecord[] {
-    const out: PhotoRecord[] = [];
-    const walk = (d: string): void => {
-      for (const rec of this.byDir.get(d) ?? []) out.push(rec);
-      for (const child of this.dirs.get(d)?.children ?? []) walk(child);
-    };
-    walk(dir);
-    return out.sort((a, b) => {
-      const byDirCmp = dirPath(a.rootId, a.relDir).localeCompare(dirPath(b.rootId, b.relDir), 'zh', { numeric: true });
-      return byDirCmp !== 0 ? byDirCmp : byName(a, b);
-    });
   }
 
   get(id: string): PhotoRecord | undefined {
@@ -658,24 +550,13 @@ export class Library {
   }
 
   /** 把 id 解成磁盘上的绝对路径（`variant` 决定要 RAW 还是 JPEG） */
-  absFile(rec: PhotoRecord, variant: 'jpeg' | 'raw' | 'video' | 'auto'): { path: string; name: string; mime: string } | null {
-    const pick = variant === 'raw' ? rec.raw : variant === 'jpeg' ? rec.jpeg : variant === 'video' ? rec.video : (rec.jpeg ?? rec.raw ?? rec.video);
-    if (!pick) return null;
-    const name = `${rec.displayName}${pick.ext}`;
-    const ext = pick.ext.toLowerCase();
-    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
-      : ext === '.png' ? 'image/png'
-      : ext === '.mp4' || ext === '.m4v' ? 'video/mp4'
-      : ext === '.mov' ? 'video/quicktime'
-      : 'application/octet-stream';
-    return { path: pick.path, name, mime };
+  absFile(rec: PhotoRecord, variant: FileVariant): { path: string; name: string; mime: string } | null {
+    return fileOf(rec, variant);
   }
 
   /** 照片旁 XMP 的落点：`_DSC1042.xmp`（Adobe 规范的 stem 式命名） */
   sidecarPath(rec: PhotoRecord): string | null {
-    const src = rec.raw ?? rec.jpeg;
-    if (!src) return null;
-    return `${src.path.slice(0, src.path.length - src.ext.length)}.xmp`;
+    return sidecarOf(rec);
   }
 
   // ── 回收站 ──────────────────────────────────────────────────────────────
@@ -1013,44 +894,21 @@ export class Library {
 
   // ── 索引持久化（只为省冷启动的 exiftool；坏了删了都不致命）────────────
 
-  private get indexFile(): string {
-    return join(this.cfg.dataDir, 'index.json');
-  }
-
-  private loadRemovedRoots(): void {
-    try {
-      const raw = JSON.parse(readFileSync(join(this.cfg.dataDir, 'removed-roots.json'), 'utf8'));
-      if (Array.isArray(raw)) {
-        this.removedRoots = raw.filter(
-          (t): t is { id: string; path: string } =>
-            t && typeof t.id === 'string' && typeof t.path === 'string',
-        );
-      }
-    } catch {
-      /* 没有或坏了就当空 —— 墓碑只是优化，不是账本 */
-    }
-  }
 
   private saveRemovedRoots(): void {
-    writeFileSync(join(this.cfg.dataDir, 'removed-roots.json'), JSON.stringify(this.removedRoots, null, 2), 'utf8');
+    this.files.writeRemovedRoots(this.removedRoots);
   }
 
   private loadIndex(): void {
-    if (!existsSync(this.indexFile)) return;
-    let raw: IndexFile | null = null;
-    try {
-      raw = JSON.parse(readFileSync(this.indexFile, 'utf8')) as IndexFile;
-    } catch {
-      return; // 索引坏了不是问题：下次扫描会重建
-    }
-    if (raw?.version !== INDEX_VERSION) return; // 老版本（或将来更新的）一律丢掉重扫
+    const raw = this.files.readIndex();
+    if (!raw) return;
     for (const [path, entry] of Object.entries(raw.metaCache ?? {})) {
       if (entry && typeof entry.mtimeMs === 'number' && typeof entry.size === 'number') {
         this.metaCache.set(path, entry);
       }
     }
     // 照片列表也恢复：重启后第一眼不用等扫描（尤其是库在 NAS 上时）；后台扫描照旧跑，扫完覆盖
-    const records = (raw.records ?? []).filter(isPhotoRecord);
+    const records = raw.records ?? [];
     if (!records.length) return;
     this.records = new Map(records.map((r) => [r.id, r]));
     this.reindex();
@@ -1074,39 +932,13 @@ export class Library {
       const entry = this.metaCache.get(rec.previewPath);
       if (entry) metaCache[rec.previewPath] = entry;
     }
-    try {
-      writeFileSync(
-        this.indexFile,
-        JSON.stringify({
-          version: INDEX_VERSION,
-          savedAt: new Date().toISOString(),
-          lastScanAt: this.lastScanAt,
-          fileCount: this.fileCount,
-          online: Object.fromEntries(this.online),
-          rootErrors: Object.fromEntries(this.rootErrors),
-          records: [...this.records.values()],
-          metaCache,
-        }),
-        'utf8',
-      );
-    } catch {
-      // 写不动就算了
-    }
-  }
-}
-
-function byName(a: PhotoRecord, b: PhotoRecord): number {
-  return a.displayName.localeCompare(b.displayName, 'en', { numeric: true, sensitivity: 'base' });
-}
-
-function encodeCursor(id: string): string {
-  return Buffer.from(id, 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string): string | null {
-  try {
-    return Buffer.from(cursor, 'base64url').toString('utf8');
-  } catch {
-    return null;
+    this.files.writeIndex({
+      lastScanAt: this.lastScanAt,
+      fileCount: this.fileCount,
+      online: Object.fromEntries(this.online),
+      rootErrors: Object.fromEntries(this.rootErrors),
+      records: [...this.records.values()],
+      metaCache,
+    });
   }
 }

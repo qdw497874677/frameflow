@@ -10,14 +10,14 @@
  */
 
 import type { Job, JobEventInput, JobItem, JobProblem } from '../../domain/jobs/job.ts';
-import type { Library } from '../library.ts';
+import type { PhotoCatalog } from '../library/ports.ts';
 import type { MarkResultDto } from '../../domain/marks.ts';
 import type { Selection } from '../../domain/selection.ts';
 import { annotate } from './annotate.ts';
 
 /** handler 拿到的东西：库（读照片/写标注）+ 任务层给的能力 */
 export interface JobContext {
-  lib: Library;
+  lib: PhotoCatalog;
   /** 签发任务范围 token（载荷 `annotate|<jobId>|<批注人>|<exp>|<签发它的 API token id>`），见 api/auth.ts */
   signRangeToken: (jobId: string, alias: string, tokenId?: string | null) => { token: string; expiresAt: string };
   /** F29：任务进入 done 时回调（完成通知；generation = 第几次完成） */

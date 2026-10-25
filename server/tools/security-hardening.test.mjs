@@ -112,7 +112,7 @@ test('HTTP：登录 429 + Retry-After；DELETE /session 吊销；Secure 按配�
 
 test('HTTP：trustProxy + X-Forwarded-Proto=https 时 auto 加 Secure；cookieSecure=always 强制', async (t) => {
   const { loadConfig } = await import('../src/adapters/outbound/config-file.ts');
-  const { Library } = await import('../src/application/library.ts');
+  const { Library } = await import('../src/adapters/outbound/fs/library.ts');
   const { buildServer } = await import('../src/adapters/inbound/http/server.ts');
   const d = tmp(t);
   fs.mkdirSync(path.join(d, 'lib'));
