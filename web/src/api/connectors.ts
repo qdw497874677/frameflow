@@ -1,3 +1,4 @@
+import { fieldLabel } from './field-label';
 import type {
   DeliveryAppendDto,
   DeliveryAppendPreviewDto,
@@ -13,10 +14,13 @@ import type {
 export class ConnectorApiError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(status: number, code: string, message: string) {
+  /** 校验失败的字段路径（后端 `field`），用于把错误标到对应输入旁 */
+  readonly field?: string;
+  constructor(status: number, code: string, message: string, field?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.field = field;
   }
 }
 
@@ -37,12 +41,14 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   if (!res.ok) {
     let code = `HTTP_${res.status}`;
     let message = `HTTP ${res.status}`;
+    let field: string | undefined;
     try {
-      const j = (await res.json()) as { code?: string; error?: string };
+      const j = (await res.json()) as { code?: string; error?: string; field?: string };
       code = j.code ?? code;
       message = j.error ?? message;
+      field = j.field;
     } catch { /* 非 JSON */ }
-    throw new ConnectorApiError(res.status, code, message);
+    throw new ConnectorApiError(res.status, code, message, field);
   }
   return (await res.json()) as T;
 }
@@ -130,5 +136,7 @@ export function describeConnectorError(e: unknown): string {
     JOB_NOT_FOUND: '任务不存在或不是外传任务',
     REQUEST_ID_CONFLICT: '确认内容与上次不一致，请重新预览',
   };
+  const where = fieldLabel(e.field);
+  if (where) return `「${where}」不合法（${e.code}）`;
   return map[e.code] ? `${map[e.code]}（${e.code}）` : `${e.message}（${e.code}）`;
 }

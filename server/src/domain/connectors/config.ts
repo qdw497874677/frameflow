@@ -2,6 +2,7 @@
 import type {
   ConnectorConfigDocument, ConnectorInstanceConfig, ConnectorTarget, SanitizedConnectorInstance,
 } from './types.ts';
+import { normalizeProjectId } from '../project-id.ts';
 
 const MAX_INSTANCES = 32;
 const MAX_TARGETS = 256;
@@ -12,9 +13,12 @@ const FORBIDDEN_KEYS = new Set(['secret', 'appsecret', 'app_secret', 'secretvalu
 
 export class ConnectorConfigError extends Error {
   readonly code: string;
+  /** 出错字段的路径（如 `instance.targets[0].projectIds[1]`） */
+  readonly detail?: string;
   constructor(code: string, detail?: string) {
     super(detail ? `${code}: ${detail}` : code);
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -48,13 +52,14 @@ function bool(o: Obj, k: string, where: string): boolean {
   if (typeof v !== 'boolean') fail('INVALID_FIELD', `${where}.${k}`);
   return v;
 }
-function idList(o: Obj, k: string, where: string): string[] {
+const asciiId = (x: unknown): string | null => (typeof x === 'string' && ID_RE.test(x) ? x : null);
+function idList(o: Obj, k: string, where: string, parse: (x: unknown) => string | null = asciiId): string[] {
   const v = o[k];
   if (!Array.isArray(v) || v.length > MAX_LIST) fail('INVALID_FIELD', `${where}.${k}`);
   const out: string[] = [];
   for (let i = 0; i < v.length; i++) {
-    const x = v[i];
-    if (typeof x !== 'string' || !ID_RE.test(x)) fail('INVALID_FIELD', `${where}.${k}[${i}]`);
+    const x = parse(v[i]);
+    if (x === null) fail('INVALID_FIELD', `${where}.${k}[${i}]`);
     if (out.includes(x)) fail('DUPLICATE_ENTRY', `${where}.${k}[${i}]`);
     out.push(x);
   }
@@ -71,7 +76,7 @@ function parseTarget(v: unknown, connectorId: string, where: string): ConnectorT
   if (kind !== 'group' && kind !== 'user') fail('INVALID_FIELD', `${where}.kind`);
   const t: ConnectorTarget = {
     id: id(v, 'id', where), connectorId: id(v, 'connectorId', where), label: str(v, 'label', where),
-    kind, externalId: id(v, 'externalId', where), projectIds: idList(v, 'projectIds', where),
+    kind, externalId: id(v, 'externalId', where), projectIds: idList(v, 'projectIds', where, normalizeProjectId),
     allowedActorIds: idList(v, 'allowedActorIds', where),
     canAnnotate: bool(v, 'canAnnotate', where), canRequestJpeg: bool(v, 'canRequestJpeg', where),
   };
@@ -100,7 +105,7 @@ export function parseInstance(v: unknown, where = 'instance'): ConnectorInstance
   return {
     id: cid, kind: 'feishu', label: str(v, 'label', where), appId: id(v, 'appId', where), secretEnv, tenantId,
     enabled: v.enabled === undefined ? false : bool(v, 'enabled', where), targets,
-    creatorActorIds: idList(v, 'creatorActorIds', where), creatorProjectIds: idList(v, 'creatorProjectIds', where),
+    creatorActorIds: idList(v, 'creatorActorIds', where), creatorProjectIds: idList(v, 'creatorProjectIds', where, normalizeProjectId),
   };
 }
 

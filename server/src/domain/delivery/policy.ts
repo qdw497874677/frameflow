@@ -1,5 +1,6 @@
 /** 投递策略（F11）的解析与纯函数匹配：启用 + event 相同 + projectIds 明确包含该项目；多条规则命中的同一目标只出现一次。 */
 import { DELIVERY_EVENTS, type DeliveryEvent, type DeliveryPolicy, type PolicyDocument, type TargetRef } from './types.ts';
+import { normalizeProjectId } from '../project-id.ts';
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_POLICIES = 256;
@@ -7,9 +8,12 @@ const MAX_LIST = 256;
 
 export class PolicyError extends Error {
   readonly code: string;
+  /** 出错字段的路径（如 `instance.targets[0].projectIds[1]`） */
+  readonly detail?: string;
   constructor(code: string, detail?: string) {
     super(detail ? `${code}: ${detail}` : code);
     this.code = code;
+    this.detail = detail;
   }
 }
 const fail = (code: string, detail?: string): never => { throw new PolicyError(code, detail); };
@@ -22,9 +26,9 @@ function id(v: unknown, where: string): string {
   if (typeof v !== 'string' || !ID_RE.test(v)) fail('INVALID_FIELD', where);
   return v as string;
 }
-function ids(v: unknown, where: string): string[] {
+function projectIds(v: unknown, where: string): string[] {
   if (!Array.isArray(v) || v.length > MAX_LIST) fail('INVALID_FIELD', where);
-  const out = (v as unknown[]).map((x, i) => id(x, `${where}[${i}]`));
+  const out = (v as unknown[]).map((x, i) => normalizeProjectId(x) ?? fail('INVALID_FIELD', `${where}[${i}]`));
   if (new Set(out).size !== out.length) fail('DUPLICATE_ENTRY', where);
   return out;
 }
@@ -48,7 +52,7 @@ export function parsePolicy(v: unknown, revision: number, where = 'policy'): Del
   const rev = o['revision'] === undefined ? revision : o['revision'];
   if (typeof rev !== 'number' || !Number.isInteger(rev) || rev < 0) fail('INVALID_FIELD', `${where}.revision`);
   return {
-    id: id(o['id'], `${where}.id`), enabled: o['enabled'] as boolean, projectIds: ids(o['projectIds'], `${where}.projectIds`),
+    id: id(o['id'], `${where}.id`), enabled: o['enabled'] as boolean, projectIds: projectIds(o['projectIds'], `${where}.projectIds`),
     event: o['event'] as DeliveryEvent, targets, revision: rev as number,
   };
 }

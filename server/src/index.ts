@@ -14,7 +14,19 @@ import { DataDirFiles } from './adapters/outbound/fs/data-dir.ts';
 import { checkDataDir } from './application/maintenance/check-data-dir.ts';
 
 const cfg = loadConfig();
-const lib = new Library(cfg);
+
+// 启动体检放在构造 Library 之前：数据坏了能先看到是哪个文件哪一行，而不是一串堆栈
+const findings = checkDataDir(new DataDirFiles(cfg.dataDir));
+for (const f of findings) console[f.severity === 'error' ? 'error' : 'warn'](`数据目录体检（${f.severity === 'error' ? '错误' : '警告'}）：${f.file} ${f.message}`);
+
+let lib: Library;
+try {
+  lib = new Library(cfg);
+} catch (e) {
+  console.error(`无法加载数据目录 ${cfg.dataDir}：${(e as Error).message}`);
+  console.error('请先停服务、备份数据目录（npm run backup -- <目录>），再运行 npm run repair 剔除坏行后重启。');
+  process.exit(1);
+}
 // 飞书适配器（F21）：SDK 动态加载；只有显式启用的实例才会建连接。
 // FRAMEFLOW_FEISHU_SDK=disabled 时不注册（离线 e2e 用，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED）。
 // FRAMEFLOW_FEISHU_SDK=fake-e2e：离线假 SDK（只记录调用，不触网），供浏览器测试发送回归。
@@ -35,10 +47,9 @@ app.log.info(
   'art-workspace server 已启动',
 );
 
-// 启动体检：只报告，不阻断（读取方本就容忍崩溃尾行）；有错误时提示先备份再排查
-for (const f of checkDataDir(new DataDirFiles(cfg.dataDir))) {
-  app.log[f.severity === 'error' ? 'error' : 'warn']({ file: f.file }, `数据目录体检：${f.message}`);
-}
+const tail = lib.marksTailRepair;
+if (tail) app.log.warn({ file: 'marks.jsonl', offset: tail.offset, removedBytes: tail.removedBytes }, '标注日志末尾有崩溃残留的半截行，已安全截掉');
+if (findings.some((f) => f.severity === 'error')) app.log.error('数据目录体检发现错误：先备份，再用 npm run repair 修复（详见启动输出）');
 
 // 冷启动先吃上次的索引：列表立刻能服务，随后 refresh() 在后台把盘上的变化扫进来
 const cached = lib.restoredFromCache;

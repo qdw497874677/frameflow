@@ -13,7 +13,7 @@ import type { Selection } from '../../../domain/selection.ts';
 import { ConfirmError } from '../../../domain/delivery/confirmation.ts';
 import type { ConfirmationService } from '../../../application/delivery/confirmation-service.ts';
 import type { DeliveryDispatcher } from '../../../application/delivery/dispatcher.ts';
-import { managementGuard, revisionOf } from './connectors.ts';
+import { managementGuard, revisionOf, safeFieldPath } from './connectors.ts';
 
 export interface DeliveryApiDeps {
   policies: PolicyStore;
@@ -39,13 +39,15 @@ const RETRY_STATUS: Record<string, number> = { JOB_NOT_FOUND: 404, TARGET_NOT_IN
 const MAX_LIMIT = 100;
 const MAX_TEXT = 500;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const err = (reply: FastifyReply, status: number, code: string, error: string) => reply.code(status).send({ error, code });
+const err = (reply: FastifyReply, status: number, code: string, error: string, field?: string) =>
+  reply.code(status).send(field ? { error, code, field } : { error, code });
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 function policyError(reply: FastifyReply, e: unknown): FastifyReply {
   if (e instanceof PolicyError) {
     if (e.code === 'REVISION_CONFLICT') return err(reply, 409, e.code, '策略已被修改，请刷新后重试');
-    return err(reply, 400, e.code, '投递策略不合法');
+    const field = safeFieldPath(e.detail);
+    return err(reply, 400, e.code, field ? `投递策略不合法：${field}` : '投递策略不合法', field);
   }
   throw e;
 }

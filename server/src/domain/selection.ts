@@ -37,12 +37,13 @@ export function matchesSelection(
   if (!sel) return true;
   if (sel.ids?.length && !sel.ids.includes(rec.id)) return false;
 
+  // `project` = 根（项目）id：必须在 `where` 早退之前判断，否则只带 project 的选择集会卷进别的项目
+  if (sel.project && rec.rootId !== sel.project) return false;
+
   const w = sel.where;
   if (!w) return true;
 
   if (w.kind && rec.kind !== w.kind) return false;
-  // `project` = 根（项目）id：任务层的 items 快照会带选择集，不按项目过滤就会把别的项目也卷进来
-  if (sel.project && rec.rootId !== sel.project) return false;
   if (w.del !== undefined && rec.del !== w.del) return false;
   if (w.marked !== undefined && (rec.stars > 0) !== w.marked) return false;
 
