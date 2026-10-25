@@ -175,17 +175,19 @@ F13–F15通过；人工/独立复核故障矩阵与unknown语义。确认不重
 - 验证：`(cd server && node --test tools/delivery-api.test.mjs)`。
 - 完成（2026-10-25）：POST /delivery-confirmations、GET /jobs/{id}/deliveries、POST /jobs/{id}/deliveries/retry（acceptDuplicateRisk、ATTEMPT_IN_FLIGHT）；delivery/dispatcher.ts；server 装配（无传输时 NO_TRANSPORT）；delivery-api.test.mjs +2
 
-### [ ] F17 — 策略编辑与网页确认入口
+### [x] F17 — 策略编辑与网页确认入口
 - 模块：delivery-policy；验收：DP-01/02/05/07。依赖：F10、F16。
 - 验收：①设置页编辑项目/事件/目标策略，派发默认仅应用内；②勾选连接器后预览目标、上传说明/权限摘要/完成通知选项，取消不发送；③同一次确认重试复用requestId（含未勾选连接器的仅应用内分支，使用F13/F14确认服务），重复点击/响应丢失/并发重试均只建一任务且零误发；失效要求重新预览，390px可操作。
 - 文件：`web/src/api/connectors.ts`、`web/src/features/connectors/PolicyEditor.tsx`、`web/src/features/connectors/ConnectorSettings.tsx`、`web/src/features/jobs/DispatchAnnotate.tsx`、`tools/e2e-connectors.mjs`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=dispatch`。
+- 完成（2026-10-25）：设置页 PolicyEditor（项目+事件→已授权目标，仅推荐）；派发框外传区默认仅应用内、勾选→服务端预览→显式确认，requestId 每个预览一次、重试复用；取消丢弃预览零发送；无连接器 API 时退回旧应用内派发；e2e --scenario=dispatch
 
-### [ ] F18 — 任务详情逐目标投递反馈
+### [x] F18 — 任务详情逐目标投递反馈
 - 模块：delivery-policy；验收：DP-03/07/08。依赖：F17。
 - 验收：①任务页分别展示pending/sending/sent/failed/unknown及必要消息部分；②只重试失败部分，unknown展示风险确认与原尝试未结束限制；③双实例三个目标部分失败浏览器闭环通过，状态可读屏、390px无横溢。
 - 文件：`web/src/features/connectors/DeliveryStatus.tsx`、`web/src/features/jobs/TasksPage.tsx`、`web/src/api/connectors.ts`、`tools/e2e-connectors.mjs`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=delivery`。
+- 完成（2026-10-25）：任务详情 DeliveryStatus 按目标显示送达/失败/未知，失败可单目标重试，未知须确认重复风险；e2e --scenario=delivery（两实例三目标部分失败，390px）
 
 ### [ ] 检查点 F — 假适配器网页全链路
 F16–F18通过，用户审核网页派发交互；不使用真实目标。未勾选连接器时旧应用内操作不退化。

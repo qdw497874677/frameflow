@@ -131,7 +131,14 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   const confirmStore = ConfirmationStore.open(cfg.dataDir);
   const dispatcher = new DeliveryDispatcher({
     store: DeliveryStore.open(cfg.dataDir), confirmations: confirmStore, state: pstate,
-    transport: { send: async () => { throw new Error('NO_TRANSPORT'); } },
+    transport: process.env.FRAMEFLOW_FAKE_TRANSPORT === 'e2e'
+      // 仅浏览器 e2e：离线假传输，目标 externalId 以 oc_fail 开头的失败，其余成功；绝不触网
+      ? { send: async (r) => {
+          const t = connectorStore.current.instances.find((c) => c.id === r.connectorId)?.targets.find((x) => x.id === r.targetId);
+          if (!t || t.externalId.startsWith('oc_fail')) throw new Error('FAKE_FAIL');
+          return { messageId: `fake_${r.intentId}` };
+        } }
+      : { send: async () => { throw new Error('NO_TRANSPORT'); } },
   });
   const selectIds = (projectId: string, ids: readonly string[]) =>
     lib.select({ ids: [...ids], project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id);

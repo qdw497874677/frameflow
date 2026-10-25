@@ -1,5 +1,7 @@
 import type {
   ConnectorDto, ConnectorInstanceInputDto, ConnectorMutationDto, ConnectorPageDto, ConnectorVerifyResultDto,
+  DeliveryConfirmationDto, DeliveryPartPageDto, DeliveryPolicyInputDto, DeliveryPolicyMutationDto, DeliveryPolicyPageDto,
+  DeliveryPreviewDto, DeliveryTargetRefDto,
 } from './contract';
 
 /**
@@ -29,6 +31,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 204) return undefined as T;
   if (!res.ok) {
     let code = `HTTP_${res.status}`;
     let message = `HTTP ${res.status}`;
@@ -65,6 +68,32 @@ export const connectorsApi = {
   test: (id: string) => call<ConnectorVerifyResultDto>('POST', `/connectors/${encodeURIComponent(id)}/test`),
 };
 
+/** 投递策略 / 预览 / 确认 / 外传状态（F12/F16） */
+export const deliveryApi = {
+  policies: () => call<DeliveryPolicyPageDto>('GET', '/delivery-policies?limit=100'),
+  createPolicy: (expectedRevision: number, policy: DeliveryPolicyInputDto) =>
+    call<DeliveryPolicyMutationDto>('POST', '/delivery-policies', { expectedRevision, policy }),
+  patchPolicy: (id: string, expectedRevision: number, patch: Partial<Omit<DeliveryPolicyInputDto, 'id'>>) =>
+    call<DeliveryPolicyMutationDto>('PATCH', `/delivery-policies/${encodeURIComponent(id)}`, { expectedRevision, patch }),
+  removePolicy: (id: string, expectedRevision: number) =>
+    call<DeliveryPolicyMutationDto>('DELETE', `/delivery-policies/${encodeURIComponent(id)}?expectedRevision=${expectedRevision}`),
+  preview: (body: { projectId: string; selection: unknown; params?: { alias?: string | null; note?: string | null; notifyOnComplete?: boolean }; targets?: DeliveryTargetRefDto[] }) =>
+    call<DeliveryPreviewDto>('POST', '/delivery-previews', body),
+  cancelPreview: (id: string) => call<void>('DELETE', `/delivery-previews/${encodeURIComponent(id)}`),
+  confirm: (body: { previewId: string; revision: string; requestId: string; notifyOnComplete: boolean; acknowledged: boolean }) =>
+    call<DeliveryConfirmationDto>('POST', '/delivery-confirmations', body),
+  deliveries: (jobId: string) => call<DeliveryPartPageDto>('GET', `/jobs/${encodeURIComponent(jobId)}/deliveries`),
+  retry: (jobId: string, t: DeliveryTargetRefDto, acceptDuplicateRisk = false) =>
+    call<DeliveryPartPageDto>('POST', `/jobs/${encodeURIComponent(jobId)}/deliveries/retry`, { ...t, acceptDuplicateRisk }),
+};
+
+/** 确认重试复用的稳定 requestId */
+export function newRequestId(): string {
+  const a = new Uint8Array(16);
+  crypto.getRandomValues(a);
+  return `req_${[...a].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
 /** 常见错误码 → 中文说明（未知码原样显示，不吞） */
 export function describeConnectorError(e: unknown): string {
   if (!(e instanceof ConnectorApiError)) return e instanceof Error ? e.message : String(e);
@@ -76,6 +105,14 @@ export function describeConnectorError(e: unknown): string {
     CONNECTOR_ENABLED: '请先停用再删除',
     CONNECTOR_REFERENCED: '仍被投递策略引用，先修改策略再删除',
     MOCK_MODE: '演示数据模式下不能管理连接器',
+    PREVIEW_EXPIRED: '预览已过期，请重新预览',
+    PREVIEW_STALE: '照片、目标或策略已变化，请重新预览',
+    PREVIEW_REVISION_MISMATCH: '预览已变化，请重新预览',
+    PREVIEW_NOT_FOUND: '预览不存在，请重新预览',
+    TARGET_NOT_ALLOWED: '所选目标不可用或未授权该项目',
+    DUPLICATE_RISK: '有状态未知的消息：重试可能重复外传，需确认风险',
+    ATTEMPT_IN_FLIGHT: '上一次尝试还没结束，稍后再试',
+    NOTHING_TO_RETRY: '没有需要重试的消息',
   };
   return map[e.code] ? `${map[e.code]}（${e.code}）` : `${e.message}（${e.code}）`;
 }
