@@ -16,6 +16,7 @@ import type { ActionIntent, ActionLog, ActionOutcome } from './actions.ts';
 import type { CursorStore } from './cursors.ts';
 import type { CardSession, SessionStore } from './sessions.ts';
 import { parseCommand } from './commands.ts';
+import { JpegLog, jpegIntentId } from './jpegs.ts';
 import { createHash } from 'node:crypto';
 
 /** F26：飞书内创建任务所需能力（预览/确认复用 DeliveryPreview + ConfirmationService） */
@@ -50,11 +51,13 @@ export interface ControllerDeps {
   /** F25：投递到某目标的任务（列表只列可见任务） */
   readonly jobsForTarget?: (connectorId: string, targetId: string) => readonly Job[];
   readonly creation?: CreationDeps;
+  /** F28：原图请求去重记录（缺省为内存） */
+  readonly jpegs?: JpegLog;
 }
 
 /** 动作 → 所需授权 */
 const OPERATION: Record<string, ConnectorOperation> = {
-  open: 'viewTask', skip: 'viewTask', prev: 'viewTask', refresh: 'viewTask', review: 'viewTask', submit: 'annotate', remark: 'annotate', list: 'viewTask', reopen: 'viewTask',
+  open: 'viewTask', skip: 'viewTask', prev: 'viewTask', refresh: 'viewTask', review: 'viewTask', submit: 'annotate', remark: 'annotate', jpeg: 'requestJpeg', list: 'viewTask', reopen: 'viewTask',
   // 无任务的交互卡（列表/帮助/创建）
   'list-page': 'help', 'list-prev': 'help', help: 'help', create: 'help', pick: 'create', 'confirm-create': 'create', 'cancel-create': 'help',
 };
@@ -74,7 +77,8 @@ export class FeishuController {
   /** 消息事件重投去重（命令只开卡片，重复最多多发一张；仍去重） */
   readonly #seen = new Set<string>();
 
-  constructor(deps: ControllerDeps) { this.#d = deps; }
+  readonly #jpegs: JpegLog;
+  constructor(deps: ControllerDeps) { this.#d = deps; this.#jpegs = deps.jpegs ?? new JpegLog(null); }
 
   #now(): number { return (this.#d.now ?? Date.now)(); }
 
@@ -268,7 +272,7 @@ export class FeishuController {
       return d.allowed ? null : d.reason;
     }
     if (OPERATION[actionId] === 'help' || OPERATION[actionId] === 'create') return 'ACTION_UNKNOWN';
-    const photo = s.photoId && (actionId === 'submit' || actionId === 'remark')
+    const photo = s.photoId && (actionId === 'submit' || actionId === 'remark' || actionId === 'jpeg')
       ? { inTaskSnapshot: !!this.#d.jobs.get(s.jobId)?.items.some((i) => i.id === s.photoId), accessible: this.#d.marks.markVersion(s.photoId) !== null }
       : undefined;
     const d = decideAccess(this.#d.config(), {
@@ -286,6 +290,7 @@ export class FeishuController {
     let mode: 'confirm' | 'review' = s.mode ?? 'confirm';
     let next: { photoId: string | null } | null = null;
     let outcome: ActionOutcome;
+    if (a.actionId === 'jpeg') return this.#processJpeg(a, s);
     try {
       next = await this.#d.jobs.runInJobGate(s.jobId, async () => {
         const job = this.#d.jobs.get(s.jobId);
@@ -338,6 +343,25 @@ export class FeishuController {
     this.#settle(a, outcome);
     if (next) await this.render(s, next.photoId, { mode }).catch(() => undefined);
     return outcome;
+  }
+
+  /** F28：只发给当前（授权）目标；任务锁内复验，锁外发送；同一 (任务, 照片, 目标) 已送达不重发 */
+  async #processJpeg(a: ActionIntent, s: CardSession): Promise<ActionOutcome> {
+    const photoId = s.photoId;
+    try {
+      await this.#d.jobs.runInJobGate(s.jobId, () => {
+        const job = this.#d.jobs.get(s.jobId);
+        if (!job || CLOSED.has(job.state)) throw new ActionError('JOB_CLOSED');
+        if (!photoId) throw new ActionError('NO_PHOTO');
+        const denied = this.#authorize(s.connectorId, { identity: { connectorId: s.connectorId, tenantId: s.tenantId, actorId: a.actorId }, source: a.source as ConnectorEvent['source'] }, s, 'jpeg');
+        if (denied) throw new ActionError(denied);
+      });
+    } catch (e) { return this.#settle(a, { status: 'failed', code: e instanceof ActionError ? e.code : 'INTERNAL' }); }
+    const intentId = jpegIntentId(s.jobId, photoId!, s.targetId);
+    if (this.#jpegs.get(intentId)?.state === 'sent') return this.#settle(a, { status: 'done' });
+    const r = await this.#d.send(s.connectorId, { targetId: s.targetId, intentId, content: { type: 'file', mediaRef: photoId! } }).catch((): DeliveryResult => ({ status: 'unknown', code: 'TRANSPORT_ERROR' }));
+    this.#jpegs.record({ intentId, state: r.status, ...(r.status === 'sent' ? { messageId: r.messageId } : { code: r.code }) }, this.#now());
+    return this.#settle(a, r.status === 'sent' ? { status: 'done' } : { status: 'failed', code: r.code });
   }
 
   #settle(a: ActionIntent, o: ActionOutcome): ActionOutcome { this.#d.actions.settle(a.key, o); return o; }
@@ -410,8 +434,15 @@ export class FeishuController {
       lines: [progress, ...(item.confirmedAt ? [`当前：${typeof item.stars === 'number' ? `${item.stars} 星` : '未评星'}${item.del ? '，已弃用' : ''}`] : []), ...(review ? ['复核模式：只浏览已确认的照片'] : [])],
       photoId: item.id, sessionId,
       reviewForm: { stars: typeof item.stars === 'number' ? item.stars : null, reject: item.del === true },
-      actions: [{ label: '上一张', actionId: 'prev' }, { label: review ? '下一张' : '跳过', actionId: 'skip' }, { label: '刷新', actionId: 'refresh' }],
+      actions: [{ label: '上一张', actionId: 'prev' }, { label: review ? '下一张' : '跳过', actionId: 'skip' }, { label: '刷新', actionId: 'refresh' },
+        ...(this.#canJpeg(sessionId) ? [{ label: '发送原图 JPEG（本会话可见）', actionId: 'jpeg' }] : [])],
     };
+  }
+
+  #canJpeg(sessionId?: string): boolean {
+    const s = sessionId ? this.#d.sessions.get(sessionId) : undefined;
+    const t = s && this.#d.config().instances.find((i) => i.id === s.connectorId)?.targets.find((x) => x.id === s.targetId);
+    return !!t?.canRequestJpeg;
   }
 
   #resolveMeta(sessionId?: string): CardModel | null {

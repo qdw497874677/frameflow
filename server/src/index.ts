@@ -8,6 +8,7 @@
 import { buildServer } from './api/server.ts';
 import { loadConfig } from './config.ts';
 import { loadRealSdk } from './connectors/feishu/client.ts';
+import { MediaError } from './connectors/feishu/media.ts';
 import { feishuFactory } from './connectors/feishu/transport.ts';
 import { endExif } from './core/exif.ts';
 import { Library } from './core/library.ts';
@@ -28,6 +29,13 @@ const app = await buildServer(cfg, lib, {
             if (!rec) throw new Error('PHOTO_NOT_FOUND');
             const { path, etag } = await l.thumbs.thumb(rec, 2048);
             return { path, signature: etag };
+          },
+          // F28：只取 JPEG 变体；RAW/HEIC-only/视频没有 jpeg → 拒绝（不转码、不用预览兜底）
+          original: async (photoId) => {
+            const rec = l.get(photoId);
+            const f = rec ? l.absFile(rec, 'jpeg') : null;
+            if (!f || f.mime !== 'image/jpeg') throw new MediaError('JPEG_UNSUPPORTED');
+            return { path: f.path, fileName: f.name };
           },
         }),
       }

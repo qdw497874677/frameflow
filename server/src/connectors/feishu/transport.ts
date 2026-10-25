@@ -13,7 +13,7 @@ import type {
 import type { FeishuApi, FeishuLongConnection, FeishuSdk, ImResponse } from './client.ts';
 import { renderCard, type CardModel } from './cards.ts';
 import { mapCardAction, mapMessage } from './events.ts';
-import { MediaError, MediaUploader, type PreviewProvider } from './media.ts';
+import { MediaError, MediaUploader, readJpeg, type OriginalJpegProvider, type PreviewProvider } from './media.ts';
 
 /** 飞书频控错误码 */
 export const RATE_LIMIT_CODES = new Set([99991400, 230020, 11232]);
@@ -40,6 +40,8 @@ export interface FeishuTransportOptions {
   readonly sdk: FeishuSdk;
   readonly resolve?: CardResolver;
   readonly preview?: PreviewProvider;
+  /** F28：原图 JPEG 来源（只在显式请求时读取） */
+  readonly original?: OriginalJpegProvider;
   readonly timeoutMs?: number;
   readonly ackBudgetMs?: number;
   /** 超时后原调用迟到成功/失败的回报（按原 intentId） */
@@ -164,9 +166,29 @@ export class FeishuTransport implements ManagedConnectorPort {
     }
   }
 
+  /** F28：原图 JPEG 文件消息（每次都重新读取并上传；不缓存 file_key，避免以缓存替代重新授权） */
+  async #sendFile(input: SendInput, t: { kind: string; externalId: string }, photoId: string): Promise<DeliveryResult> {
+    if (!this.#o.original) return { status: 'failed', code: 'JPEG_UNAVAILABLE', retryable: false };
+    let bytes: Buffer, fileName: string;
+    try {
+      const src = await this.#o.original(photoId);
+      fileName = src.fileName;
+      bytes = await readJpeg(src.path, src.fileName);
+    } catch (e) { return { status: 'failed', code: e instanceof MediaError ? e.code : 'JPEG_UNAVAILABLE', retryable: false }; }
+    let fileKey: string | undefined;
+    try {
+      const up = await this.#api.uploadFile({ bytes, fileName });
+      fileKey = isOk(up) ? up.data?.file_key : undefined;
+    } catch { /* 上传失败：未发消息，可安全重试 */ }
+    if (!fileKey) return { status: 'failed', code: 'UPLOAD_FAILED', retryable: true };
+    const req = { receiveIdType: t.kind === 'group' ? 'chat_id' as const : 'open_id' as const, receiveId: t.externalId, msgType: 'file' as const, content: JSON.stringify({ file_key: fileKey }), uuid: input.intentId.slice(0, 50) };
+    return this.#call(input.intentId, () => this.#api.createMessage(req));
+  }
+
   async send(input: SendInput): Promise<DeliveryResult> {
     const t = this.#target(input.targetId);
     if (!t) return { status: 'failed', code: 'TARGET_REVOKED', retryable: false };
+    if (input.content.type === 'file') return this.#sendFile(input, t, input.content.mediaRef);
     const c = await this.#content(input);
     if ('status' in c) return c;
     const req = { receiveIdType: t.kind === 'group' ? 'chat_id' as const : 'open_id' as const, receiveId: t.externalId, msgType: 'interactive' as const, content: c.content, uuid: input.intentId.slice(0, 50) };
@@ -197,6 +219,6 @@ function toCallbackResponse(a: EventAck): unknown {
 }
 
 /** ConnectorFactory：Secret 只在此私有传入 */
-export function feishuFactory(deps: { sdk: () => FeishuSdk; resolve?: CardResolver; preview?: PreviewProvider; timeoutMs?: number; onLate?: FeishuTransportOptions['onLate'] }) {
-  return (instance: ConnectorInstanceConfig, secret: string) => new FeishuTransport({ instance, secret, sdk: deps.sdk(), resolve: deps.resolve, preview: deps.preview, timeoutMs: deps.timeoutMs, onLate: deps.onLate });
+export function feishuFactory(deps: { sdk: () => FeishuSdk; resolve?: CardResolver; preview?: PreviewProvider; original?: OriginalJpegProvider; timeoutMs?: number; onLate?: FeishuTransportOptions['onLate'] }) {
+  return (instance: ConnectorInstanceConfig, secret: string) => new FeishuTransport({ instance, secret, sdk: deps.sdk(), resolve: deps.resolve, preview: deps.preview, original: deps.original, timeoutMs: deps.timeoutMs, onLate: deps.onLate });
 }

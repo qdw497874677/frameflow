@@ -34,6 +34,7 @@ import { JobsService } from '../jobs/service.ts';
 import { reconcileConfirmations } from '../jobs/confirmations.ts';
 import { FeishuController } from '../integrations/feishu/controller.ts';
 import { SessionStore } from '../integrations/feishu/sessions.ts';
+import { JpegLog } from '../integrations/feishu/jpegs.ts';
 import { CursorStore } from '../integrations/feishu/cursors.ts';
 import { ActionLog } from '../integrations/feishu/actions.ts';
 import type { CardModel } from '../connectors/feishu/cards.ts';
@@ -158,6 +159,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const fsessions = new SessionStore(cfg.dataDir);
   const fcursors = new CursorStore(cfg.dataDir);
   feishu = new FeishuController({
+    jpegs: new JpegLog(cfg.dataDir),
     sessions: fsessions, actions: new ActionLog(cfg.dataDir), cursors: fcursors, config: () => connectorStore.current,
     jobs: {
       get: (id) => { try { return jobs.get(id); } catch { return undefined; } },
