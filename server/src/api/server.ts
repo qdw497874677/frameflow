@@ -22,7 +22,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { expandHome, type Config } from '../config.ts';
-import { JobError, JobsStore, type JobProblem } from '../core/jobs.ts';
+import { JobError, JobsStore, confirmationSummary, type Job, type JobProblem } from '../core/jobs.ts';
 import type { Library } from '../core/library.ts';
 import type { MarkInput } from '../core/marks.ts';
 import { selectionFromLegacyFilter, selectionFromQuery, type Selection } from '../core/selection.ts';
@@ -169,6 +169,21 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
     deliveredTargets: (id) => deliveryStore.listJob(id).filter((p) => p.state === 'sent').map((p) => p.targetId),
     send: (cid, input) => connectorRuntime.send(cid, input),
     update: (cid, input) => connectorRuntime.update(cid, input),
+    // F25：只列已成功投递到该目标的任务
+    jobsForTarget: (_cid, targetId) => jobs.list({ limit: 500 }).filter((j) => deliveryStore.listJob(j.id).some((p) => p.targetId === targetId && p.state === 'sent')),
+    // F26：飞书内创建 = 同一预览 + 一次确认（ConfirmationService），目标固定为当前会话
+    creation: {
+      projectName: (pid) => lib.roots().find((r) => r.id === pid)?.label,
+      preview: (projectId, target) => {
+        const r = previews.create({ projectId, photoIds: lib.select({ project: projectId }).filter((x) => x.rootId === projectId).map((x) => x.id), params: { alias: null, note: null, notifyOnComplete: false }, targets: [target] }, pstate());
+        return r.ok ? { ok: true, previewId: r.preview.previewId, revision: r.preview.revision, photoCount: r.preview.photoCount } : { ok: false, code: r.code };
+      },
+      confirm: async (input) => {
+        const r = confirmations.confirm({ ...input, notifyOnComplete: false, acknowledged: true });
+        if (!r.replayed) dispatcher.start(r.confirmation);
+        return { jobId: r.job.id, replayed: r.replayed };
+      },
+    },
   });
   const dispatcher = new DeliveryDispatcher({
     store: deliveryStore, confirmations: confirmStore, state: pstate,
@@ -562,15 +577,20 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
     }
   });
 
+  // F27：显式确认任务附带兼容可选的确认进度（旧任务不带，progress 语义不变）
+  const withConfirmation = (j: Job) => {
+    const c = confirmationSummary(j, (pid) => lib.markVersion(pid) !== null);
+    return c ? { ...j, confirmation: c } : j;
+  };
   app.get('/api/v1/jobs', async (req) => {
     const q = req.query as { state?: string; limit?: string };
-    return { items: jobs.list({ state: q.state, limit: q.limit ? Number(q.limit) : undefined }) };
+    return { items: jobs.list({ state: q.state, limit: q.limit ? Number(q.limit) : undefined }).map(withConfirmation) };
   });
 
   app.get('/api/v1/jobs/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
-      return jobs.get(id);
+      return withConfirmation(jobs.get(id));
     } catch (err) {
       return jobError(reply, err);
     }

@@ -217,7 +217,7 @@ export function TasksPage() {
                       </Badge>
                     </span>
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                      {job.progress.done}/{job.progress.total} · {fmtTime(job.createdAt)}
+                      {job.confirmation ? `已确认 ${job.confirmation.confirmed}/${job.confirmation.total}` : `${job.progress.done}/${job.progress.total}`} · {fmtTime(job.createdAt)}
                       {jobDirName(job, roots) ? ` · ${jobDirName(job, roots)}` : ''}
                     </span>
                     <span className="mt-1 block h-1 overflow-hidden rounded bg-muted-foreground/20">
@@ -282,6 +282,13 @@ export function TasksPage() {
                     style={{ width: `${detail.progress.total ? Math.round((detail.progress.done / detail.progress.total) * 100) : 0}%` }}
                   />
                 </div>
+                {detail.confirmation && (
+                  <dl className="mt-2 grid grid-cols-3 gap-2 text-center text-xs" data-testid="job-confirmation" aria-label="确认进度">
+                    <div className="rounded bg-muted/60 px-1 py-1"><dt className="text-muted-foreground">已确认</dt><dd className="font-mono" data-k="confirmed">{detail.confirmation.confirmed}</dd></div>
+                    <div className="rounded bg-muted/60 px-1 py-1"><dt className="text-muted-foreground">剩余</dt><dd className="font-mono" data-k="remaining">{detail.confirmation.remaining}</dd></div>
+                    <div className="rounded bg-muted/60 px-1 py-1"><dt className="text-muted-foreground">不可用</dt><dd className="font-mono" data-k="blocked">{detail.confirmation.blocked}</dd></div>
+                  </dl>
+                )}
                 {detail.error && <p className="mt-2 text-xs text-destructive">{detail.error}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Button

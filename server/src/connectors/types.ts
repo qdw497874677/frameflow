@@ -66,7 +66,9 @@ export type SemanticContent =
   | { readonly type: 'photo-review'; readonly taskId: string; readonly photoId: string }
   | { readonly type: 'progress'; readonly taskId: string }
   | { readonly type: 'file'; readonly mediaRef: string }
-  | { readonly type: 'test-card' };
+  | { readonly type: 'test-card' }
+  /** F25/F26：列表/帮助/创建等交互卡：内容完全由 session 解析 */
+  | { readonly type: 'session-card' };
 
 export interface SendInput {
   readonly targetId: string;

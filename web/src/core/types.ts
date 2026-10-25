@@ -271,6 +271,9 @@ export interface Job {
   createdAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  /** F27：显式确认任务（飞书等外部目标回流）才有；跳过不算完成 */
+  confirmationMode?: 'explicit';
+  confirmation?: { confirmed: number; remaining: number; blocked: number; total: number };
 }
 
 /** 出站投递通道：只管「怎么把一批照片发出去」；回流一律走任务 */

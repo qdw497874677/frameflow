@@ -1037,6 +1037,16 @@ components:
         createdAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+        confirmationMode: { type: string, enum: [explicit], description: "可选（F27）：经外部目标显式确认的批注任务；旧任务不带" }
+        confirmation:
+          type: object
+          description: 可选（F27）：显式确认进度。跳过不算完成；重标不重复计数；blocked = 照片已不可达
+          required: [confirmed, remaining, blocked, total]
+          properties:
+            confirmed: { type: integer }
+            remaining: { type: integer }
+            blocked: { type: integer }
+            total: { type: integer }
 
     JobCreateRequest:
       type: object

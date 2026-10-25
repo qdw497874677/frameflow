@@ -248,26 +248,30 @@ F22–F24必须经独立安全/恢复复核。完整故障矩阵和跨任务并�
 
 ## 阶段 I：任务入口与重标（V5）
 
-### [ ] F25 — 列表、进度、继续与重标按钮
+### [x] F25 — 列表、进度、继续与重标按钮
 - 模块：feishu-interaction；验收：FI-01/05/06。依赖：F24。
 - 验收：①只列可见任务、分页、继续未确认/复核已确认、上一张与暂时跳过不写标；②重新标记先显示当前值再确认，done不增数、cancelled/undone拒绝；③失联项显示阻塞且不减总数，超期卡片按显式操作重开并失效旧session。
 - 文件：`server/src/integrations/feishu/controller.ts`、`server/src/integrations/feishu/cursors.ts`、`server/src/connectors/feishu/cards.ts`、`server/tools/feishu-interaction.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-interaction.test.mjs)`。
+- 完成（2026-10-25）：上一张/跳过/复核（只走已确认）/列表分页（只列已投递到本目标的任务，子按钮独立 session）、remark 先显示当前值；过期卡片 reopen 发新消息并撤销旧 session（tools/feishu-commands.test.mjs）
 
-### [ ] F26 — 飞书创建入口与文字命令
+### [x] F26 — 飞书创建入口与文字命令
 - 模块：feishu-interaction；验收：CC-08/09、FI-02/06。依赖：F25、F14。
 - 验收：①首次授权创建者选择允许项目→范围/目标预览→确认，同一确认只创建一次；②命令复用按钮服务，群需@、私聊直接发，未知命令只帮助；③无创建/标注权限拒绝，不能输入任意路径或枚举无权任务。
 - 文件：`server/src/integrations/feishu/commands.ts`、`server/src/integrations/feishu/controller.ts`、`server/src/connectors/feishu/cards.ts`、`server/tools/feishu-interaction.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-interaction.test.mjs)`；按钮与命令同用权限参数化用例。
+- 完成（2026-10-25）：commands.ts：帮助/任务/继续/新建，群需@、未知回帮助、消息事件去重；创建=允许项目→DeliveryPreview→ConfirmationService 一次确认，requestId 由 session 派生（重复点击只建一次）
 
-### [ ] F27 — 网页任务确认进度展示
+### [x] F27 — 网页任务确认进度展示
 - 模块：feishu-interaction、delivery-policy；验收：FI-01/05/09、DP-07。依赖：F18、F23、F24。
 - 验收：①新确认数据以兼容可选字段入契约/DTO，旧任务进度不改义；②任务页区分已确认、剩余、阻塞，不把跳过当完成；③网页与假飞书回流共享进度，重标不重复计数，390px可读。
 - 文件：`contracts/openapi.yaml`、`web/src/api/contract.ts`、`web/src/api/httpSource.ts`、`web/src/features/jobs/TasksPage.tsx`、`tools/e2e-connectors.mjs`。
 - 验证：构建后 `node tools/e2e-connectors.mjs --scenario=progress`；若web内部Job类型需另加字段，先拆一项类型对齐任务，不扩成大改。
+- 完成（2026-10-25）：Job 兼容可选 confirmationMode/confirmation（openapi + web 类型 + contract），任务页分已确认/剩余/不可用；e2e-connectors --scenario=progress 通过（重标不重复计数、390px）
 
-### [ ] 检查点 I — 完整挑片交互
+### [x] 检查点 I — 完整挑片交互
 F25–F27通过。授权创建者从无任务开始能完成整条假SDK故事，普通批注人与创建者权限不同；未确认原图请求之前无原图外传。
+- 完成（2026-10-25）：F25–F27 离线测试通过；创建者/普通批注人权限分离由 decideAccess create/annotate 区分；未接入原图外传
 
 ## 阶段 J：原始JPEG、完成通知与联调准备（V6）
 
