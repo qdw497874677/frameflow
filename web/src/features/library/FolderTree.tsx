@@ -4,6 +4,7 @@ import { source } from '@/api';
 import type { Photo } from '@/core/types';
 import { store, useAppState } from '@/core/store';
 import { cn } from '@/lib/utils';
+import { matchesFileName, projectListVisible } from '@/core/file-search';
 import { SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem } from '@/components/ui/sidebar';
 
 /** 项目 → 目录 → 已识别照片。只加载展开的目录，RAW+JPEG 作为一个照片实体显示。 */
@@ -13,6 +14,7 @@ export function FolderTree() {
     try { return localStorage.getItem('artworks:sidebar-layout') === 'flat'; } catch { return false; }
   });
   const [layoutWarning, setLayoutWarning] = useState(false);
+  const [searching, setSearching] = useState(false);
   const currentPhoto = view === 'cull' ? items[cursor] : undefined;
   const currentId = currentPhoto?.id;
   const currentPath = currentPhoto?.dir;
@@ -38,10 +40,10 @@ export function FolderTree() {
         </div>
         {layoutWarning && <p className="px-2 text-xs text-muted-foreground">浏览器存储不可用，显示方式仅本次有效。</p>}
       </SidebarMenuSubItem>
-      {project && <ProjectSearch key={project.path} path={project.path} currentId={currentId} />}
+      {project && <ProjectSearch key={project.path} path={project.path} currentId={currentId} onActiveChange={setSearching} />}
       {roots.filter((r) => r.online).map((root) => (
         <Node key={root.path} path={root.path} name={root.label} diskPath={root.diskPath}
-          depth={0} isRoot flat={flat} projectTotal={root.photoCount} tree={tree} expanded={expanded} currentDir={view === 'cull' ? dir : ''} currentId={currentId} />
+          depth={0} isRoot flat={flat} hideContents={root.path === project?.path && !projectListVisible(searching)} projectTotal={root.photoCount} tree={tree} expanded={expanded} currentDir={view === 'cull' ? dir : ''} currentId={currentId} />
       ))}
       {roots.filter((r) => !r.online).map((root) => (
         <SidebarMenuSubItem key={root.path}>
@@ -70,9 +72,11 @@ interface NodeProps {
   expanded: Record<string, boolean>;
   currentDir: string;
   currentId?: string;
+  /** 侧边栏搜索生效时隐藏项目文件列表（结果列表取而代之） */
+  hideContents?: boolean;
 }
 
-function Node({ path, name, diskPath, depth, isRoot, projectTotal, flat = false, tree, expanded, currentDir, currentId }: NodeProps) {
+function Node({ path, name, diskPath, depth, isRoot, projectTotal, flat = false, tree, expanded, currentDir, currentId, hideContents = false }: NodeProps) {
   const listing = tree[path];
   const isOpen = Boolean(expanded[path]);
   const children = listing?.folders ?? [];
@@ -101,7 +105,7 @@ function Node({ path, name, diskPath, depth, isRoot, projectTotal, flat = false,
         </div>
       {isRoot && <ProjectProgress path={path} total={projectTotal} />}
       {isRoot && diskPath && <PathLine path={diskPath} />}
-      {isOpen && (
+      {isOpen && !hideContents && (
         <SidebarMenuSub>
           {!flat && children.map((child) => (
             <Node key={child.path} path={child.path} name={child.name} depth={depth + 1}
@@ -220,7 +224,7 @@ function DirectoryPhotos({ path, currentId, recursive = false }: { path: string;
 }
 
 /** Search is scoped to the selected project, not just currently expanded folders. */
-function ProjectSearch({ path, currentId }: { path: string; currentId?: string }) {
+function ProjectSearch({ path, currentId, onActiveChange }: { path: string; currentId?: string; onActiveChange: (active: boolean) => void }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Photo[]>([]);
   const [limit, setLimit] = useState(100);
@@ -246,6 +250,8 @@ function ProjectSearch({ path, currentId }: { path: string; currentId?: string }
       && (kind === 'all' || (photo.kind === 'video') === (kind === 'video'));
   });
   useEffect(() => setLimit(100), [seenFilter, rating, deletion, kind]);
+  useEffect(() => { onActiveChange(active); }, [active, onActiveChange]);
+  useEffect(() => () => onActiveChange(false), [onActiveChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -267,8 +273,7 @@ function ProjectSearch({ path, currentId }: { path: string; currentId?: string }
                 selection: { where: { del } } });
               if (cancelled) return;
               for (const photo of page.items) {
-                const names = [photo.displayName, photo.rawPath?.split('/').pop(), photo.jpegPath?.split('/').pop()];
-                if (names.some((name) => name?.toLocaleLowerCase().includes(needle))) matches.set(photo.id, photo);
+                if (!needle || matchesFileName(photo, needle)) matches.set(photo.id, photo);
               }
               setResults([...matches.values()]);
               cursor = page.nextCursor ?? undefined;

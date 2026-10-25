@@ -199,6 +199,8 @@ export class Library implements PhotoCatalog {
       this.lastScanAt = new Date().toISOString();
       this.saveIndex();
       this.rebuildTrashed();
+      // 盘重新挂上 / 权限修好后，扫描完顺手补写之前没写进去的 XMP
+      void this.marks.retryXmp().catch(() => undefined);
       return { photos: this.records.size, files: this.fileCount, ms: Date.now() - t0, errors: this.lastErrors };
     } finally {
       this.scanning = false;
