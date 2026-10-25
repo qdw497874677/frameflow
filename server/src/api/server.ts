@@ -142,10 +142,12 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const connectorRegistry = new ConnectorRegistry();
   // 飞书交互（F22–F24）：控制器晚绑定（依赖投递账本），事件与卡片解析都经它
   let feishu: FeishuController | null = null;
+  let receiving = false;
   const fctx: ConnectorFactoryContext = { resolve: async (c, sid) => (feishu ? feishu.resolve(c, sid) : null) };
   for (const [kind, make] of Object.entries(deps.connectorFactories ?? {})) if (make) connectorRegistry.register(kind as ConnectorKind, make(lib, fctx));
   const connectorRuntime = new ConnectorRuntime(connectorStore, connectorRegistry, cfg.dataDir,
-    async (id, ev) => (feishu ? feishu.handle(id, ev) : { kind: 'rejected', code: 'NO_HANDLER' }));
+    // F31：恢复/对账完成前不受理入站事件（先对账再开接收）
+    async (id, ev) => (feishu && receiving ? feishu.handle(id, ev) : { kind: 'rejected', code: 'RECOVERING' }));
   await connectorRuntime.sync();
   app.addHook('onClose', async () => connectorRuntime.stopAll());
   // ── 投递策略与预览（F11/F12）：策略在 dataDir/delivery-policies.json，预览只在内存、零发送
@@ -243,6 +245,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
     } catch (e) { app.log.warn({ err: e, jobId: j.id }, '确认投影对账失败'); }
   }
   feishu.recover();
+  receiving = true;
   app.addHook('onClose', async () => feishu?.idle());
   registerDeliveryRoutes(app, {
     confirmations, dispatcher,

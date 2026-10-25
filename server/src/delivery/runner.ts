@@ -45,6 +45,8 @@ export class DeliveryRunner<P> {
   async run(input: RunInput<P>): Promise<PartView[]> {
     const { store } = this.#o;
     const off = input.partOffset ?? 0;
+    // F31：账本损坏时拒绝外传（不 ensure、不发送），避免把已送达的分片当成未发再发一遍
+    if (store.corrupt) return input.targets.flatMap((t) => input.parts.map((_, i) => store.view({ jobId: input.jobId, ...pick(t), partIndex: off + i })).filter((v): v is PartView => !!v));
     for (const t of input.targets) input.parts.forEach((_, i) => store.ensure({ jobId: input.jobId, ...pick(t), partIndex: off + i }));
     for (const t of input.targets) {
       for (let i = 0; i < input.parts.length; i++) {

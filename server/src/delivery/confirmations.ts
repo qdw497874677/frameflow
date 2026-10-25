@@ -59,7 +59,7 @@ export interface ConfirmationRecord {
 export type ConfirmErrorCode =
   | 'INVALID' | 'CONSENT_REQUIRED' | 'REQUEST_ID_CONFLICT' | 'PREVIEW_ALREADY_CONFIRMED' | 'AUTHORIZATION_REVOKED'
   | 'PREVIEW_NOT_FOUND' | 'PREVIEW_EXPIRED' | 'PREVIEW_REVISION_MISMATCH' | 'PREVIEW_STALE'
-  | 'JOB_NOT_FOUND' | 'JOB_CLOSED' | 'PREVIEW_JOB_MISMATCH' | 'TARGET_ALREADY_IN_JOB';
+  | 'JOB_NOT_FOUND' | 'JOB_CLOSED' | 'PREVIEW_JOB_MISMATCH' | 'TARGET_ALREADY_IN_JOB' | 'STORE_CORRUPT';
 
 export class ConfirmError extends Error {
   readonly code: ConfirmErrorCode;
@@ -95,6 +95,8 @@ export class ConfirmationStore {
   readonly #byPreview = new Map<string, string>();
   readonly #appends = new Map<string, AppendRecord>();
 
+  /** F31：完整行损坏 → 不可信，确认/追加/恢复全部拒绝 */
+  corrupt: string | null = null;
   private constructor(file: string) { this.file = file; }
 
   static open(dataDir: string): ConfirmationStore {
@@ -102,13 +104,16 @@ export class ConfirmationStore {
     const s = new ConfirmationStore(path.join(dataDir, 'delivery-confirmations.jsonl'));
     let text = '';
     try { text = fs.readFileSync(s.file, 'utf8'); } catch { /* 首次 */ }
-    for (const line of text.split('\n')) {
+    const lines = text.split('\n');
+    for (const [i, line] of lines.entries()) {
       if (!line.trim()) continue;
+      const tail = i === lines.length - 1;
       try {
         const r = JSON.parse(line) as ConfirmationRecord | AppendRecord;
         if (r.t === 'appended' && typeof r.requestId === 'string') s.#indexAppend(r);
         else if ((r.t === 'accepted' || r.t === 'aborted') && typeof r.requestId === 'string') s.#index(r);
-      } catch { /* 半行：写到一半被杀，未 fsync 的接受视为没发生 */ }
+        else if (!tail) s.corrupt ??= `LINE_${i + 1}_UNKNOWN_RECORD`;
+      } catch { if (!tail) s.corrupt ??= `LINE_${i + 1}_INVALID_JSON`; /* 尾部半行：写到一半被杀，视为没发生 */ }
     }
     return s;
   }
@@ -159,6 +164,7 @@ export class ConfirmationService<J> {
   }
 
   confirm(input: ConfirmInput): { job: J; confirmation: ConfirmationRecord; replayed: boolean } {
+    if (this.#store.corrupt) throw new ConfirmError('STORE_CORRUPT', '确认记录损坏，已拒绝外传', this.#store.corrupt);
     if (!ID_RE.test(input.requestId ?? '')) throw new ConfirmError('INVALID', 'requestId 需为 8–128 位字母数字/_/-');
     if (typeof input.previewId !== 'string' || typeof input.revision !== 'string') throw new ConfirmError('INVALID', '缺 previewId/revision');
     const fp = inputFingerprint(input);
@@ -190,6 +196,7 @@ export class ConfirmationService<J> {
    * 不新建任务、不改 items/确认进度；新目标与已有目标不得重叠（旧目标不会再发）。
    */
   confirmAppend(input: AppendInput): { record: AppendRecord; replayed: boolean } {
+    if (this.#store.corrupt) throw new ConfirmError('STORE_CORRUPT', '确认记录损坏，已拒绝外传', this.#store.corrupt);
     if (!ID_RE.test(input.requestId ?? '')) throw new ConfirmError('INVALID', 'requestId 需为 8–128 位字母数字/_/-');
     if (typeof input.previewId !== 'string' || typeof input.revision !== 'string' || typeof input.jobId !== 'string') throw new ConfirmError('INVALID', '缺 jobId/previewId/revision');
     const fp = createHash('sha256').update(JSON.stringify(['append', input.jobId, input.previewId, input.revision, input.notifyOnComplete, input.acknowledged])).digest('hex');
@@ -225,6 +232,7 @@ export class ConfirmationService<J> {
 
   /** 启动恢复：对每条 accepted 记录幂等补建任务；授权已撤销的标 aborted。返回恢复/中止数。 */
   recover(): { recovered: number; aborted: number } {
+    if (this.#store.corrupt) throw new ConfirmError('STORE_CORRUPT', '确认记录损坏，已拒绝外传', this.#store.corrupt);
     let recovered = 0;
     let aborted = 0;
     for (const r of this.#store.all()) {

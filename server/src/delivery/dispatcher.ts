@@ -72,6 +72,7 @@ export class DeliveryDispatcher {
   }
 
   #enqueue(rec: ConfirmationRecord, targets: readonly TargetRef[], parts: DeliveryMessage[], partOffset: number, retryUnknown: boolean): PartView[] {
+    if (this.#store.corrupt) return this.list(rec.jobId) ?? []; // F31：账本损坏 → 只读，不建分片、不外传
     for (const t of targets) parts.forEach((_, i) => this.#store.ensure({ jobId: rec.jobId, connectorId: t.connectorId, targetId: t.targetId, partIndex: partOffset + i }));
     const p = (this.#chain = this.#chain.then(async () => {
       this.#current = rec;
