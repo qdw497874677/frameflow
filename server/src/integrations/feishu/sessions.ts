@@ -87,7 +87,9 @@ export class SessionStore {
    * 校验事件与 session 绑定一致：实例、租户、来源目标、消息（转发卡片 messageId 不同 → 拒绝）与期限。
    */
   check(sessionId: unknown, ev: { connectorId: string; tenantId: string; targetId: string | null; messageId?: string }, now = Date.now()):
-    { ok: true; session: CardSession } | { ok: false; code: 'SESSION_NOT_FOUND' | 'SESSION_EXPIRED' | 'SESSION_MISMATCH' } {
+    { ok: true; session: CardSession } | { ok: false; code: 'SESSION_NOT_FOUND' | 'SESSION_EXPIRED' | 'SESSION_MISMATCH' | 'STORE_CORRUPT' } {
+    // 日志损坏时可能丢了 revoke 行：一律拒绝，避免已撤销的旧卡重新可写
+    if (this.#log.corrupt) return { ok: false, code: 'STORE_CORRUPT' };
     const s = typeof sessionId === 'string' ? this.#byId.get(sessionId) : undefined;
     if (!s || this.#revoked.has(s.sessionId)) return { ok: false, code: 'SESSION_NOT_FOUND' };
     if (now >= s.expiresAt) return { ok: false, code: 'SESSION_EXPIRED' };

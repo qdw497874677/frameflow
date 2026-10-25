@@ -40,6 +40,7 @@ import { ActionLog } from '../integrations/feishu/actions.ts';
 import type { CardModel } from '../connectors/feishu/cards.ts';
 import type { SemanticContent } from '../connectors/types.ts';
 import { Auth, type ApiTokenMeta } from './auth.ts';
+import { LoginLimiter } from './login-limiter.ts';
 
 const VERSION = '0.1.0';
 const COOKIE = 'artworks_session';
@@ -121,10 +122,12 @@ export interface ConnectorFactoryContext {
 
 export interface ServerDeps {
   readonly connectorFactories?: Partial<Record<ConnectorKind, (lib: Library, ctx: ConnectorFactoryContext) => ConnectorFactory>>;
+  /** 测试注入：登录限流器（可控时钟） */
+  readonly loginLimiter?: LoginLimiter;
 }
 
 export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: cfg.logLevel }, bodyLimit: 8 * 1024 * 1024 });
+  const app = Fastify({ logger: { level: cfg.logLevel }, bodyLimit: 8 * 1024 * 1024, trustProxy: cfg.trustProxy === true });
   const auth = new Auth(cfg.dataDir, cfg.password);
   // 任务层：磁盘上两份追加日志（core/jobs.ts），执行由进程内一个队列兜（jobs/service.ts）。
   // 签发批注链接的能力在这里注入，handler 自己不碰 auth。
@@ -345,15 +348,27 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   }));
 
   // ── 会话 ───────────────────────────────────────────────────────────────
+  const loginLimiter = deps.loginLimiter ?? new LoginLimiter();
+  const cookieSecure = (req: { protocol: string }) => cfg.cookieSecure === 'always' || (cfg.cookieSecure !== 'never' && req.protocol === 'https');
   app.post('/api/v1/session', async (req, reply) => {
+    const ip = req.ip;
+    const wait = loginLimiter.blockedFor(ip);
+    if (wait > 0) return reply.code(429).header('retry-after', String(Math.ceil(wait / 1000))).send({ error: '尝试过于频繁，请稍后再试', code: 'TOO_MANY_ATTEMPTS', retryAfterMs: wait });
     const body = (req.body ?? {}) as { password?: string };
-    if (!auth.checkPassword(body.password ?? '')) return reply.code(401).send({ error: '密码不对' });
-    reply.setCookie(COOKIE, auth.sessionCookie(), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 3600 });
+    if (!auth.checkPassword(body.password ?? '')) {
+      const next = loginLimiter.fail(ip);
+      if (next > 0) reply.header('retry-after', String(Math.ceil(next / 1000)));
+      return reply.code(401).send({ error: '密码不对' });
+    }
+    loginLimiter.success(ip);
+    reply.setCookie(COOKIE, auth.sessionCookie(), { path: '/', httpOnly: true, sameSite: 'lax', secure: cookieSecure(req), maxAge: 30 * 24 * 3600 });
     return reply.code(204).send();
   });
 
-  app.delete('/api/v1/session', async (_req, reply) => {
-    reply.clearCookie(COOKIE, { path: '/' });
+  app.delete('/api/v1/session', async (req, reply) => {
+    // 登出吊销全部已签发会话（代数 +1）；仅已登录者可触发，免得匿名请求把主人踢下线
+    if (auth.enabled && auth.checkSession(req.cookies?.[COOKIE])) auth.revokeSessions();
+    reply.clearCookie(COOKIE, { path: '/', secure: cookieSecure(req) });
     return reply.code(204).send();
   });
 

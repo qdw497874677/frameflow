@@ -18,7 +18,7 @@
  */
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface ApiTokenMeta {
@@ -55,6 +55,8 @@ export class Auth {
   private readonly secret: Buffer;
   private readonly tokenFile: string;
   private tokens: ApiTokenRecord[] = [];
+  /** 会话代数：cookie 带上签发时的代数，代数变了旧 cookie 全部失效（登出 / 密码变更） */
+  private sessionGen = 0;
 
   constructor(dataDir: string, password: string) {
     this.dataDir = dataDir;
@@ -63,6 +65,34 @@ export class Auth {
     this.secret = this.loadSecret();
     this.tokenFile = join(dataDir, 'tokens.json');
     this.loadTokens();
+    this.loadSessionState();
+  }
+
+  /**
+   * `session-state.json`：{gen, pw}，pw 是密码的 HMAC 指纹（不存明文/裸哈希）。
+   * 启动时发现密码与指纹不符（改了配置里的密码）→ 代数 +1，之前签发的 cookie 全部失效。
+   */
+  private loadSessionState(): void {
+    const file = join(this.dataDir, 'session-state.json');
+    const pw = createHmac('sha256', this.secret).update(`pw|${this.password}`).digest('base64url');
+    let st: { gen?: number; pw?: string } = {};
+    try { st = JSON.parse(readFileSync(file, 'utf8')); } catch { /* 首次 */ }
+    this.sessionGen = Number.isInteger(st.gen) ? Number(st.gen) : 0;
+    if (st.pw !== pw) { if (st.pw !== undefined) this.sessionGen++; this.saveSessionState(pw); }
+  }
+
+  private saveSessionState(pw = createHmac('sha256', this.secret).update(`pw|${this.password}`).digest('base64url')): void {
+    const file = join(this.dataDir, 'session-state.json');
+    try {
+      writeFileSync(`${file}.tmp`, JSON.stringify({ gen: this.sessionGen, pw }), { mode: 0o600 });
+      renameSync(`${file}.tmp`, file);
+    } catch { /* 只读数据目录：本次进程内仍生效 */ }
+  }
+
+  /** 吊销所有已签发的会话 cookie（登出调用；单用户应用，登出即全端登出） */
+  revokeSessions(): void {
+    this.sessionGen++;
+    this.saveSessionState();
   }
 
   get enabled(): boolean {
@@ -129,15 +159,15 @@ export class Auth {
   }
 
   sessionCookie(): string {
-    return this.sign(`session|${Date.now() + SESSION_TTL_MS}`);
+    return this.sign(`session|${Date.now() + SESSION_TTL_MS}|${this.sessionGen}`);
   }
 
   checkSession(value: string | undefined | null): boolean {
     if (!this.enabled) return true;
     const payload = this.verify(value);
     if (!payload) return false;
-    const [kind, exp] = payload.split('|');
-    return kind === 'session' && Number(exp) > Date.now();
+    const [kind, exp, gen] = payload.split('|');
+    return kind === 'session' && Number(exp) > Date.now() && gen !== undefined && Number(gen) === this.sessionGen;
   }
 
   // ── 自认证链接 token（缩略图 `?t=`）──────────────────────────────

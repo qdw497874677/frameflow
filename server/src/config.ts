@@ -33,6 +33,10 @@ export interface Config {
     maxBytes: number;
   };
   logLevel: string;
+  /** 是否信任反向代理的 X-Forwarded-*（决定限流取哪个 IP、是否判定为 HTTPS）。默认 false */
+  trustProxy?: boolean;
+  /** 会话 cookie 的 Secure：auto = 请求为 HTTPS（含受信代理转发的 https）时加；always / never 强制。默认 auto */
+  cookieSecure?: 'auto' | 'always' | 'never';
   /** 配置是从哪个文件读的（运行时添加根目录要写回这里）；null = 没有配置文件（全默认/环境变量） */
   sourceFile: string | null;
 }
@@ -80,6 +84,8 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
       maxBytes: Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : 0,
     },
     logLevel: String(raw['logLevel'] ?? process.env['ARTWORKS_LOG_LEVEL'] ?? 'info'),
+    trustProxy: ['1', 'true', 'yes'].includes(String(raw['trustProxy'] ?? process.env['ARTWORKS_TRUST_PROXY'] ?? 'false').toLowerCase()),
+    cookieSecure: ((v) => (v === 'always' || v === 'never' ? v : 'auto'))(String(raw['cookieSecure'] ?? process.env['ARTWORKS_COOKIE_SECURE'] ?? 'auto')),
     sourceFile: file ?? null,
   };
 }
