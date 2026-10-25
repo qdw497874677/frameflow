@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Palette } from 'lucide-react';
 import { jobSource } from '@/api';
 import { store, useAppState } from '@/core/store';
-import type { Job, Selection } from '@/core/types';
+import type { Job, Look, Selection } from '@/core/types';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -13,6 +14,8 @@ export function DispatchGradeButton() {
   const [plan, setPlan] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [looks, setLooks] = useState<Look[]>([]);
+  const [look, setLook] = useState<string | null>(null);
 
   const rootId = dir?.split('/')[1] ?? '';
   const empty = !selection.where || Object.keys(selection.where).length === 0;
@@ -30,10 +33,16 @@ export function DispatchGradeButton() {
     if (!open) return;
     let alive = true;
     setPlan(null);
-    setError(null);
+    // 服务端要求 params.look：先拿风格表，用第一个预演（预演只看张数，风格不影响）
     jobSource
-      .planJob({ kind: 'grade', selection: scoped, params: {} })
-      .then((j) => alive && setPlan(j), (e) => alive && setError(e instanceof Error ? e.message : String(e)));
+      .listLooks()
+      .then((l) => {
+        if (!alive) return null;
+        setLooks(l);
+        setLook((cur) => cur ?? l[0]?.id ?? null);
+        return jobSource.planJob({ kind: 'grade', selection: scoped, params: l[0] ? { look: l[0].id } : {} });
+      })
+      .then((j) => alive && j && setPlan(j), (e) => alive && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       alive = false;
     };
@@ -46,7 +55,7 @@ export function DispatchGradeButton() {
     if (busy) return;
     setBusy(true);
     try {
-      const job = await jobSource.createJob({ kind: 'grade', selection: scoped, params: {}, mode: 'apply' });
+      const job = await jobSource.createJob({ kind: 'grade', selection: scoped, params: { look }, mode: 'apply' });
       setOpen(false);
       store.setView('jobs');
       window.history.replaceState({}, '', `?view=jobs&job=${encodeURIComponent(job.id)}`);
@@ -78,9 +87,23 @@ export function DispatchGradeButton() {
           ) : (
             <p className="text-sm text-muted-foreground">预演中…</p>
           )}
+          <div className="flex flex-wrap gap-1.5">
+            {looks.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setLook(l.id)}
+                title={l.inspiredBy}
+                className={cn('rounded-md border px-2 py-1 text-xs', look === l.id ? 'border-gold text-gold' : 'border-border/60 text-muted-foreground')}
+              >
+                {l.name}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">先定任务默认风格，进去后可逐张改。</p>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>取消</Button>
-            <Button disabled={busy || !plan || photos === 0} onClick={() => void start()}>开始设置</Button>
+            <Button disabled={busy || !plan || photos === 0 || !look} onClick={() => void start()}>开始设置</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
