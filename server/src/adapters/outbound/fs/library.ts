@@ -437,6 +437,9 @@ export class Library implements PhotoCatalog {
     return true;
   }
 
+  /** 侧边栏 / 目录计数口径：待删的不算（和挑片列表一致，它们在回收站里） */
+  private readonly notDeleted = (rec: PhotoRecord): boolean => !this.marks.delOf(rec.id);
+
   private reindex(): void {
     this.tree.rebuild(this.records.values(), this.cfg.roots.map((r) => r.id));
   }
@@ -483,7 +486,7 @@ export class Library implements PhotoCatalog {
       return {
         path: '/',
         parent: null,
-        folders: this.cfg.roots.map((r) => this.tree.entry(`/${r.id}`, r.label)),
+        folders: this.cfg.roots.map((r) => this.tree.entry(`/${r.id}`, r.label, this.notDeleted)),
         photoCount: 0,
       };
     }
@@ -491,7 +494,8 @@ export class Library implements PhotoCatalog {
     const dir = dirPath(at.rootId, at.relDir);
     if (!this.tree.has(dir)) return null;
     const parent = dir.slice(0, dir.lastIndexOf('/')) || '/';
-    return { path: dir, parent, folders: this.tree.subfolders(dir), photoCount: this.tree.directCount(dir) };
+    const photoCount = this.tree.directCount(dir, this.notDeleted);
+    return { path: dir, parent, folders: this.tree.subfolders(dir, this.notDeleted), photoCount, deletedCount: this.tree.directCount(dir) - photoCount };
   }
 
   listPhotos(args: ListPhotosArgs): PhotoPageDto | null {

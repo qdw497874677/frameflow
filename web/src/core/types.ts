@@ -57,7 +57,10 @@ export interface FolderListing {
   path: string;
   parent: string | null;
   folders: Folder[];
+  /** 直属、不含待删的照片数 */
   photoCount: number;
+  /** 直属的待删照片数（老服务端没有这个字段） */
+  deletedCount?: number;
 }
 
 export interface MarkInput {

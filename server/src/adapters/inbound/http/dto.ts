@@ -54,7 +54,10 @@ export interface FolderListingDto {
   path: string;
   parent: string | null;
   folders: FolderDto[];
+  /** 本目录直属、不含待删的照片数 */
   photoCount: number;
+  /** 本目录直属的待删照片数（列表默认不显示它们） */
+  deletedCount?: number;
 }
 
 export interface OpFailureDto {

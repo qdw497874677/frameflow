@@ -18,6 +18,8 @@ export interface FolderEntry {
   hasSubfolders: boolean;
 }
 
+export type Counted = (rec: PhotoRecord) => boolean;
+
 export function byName(a: PhotoRecord, b: PhotoRecord): number {
   return a.displayName.localeCompare(b.displayName, 'en', { numeric: true, sensitivity: 'base' });
 }
@@ -64,23 +66,27 @@ export class FolderTree {
     return this.dirs.has(dir);
   }
 
-  /** 递归照片数 */
-  photoCount(dir: string): number {
-    return this.dirs.get(dir)?.recursive ?? 0;
+  /** 递归照片数；给了 counted 就只数它认可的（例如排除待删，标注状态会变，不能预先缓存） */
+  photoCount(dir: string, counted?: Counted): number {
+    if (!counted) return this.dirs.get(dir)?.recursive ?? 0;
+    let n = this.directCount(dir, counted);
+    for (const child of this.dirs.get(dir)?.children ?? []) n += this.photoCount(child, counted);
+    return n;
   }
 
-  directCount(dir: string): number {
-    return this.dirs.get(dir)?.direct ?? 0;
+  directCount(dir: string, counted?: Counted): number {
+    if (!counted) return this.dirs.get(dir)?.direct ?? 0;
+    return this.direct(dir).filter(counted).length;
   }
 
-  entry(dir: string, name: string): FolderEntry {
-    return { name, path: dir, photoCount: this.photoCount(dir), hasSubfolders: Boolean(this.dirs.get(dir)?.children.size) };
+  entry(dir: string, name: string, counted?: Counted): FolderEntry {
+    return { name, path: dir, photoCount: this.photoCount(dir, counted), hasSubfolders: Boolean(this.dirs.get(dir)?.children.size) };
   }
 
-  subfolders(dir: string): FolderEntry[] {
+  subfolders(dir: string, counted?: Counted): FolderEntry[] {
     return [...(this.dirs.get(dir)?.children ?? [])]
       .sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }))
-      .map((child) => this.entry(child, child.slice(child.lastIndexOf('/') + 1)));
+      .map((child) => this.entry(child, child.slice(child.lastIndexOf('/') + 1), counted));
   }
 
   direct(dir: string): PhotoRecord[] {
