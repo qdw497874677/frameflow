@@ -97,19 +97,21 @@ F04–F06的换源、并发与旧任务回归通过；复核锁的持有范围�
 - 验证：`(cd server && node --test tools/connector-core.test.mjs)`；覆盖配置失败和跨目标身份矩阵。
 - 2026-10-25 实施证据：按“F07–F12管理支线可与F04–F06并行”先做F07（检查点A人工确认仍待记录，F04未开始）。新增types/config/access三模块：通用端口类型无SDK依赖；connectors.json原子替换（tmp+fsync+rename+目录fsync，0700/0600）、revision冲突、注入rename失败不发布内存新状态且旧文件不变、损坏/非法UTF-8/未知版本拒绝加载；创建强制disabled，原始Secret字段/未知字段/重复appId/目标拒绝，secretConfigured脱敏；纯函数typed授权决策覆盖实例/租户/来源目标/用户/项目/任务投递/照片及canAnnotate/canRequestJpeg/创建权限。connector-core 9/9，合跑F01–F03 41/41，前后端类型检查与`git diff --check`通过。未接入API/生命周期（F08/F09），未连接真实飞书。
 
-### [ ] F08 — 注册表与生命周期（假适配器）
+### [x] F08 — 注册表与生命周期（假适配器）
 - 模块：connector-core；验收：CC-01/02/05/06/07。依赖：F07。
 - 验收：①两实例独立启动/停用，同appId拒绝重复，未启用零连接；②重启状态真实、坏环境引用可诊断，单写者保护在启用前生效；③测试连接不发消息，排队执行前再授权，停用阻止新外传。
 - 文件：`server/src/connectors/registry.ts`、`server/src/connectors/runtime.ts`、`server/src/connectors/types.ts`、`server/tools/connector-runtime.test.mjs`。
 - 验证：`(cd server && node --test tools/connector-runtime.test.mjs)`；断言假端口调用次数和目标。
+- 完成（2026-10-25）：registry(工厂+内存状态)、runtime(sync启停、connectors.lock单写者、执行前再授权、test仅verify)；假端口断言调用次数与目标，connector-runtime 6/6。
 
-### [ ] F09 — 连接器管理 API
+### [x] F09 — 连接器管理 API
 - 模块：connector-core；验收：CC-02/03/05/07。依赖：F08。
 - 验收：①增删改查/目标读取/无消息测试接口、分页、revision与引用冲突完整；②只放已认证管理session、同源/CSRF校验，密码未设不启用；③任意token/未登录/原始Secret提交拒绝，响应无凭据。
 - 文件：`server/src/api/connectors.ts`、`server/src/api/server.ts`、`contracts/openapi.yaml`、`web/src/api/contract.ts`、`server/tools/connector-api.test.mjs`。
 - 验证：`(cd server && node --test tools/connector-api.test.mjs)`；OpenAPI/DTO与状态码对照。
+- 完成（2026-10-25）：/connectors CRUD+分页+expectedRevision+test+targets；仅管理session，未设密码403 PASSWORD_REQUIRED，写操作同源校验；OpenAPI与web DTO同步；connector-api 4/4，全量单测74/74、jobs 81/81、annotate 94/94。
 
-### [ ] 检查点 C — 管理安全
+### [x] 检查点 C — 管理安全
 F07–F09通过。未设置密码、未启用、普通API token均不能启用外传；暂不接SDK实例。
 
 ## 阶段 D：网页管理与派发预览（V1/V2）

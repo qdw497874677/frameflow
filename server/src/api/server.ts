@@ -3,6 +3,10 @@
  * 这里**不放业务逻辑** —— 只做参数解析、认证、DTO 组装与流式输出；一切判断都在 core/ 里。
  */
 
+import { registerConnectorRoutes } from './connectors.ts';
+import { ConnectorConfigStore } from '../connectors/config.ts';
+import { ConnectorRegistry } from '../connectors/registry.ts';
+import { ConnectorRuntime } from '../connectors/runtime.ts';
 import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createReadStream, existsSync, type Dirent } from 'node:fs';
@@ -103,6 +107,13 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
     signRangeToken: (jobId, alias, tokenId) => auth.issueRangeToken(jobId, alias, tokenId),
   });
   await app.register(cookie);
+
+  // ── 连接器（F08/F09）：配置在 dataDir/connectors.json；尚未注册任何平台适配器，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED
+  const connectorStore = ConnectorConfigStore.open(cfg.dataDir);
+  const connectorRuntime = new ConnectorRuntime(connectorStore, new ConnectorRegistry(), cfg.dataDir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }));
+  await connectorRuntime.sync();
+  app.addHook('onClose', async () => connectorRuntime.stopAll());
+  registerConnectorRoutes(app, { store: connectorStore, runtime: connectorRuntime, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via });
 
   // ── 认证：一条密码，三种凭据（见 api/auth.ts）──────────────────────────
   app.addHook('onRequest', async (req, reply) => {

@@ -256,3 +256,58 @@ export interface ChannelDto {
   enabled?: boolean;
 }
 
+// ── 连接器管理（/connectors，仅管理 session）──────────────────────────────
+
+export interface ConnectorTargetDto {
+  id: string;
+  connectorId: string;
+  label: string;
+  kind: 'group' | 'user';
+  externalId: string;
+  projectIds: string[];
+  allowedActorIds: string[];
+  canAnnotate: boolean;
+  canRequestJpeg: boolean;
+}
+
+export interface ConnectorInstanceInputDto {
+  id: string;
+  kind: 'feishu';
+  label: string;
+  appId: string;
+  /** 环境变量名，不是 Secret 本身 */
+  secretEnv: string;
+  tenantId: string | null;
+  enabled?: false;
+  targets: ConnectorTargetDto[];
+  creatorActorIds: string[];
+  creatorProjectIds: string[];
+}
+
+export interface ConnectorStatusDto {
+  state: 'disabled' | 'connecting' | 'connected' | 'degraded' | 'error';
+  reason?: string;
+  lastConnectedAt?: string;
+}
+
+export interface ConnectorDto extends Omit<ConnectorInstanceInputDto, 'enabled'> {
+  enabled: boolean;
+  secretConfigured: boolean;
+  status: ConnectorStatusDto;
+}
+
+export interface ConnectorPageDto {
+  revision: number;
+  items: ConnectorDto[];
+  nextCursor: string | null;
+}
+
+export interface ConnectorMutationDto {
+  revision: number;
+  item: ConnectorDto;
+}
+
+export interface ConnectorVerifyResultDto {
+  ok: boolean;
+  code?: string;
+}
