@@ -368,14 +368,14 @@ export async function buildServer(cfg: Config, lib: Library): Promise<FastifyIns
   app.post('/api/v1/trash/restore', async (req, reply) => {
     const ids = idsOf(req.body);
     if (!ids.length) return reply.code(400).send({ error: 'ids 不能为空' });
-    const res = lib.restoreFromTrash(ids);
+    const res = await lib.restoreFromTrash(ids);
     return res.ok ? res : reply.code(409).send({ ...res, error: res.failed[0]?.error ?? '全部失败' });
   });
 
   app.delete('/api/v1/trash', async (req, reply) => {
     const q = req.query as { confirm?: string };
     if (q.confirm !== 'true') return reply.code(400).send({ error: '真删不可恢复：要带 ?confirm=true' });
-    const res = lib.emptyTrash(idsOf(req.body));
+    const res = await lib.emptyTrash(idsOf(req.body));
     return res.ok ? res : reply.code(409).send({ ...res, error: res.failed[0]?.error ?? '全部失败' });
   });
 

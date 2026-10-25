@@ -12,6 +12,7 @@
  * HTTP 语义（哪个错误对哪个状态码）不在这里：抛 `JobError`，由 api/server.ts 映射。
  */
 
+import { OperationGates } from '../core/operation-gates.ts';
 import { JobError, JobsStore, itemsSettled, type Job, type JobEvent, type JobItem, type JobProblem } from '../core/jobs.ts';
 import type { MarkResultDto } from '../core/marks.ts';
 import type { Selection } from '../core/selection.ts';
@@ -42,7 +43,6 @@ export class JobsService {
   /** jobId → 签发它范围 token 的 API token id（只活在内存：apply 只在创建后跑一次） */
   private readonly issuedBy = new Map<string, string | null>();
   /** jobId → 回流串行链：clientRef 幂等靠「先查再写」，并发重发必须在写盘前就排上队 */
-  private readonly inboundLocks = new Map<string, Promise<unknown>>();
 
   constructor(store: JobsStore, registry: Record<string, JobHandler>, ctx: JobContext) {
     this.store = store;
@@ -226,7 +226,16 @@ export class JobsService {
 
   // ── 取消 / 撤销 / 回流 ──────────────────────────────────────────────────
 
+  /** F06：任务级串行边界，顺序 job → photo（锁内 applyMarks 再取 photo 锁；普通标记不取 job 锁） */
+  private withJob<T>(id: string, fn: () => Promise<T> | T): Promise<T> {
+    return this.ctx.lib.gates.run([OperationGates.job(id)], fn);
+  }
+
   async cancel(id: string): Promise<Job> {
+    return this.withJob(id, () => this.cancelLocked(id));
+  }
+
+  private cancelLocked(id: string): Job {
     const job = this.get(id);
     if (!CANCELLABLE.includes(job.state)) {
       throw new JobError('conflict', `任务已经是 ${job.state}，取消不了（要退回标注请用 undo）`);
@@ -240,6 +249,11 @@ export class JobsService {
   }
 
   async undo(id: string): Promise<Job> {
+    return this.withJob(id, () => this.undoLocked(id));
+  }
+
+  private async undoLocked(id: string): Promise<Job> {
+    // 锁内重新读状态与 undone：并发撤销只有一个能真正回滚
     const job = this.get(id);
     const handler = this.registry[job.kind];
     if (!job.reversible || !handler?.undo) {
@@ -262,15 +276,8 @@ export class JobsService {
    * 并发重发会在写盘的 await 窗口里互相看不见、重复落标，所以在进业务逻辑前排上队。
    */
   async inbound(id: string, raw: InboundInput[], by: string): Promise<MarkResultDto[]> {
-    const prev = this.inboundLocks.get(id) ?? Promise.resolve();
-    const chain = prev.catch(() => undefined).then(() => this.inboundOnce(id, raw, by));
-    const guarded = chain.catch(() => undefined);
-    this.inboundLocks.set(id, guarded);
-    try {
-      return await chain;
-    } finally {
-      if (this.inboundLocks.get(id) === guarded) this.inboundLocks.delete(id);
-    }
+    // F06：与 cancel/undo 共用 job gate，锁内重新检查终态
+    return this.withJob(id, () => this.inboundOnce(id, raw, by));
   }
 
   /**
