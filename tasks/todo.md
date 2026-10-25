@@ -85,11 +85,12 @@ F04–F06的换源、并发与旧任务回归通过；复核锁的持有范围�
 
 ## 阶段 C：管理端口与受控配置（V1）
 
-### [ ] F07 — 通用端口、配置与权限决策
+### [x] F07 — 通用端口、配置与权限决策
 - 模块：connector-core；验收：CC-02/04/05/08/09。依赖：F01、F02。
 - 验收：①确定通用类型，SDK类型不越界；配置原子替换、默认disabled、secretEnv脱敏；②按实例/租户/来源目标/用户/项目/操作区分授权，首次创建不要求已有任务；③canAnnotate、canRequestJpeg、创建权限独立且默认拒绝。
 - 文件：`server/src/connectors/types.ts`、`server/src/connectors/config.ts`、`server/src/connectors/access.ts`、`server/tools/connector-core.test.mjs`。
 - 验证：`(cd server && node --test tools/connector-core.test.mjs)`；覆盖配置失败和跨目标身份矩阵。
+- 2026-10-25 实施证据：按“F07–F12管理支线可与F04–F06并行”先做F07（检查点A人工确认仍待记录，F04未开始）。新增types/config/access三模块：通用端口类型无SDK依赖；connectors.json原子替换（tmp+fsync+rename+目录fsync，0700/0600）、revision冲突、注入rename失败不发布内存新状态且旧文件不变、损坏/非法UTF-8/未知版本拒绝加载；创建强制disabled，原始Secret字段/未知字段/重复appId/目标拒绝，secretConfigured脱敏；纯函数typed授权决策覆盖实例/租户/来源目标/用户/项目/任务投递/照片及canAnnotate/canRequestJpeg/创建权限。connector-core 9/9，合跑F01–F03 41/41，前后端类型检查与`git diff --check`通过。未接入API/生命周期（F08/F09），未连接真实飞书。
 
 ### [ ] F08 — 注册表与生命周期（假适配器）
 - 模块：connector-core；验收：CC-01/02/05/06/07。依赖：F07。
