@@ -23,3 +23,7 @@
 - 领域层不读环境变量、不碰文件：需要的值（如 `SecretEnv`）由调用方传入。
 - 新的持久化先在 `application/*/ports.ts` 定义接口，再在 `adapters/outbound` 实现。
 - 行为变更与结构调整分开提交。
+
+## 飞书模块
+
+`adapters/feishu/index.ts` 是唯一入口：`loadFeishuSdk`（真实 / 离线假 SDK / 不注册）、`feishuConnector`（连接器工厂）、`openFeishuInteraction`（卡片交互控制器 + 任务入口卡传输）。模块外的源码只能 import 这个文件（架构守卫校验）；测试可以直接测内部文件。

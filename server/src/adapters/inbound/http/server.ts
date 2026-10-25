@@ -10,7 +10,6 @@ import { PreviewService } from '../../../application/delivery/previews.ts';
 import { ConfirmationService } from '../../../application/delivery/confirmation-service.ts';
 import { ConfirmationStore } from '../../outbound/fs/delivery-confirmations.ts';
 import { DeliveryDispatcher } from '../../../application/delivery/dispatcher.ts';
-import { UnknownOutcome } from '../../../application/delivery/runner.ts';
 import { DeliveryStore } from '../../outbound/fs/delivery-ledger.ts';
 import { ConnectorConfigStore } from '../../outbound/fs/connector-config-store.ts';
 import { ConnectorRegistry } from '../../../application/connectors/registry.ts';
@@ -27,12 +26,7 @@ import type { Library } from '../../outbound/fs/library.ts';
 import { registry } from '../../../application/jobs/registry.ts';
 import { JobsService } from '../../../application/jobs/service.ts';
 import { reconcileConfirmations } from '../../../application/jobs/confirmations.ts';
-import { FeishuController } from '../../feishu/controller.ts';
-import { SessionStore } from '../../feishu/sessions.ts';
-import { JpegLog } from '../../feishu/jpegs.ts';
-import { CursorStore } from '../../feishu/cursors.ts';
-import { ActionLog } from '../../feishu/actions.ts';
-import type { CardModel } from '../../feishu/cards.ts';
+import { openFeishuInteraction, type CardModel, type FeishuController } from '../../feishu/index.ts';
 import type { SemanticContent } from '../../../domain/connectors/types.ts';
 import { Auth } from './auth.ts';
 import { registerAuthGate } from './auth-gate.ts';
@@ -92,11 +86,8 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const pstate = () => ({ connectors: connectorStore.current, policies: policyStore.current });
   const confirmStore = ConfirmationStore.open(cfg.dataDir);
   const deliveryStore = DeliveryStore.open(cfg.dataDir);
-  const fsessions = new SessionStore(cfg.dataDir);
-  const fcursors = new CursorStore(cfg.dataDir);
-  feishu = new FeishuController({
-    jpegs: new JpegLog(cfg.dataDir),
-    sessions: fsessions, actions: new ActionLog(cfg.dataDir), cursors: fcursors, config: () => connectorStore.current,
+  const interaction = openFeishuInteraction(cfg.dataDir, {
+    config: () => connectorStore.current,
     jobs: {
       get: (id) => { try { return jobs.get(id); } catch { return undefined; } },
       runInJobGate: (id, fn) => jobs.runInJobGate(id, fn),
@@ -123,6 +114,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
       },
     },
   });
+  feishu = interaction.controller;
   const dispatcher = new DeliveryDispatcher({
     store: deliveryStore, confirmations: confirmStore, state: pstate,
     transport: process.env.FRAMEFLOW_FAKE_TRANSPORT === 'e2e'
@@ -132,22 +124,8 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
           if (!t || t.externalId.startsWith('oc_fail')) throw new Error('FAKE_FAIL');
           return { messageId: `fake_${r.intentId}` };
         } }
-      : { send: async (r) => {
-          // 真实外传经运行时：执行时刻重新授权（实例停用/目标删除即拒绝）
-          // 入口卡带 session（按钮只有不透明 sessionId）；发出后绑定消息与该目标游标
-          const inst = connectorStore.current.instances.find((c) => c.id === r.connectorId);
-          const session = fsessions.create({ kind: 'task-entry', connectorId: r.connectorId, tenantId: inst?.tenantId ?? '', targetId: r.targetId, jobId: r.jobId, photoId: null, revision: null, generation: null });
-          const content = r.part.kind === 'task.completed' ? { type: 'progress' as const, taskId: r.jobId } : { type: 'task-entry' as const, taskId: r.jobId };
-          const out = await connectorRuntime.send(r.connectorId, { targetId: r.targetId, intentId: r.intentId, content, sessionId: session.sessionId });
-          if (out.status === 'sent' && r.part.kind === 'task.completed') return { messageId: out.messageId };
-          if (out.status === 'sent') {
-            fsessions.bindMessage(session.sessionId, out.messageId);
-            fcursors.set({ jobId: r.jobId, targetId: r.targetId, photoId: null, messageId: out.messageId, sessionId: session.sessionId });
-            return { messageId: out.messageId };
-          }
-          if (out.status === 'unknown') throw new UnknownOutcome(out.code);
-          throw new Error(out.code);
-        } },
+      // 真实外传经运行时：执行时刻重新授权（实例停用/目标删除即拒绝）
+      : interaction.transport,
   });
   const selectIds = (projectId: string, ids: readonly string[]) =>
     lib.select({ ids: [...ids], project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id);

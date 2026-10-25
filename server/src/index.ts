@@ -7,10 +7,7 @@
 
 import { buildServer } from './adapters/inbound/http/server.ts';
 import { loadConfig } from './adapters/outbound/config-file.ts';
-import { loadRealSdk } from './adapters/feishu/client.ts';
-import { fakeE2eSdk } from './adapters/feishu/fake-sdk.ts';
-import { MediaError } from './adapters/feishu/media.ts';
-import { feishuFactory } from './adapters/feishu/transport.ts';
+import { feishuConnector, loadFeishuSdk } from './adapters/feishu/index.ts';
 import { endExif } from './adapters/outbound/exif.ts';
 import { Library } from './adapters/outbound/fs/library.ts';
 
@@ -19,30 +16,9 @@ const lib = new Library(cfg);
 // 飞书适配器（F21）：SDK 动态加载；只有显式启用的实例才会建连接。
 // FRAMEFLOW_FEISHU_SDK=disabled 时不注册（离线 e2e 用，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED）。
 // FRAMEFLOW_FEISHU_SDK=fake-e2e：离线假 SDK（只记录调用，不触网），供浏览器测试发送回归。
-const sdkMode = process.env.FRAMEFLOW_FEISHU_SDK;
-const feishuSdk = sdkMode === 'disabled' ? null : sdkMode === 'fake-e2e' ? fakeE2eSdk(process.env.FRAMEFLOW_FAKE_SDK_LOG) : await loadRealSdk();
+const feishuSdk = await loadFeishuSdk(process.env.FRAMEFLOW_FEISHU_SDK, process.env.FRAMEFLOW_FAKE_SDK_LOG);
 const app = await buildServer(cfg, lib, {
-  connectorFactories: feishuSdk
-    ? {
-        feishu: (l, ctx) => feishuFactory({
-          sdk: () => feishuSdk,
-          resolve: ctx.resolve,
-          preview: async (photoId) => {
-            const rec = l.get(photoId);
-            if (!rec) throw new Error('PHOTO_NOT_FOUND');
-            const { path, etag } = await l.thumbs.thumb(rec, 2048);
-            return { path, signature: etag };
-          },
-          // F28：只取 JPEG 变体；RAW/HEIC-only/视频没有 jpeg → 拒绝（不转码、不用预览兜底）
-          original: async (photoId) => {
-            const rec = l.get(photoId);
-            const f = rec ? l.absFile(rec, 'jpeg') : null;
-            if (!f || f.mime !== 'image/jpeg') throw new MediaError('JPEG_UNSUPPORTED');
-            return { path: f.path, fileName: f.name };
-          },
-        }),
-      }
-    : {},
+  connectorFactories: feishuSdk ? { feishu: (l, ctx) => feishuConnector(feishuSdk, l, ctx.resolve) } : {},
 });
 
 await app.listen({ host: cfg.host, port: cfg.port });
