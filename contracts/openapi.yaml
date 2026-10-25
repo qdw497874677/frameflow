@@ -754,6 +754,69 @@ paths:
         "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryPartPage" } } } }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /jobs/{id}/delivery-previews:
+    post:
+      summary: 追加目标预览（F29a）：绑定已有 jobId，照片/参数取原确认快照；零发送
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [targets]
+              properties:
+                targets:
+                  type: array
+                  minItems: 1
+                  maxItems: 64
+                  items: { type: object, additionalProperties: false, required: [connectorId, targetId], properties: { connectorId: { type: string }, targetId: { type: string } } }
+      responses:
+        "201":
+          description: preview
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/DeliveryPreview" }
+                  - type: object
+                    required: [existingTargets]
+                    properties: { existingTargets: { type: array, items: { type: object } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error", description: "TARGET_ALREADY_IN_JOB / TARGET_NOT_ALLOWED" }
+  /jobs/{id}/delivery-appends:
+    post:
+      summary: 确认追加目标（F29a）：不建新任务、不改 items/确认进度；同 requestId 重放 200（响应丢失后重试仍关联原任务），异载荷 409
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [previewId, revision, requestId]
+              properties:
+                previewId: { type: string }
+                revision: { type: string }
+                requestId: { type: string, pattern: "^[A-Za-z0-9_-]{8,128}$" }
+                notifyOnComplete: { type: boolean, description: 新增目标是否接收完成通知 }
+                acknowledged: { type: boolean, description: 必须为 true }
+      responses:
+        "201": { description: accepted, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryAppend" } } } }
+        "200": { description: replayed, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryAppend" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error", description: "REQUEST_ID_CONFLICT / PREVIEW_JOB_MISMATCH / TARGET_ALREADY_IN_JOB / JOB_CLOSED / PREVIEW_STALE" }
+        "410": { $ref: "#/components/responses/Error" }
   /jobs/{id}/deliveries/retry:
     post:
       summary: 单目标重试（只重发 failed/pending；unknown 需 acceptDuplicateRisk）
@@ -1236,6 +1299,7 @@ components:
         policyRevision: { type: integer }
         connectorRevision: { type: integer }
         warnings: { type: array, items: { type: string, enum: [NO_TARGET, POLICY_TARGET_UNAVAILABLE] } }
+        jobId: { type: string, nullable: true, description: 追加目标预览绑定的已有任务（F29a） }
     DeliveryPart:
       type: object
       required: [jobId, connectorId, targetId, partIndex, state, attempts, messageId, error]
@@ -1243,7 +1307,7 @@ components:
         jobId: { type: string }
         connectorId: { type: string }
         targetId: { type: string }
-        partIndex: { type: integer }
+        partIndex: { type: integer, description: "0 起为派发入口；≥1000 为完成通知（1000+代次，F29）" }
         state: { type: string, enum: [pending, sending, sent, failed, unknown] }
         attempts: { type: integer }
         currentIntentId: { type: string, nullable: true }
@@ -1263,6 +1327,16 @@ components:
         replayed: { type: boolean }
         requestId: { type: string }
         job: { type: object, required: [id, state], properties: { id: { type: string }, state: { type: string } } }
+        targets: { type: array, items: { type: object } }
+        deliveries: { type: array, items: { $ref: "#/components/schemas/DeliveryPart" } }
+    DeliveryAppend:
+      type: object
+      required: [accepted, replayed, requestId, jobId, targets, deliveries]
+      properties:
+        accepted: { type: boolean }
+        replayed: { type: boolean }
+        requestId: { type: string }
+        jobId: { type: string }
         targets: { type: array, items: { type: object } }
         deliveries: { type: array, items: { $ref: "#/components/schemas/DeliveryPart" } }
     ConnectorVerifyResult:

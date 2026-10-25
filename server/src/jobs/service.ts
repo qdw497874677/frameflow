@@ -285,6 +285,17 @@ export class JobsService {
     const settled = job.items.filter((i) => i.status !== 'planned').length;
     const done = this.store.setState(id, 'done');
     this.store.addEvent(id, { type: 'done', note: `全部 ${done.items.length} 个项目有终态（完成 ${settled}，跳过/失败也算有交代）` });
+    if (this.ctx.onDone) {
+      const after = this.store.get(id) ?? done;
+      let generation = 0;
+      for (let since = 0, guard = 0; guard < 10_000; guard++) {
+        const page = this.store.events(id, { since, limit: 500 });
+        generation += page.items.filter((e) => e.type === 'done').length;
+        if (!page.items.length || page.nextSince <= since) break;
+        since = page.nextSince;
+      }
+      try { this.ctx.onDone(after, generation); } catch { /* 通知失败不影响任务收尾 */ }
+    }
     return done;
   }
 

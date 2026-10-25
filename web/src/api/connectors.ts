@@ -1,4 +1,6 @@
 import type {
+  DeliveryAppendDto,
+  DeliveryAppendPreviewDto,
   ConnectorDto, ConnectorInstanceInputDto, ConnectorMutationDto, ConnectorPageDto, ConnectorVerifyResultDto,
   DeliveryConfirmationDto, DeliveryPartPageDto, DeliveryPolicyInputDto, DeliveryPolicyMutationDto, DeliveryPolicyPageDto,
   DeliveryPreviewDto, DeliveryTargetRefDto,
@@ -86,6 +88,11 @@ export const deliveryApi = {
   confirm: (body: { previewId: string; revision: string; requestId: string; notifyOnComplete: boolean; acknowledged: boolean }) =>
     call<DeliveryConfirmationDto>('POST', '/delivery-confirmations', body),
   deliveries: (jobId: string) => call<DeliveryPartPageDto>('GET', `/jobs/${encodeURIComponent(jobId)}/deliveries`),
+  /** F29a：追加目标——预览（零发送）与确认（requestId 稳定，重放仍关联原任务） */
+  appendPreview: (jobId: string, targets: DeliveryTargetRefDto[]) =>
+    call<DeliveryAppendPreviewDto>('POST', `/jobs/${encodeURIComponent(jobId)}/delivery-previews`, { targets }),
+  appendConfirm: (jobId: string, body: { previewId: string; revision: string; requestId: string; notifyOnComplete: boolean; acknowledged: boolean }) =>
+    call<DeliveryAppendDto>('POST', `/jobs/${encodeURIComponent(jobId)}/delivery-appends`, body),
   retry: (jobId: string, t: DeliveryTargetRefDto, acceptDuplicateRisk = false) =>
     call<DeliveryPartPageDto>('POST', `/jobs/${encodeURIComponent(jobId)}/deliveries/retry`, { ...t, acceptDuplicateRisk }),
 };
@@ -116,6 +123,11 @@ export function describeConnectorError(e: unknown): string {
     DUPLICATE_RISK: '有状态未知的消息：重试可能重复外传，需确认风险',
     ATTEMPT_IN_FLIGHT: '上一次尝试还没结束，稍后再试',
     NOTHING_TO_RETRY: '没有需要重试的消息',
+    TARGET_ALREADY_IN_JOB: '目标已在任务中；失败请用重试，不会重复追加',
+    PREVIEW_JOB_MISMATCH: '预览不属于该任务，请重新预览',
+    JOB_CLOSED: '任务已取消或失败，不能追加目标',
+    JOB_NOT_FOUND: '任务不存在或不是外传任务',
+    REQUEST_ID_CONFLICT: '确认内容与上次不一致，请重新预览',
   };
   return map[e.code] ? `${map[e.code]}（${e.code}）` : `${e.message}（${e.code}）`;
 }

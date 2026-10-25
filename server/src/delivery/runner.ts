@@ -20,6 +20,8 @@ export interface RunInput<P> {
   readonly parts: readonly P[];
   /** 显式接受重复外传风险时，unknown 分片也重发（F16 单目标重试） */
   readonly retryUnknown?: boolean;
+  /** F29：分片序号偏移（完成通知用独立序号段，不与派发分片混账） */
+  readonly partOffset?: number;
 }
 
 export interface RunnerOptions<P> {
@@ -42,10 +44,11 @@ export class DeliveryRunner<P> {
 
   async run(input: RunInput<P>): Promise<PartView[]> {
     const { store } = this.#o;
-    for (const t of input.targets) input.parts.forEach((_, i) => store.ensure({ jobId: input.jobId, ...pick(t), partIndex: i }));
+    const off = input.partOffset ?? 0;
+    for (const t of input.targets) input.parts.forEach((_, i) => store.ensure({ jobId: input.jobId, ...pick(t), partIndex: off + i }));
     for (const t of input.targets) {
       for (let i = 0; i < input.parts.length; i++) {
-        const key: PartKey = { jobId: input.jobId, ...pick(t), partIndex: i };
+        const key: PartKey = { jobId: input.jobId, ...pick(t), partIndex: off + i };
         const v = store.view(key)!;
         if (v.state !== 'pending' && v.state !== 'failed' && !(input.retryUnknown && v.state === 'unknown')) continue;
         if (this.inFlight.has(kOf(key))) break; // 原尝试未结束：不叠发

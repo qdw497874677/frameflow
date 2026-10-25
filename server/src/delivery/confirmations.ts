@@ -30,6 +30,20 @@ export interface AcceptedSnapshot {
   readonly targets: readonly PreviewTarget[];
 }
 
+/** F29a：追加目标确认——绑定已有 jobId，只扩展目标投递记录 */
+export interface AppendInput extends ConfirmInput { readonly jobId: string }
+export interface AppendRecord {
+  readonly t: 'appended';
+  readonly requestId: string;
+  readonly jobId: string;
+  readonly previewId: string;
+  readonly revision: string;
+  readonly fingerprint: string;
+  readonly targets: readonly PreviewTarget[];
+  readonly notifyOnComplete: boolean;
+  readonly at: string;
+}
+
 export interface ConfirmationRecord {
   readonly t: 'accepted' | 'aborted';
   readonly requestId: string;
@@ -44,7 +58,8 @@ export interface ConfirmationRecord {
 
 export type ConfirmErrorCode =
   | 'INVALID' | 'CONSENT_REQUIRED' | 'REQUEST_ID_CONFLICT' | 'PREVIEW_ALREADY_CONFIRMED' | 'AUTHORIZATION_REVOKED'
-  | 'PREVIEW_NOT_FOUND' | 'PREVIEW_EXPIRED' | 'PREVIEW_REVISION_MISMATCH' | 'PREVIEW_STALE';
+  | 'PREVIEW_NOT_FOUND' | 'PREVIEW_EXPIRED' | 'PREVIEW_REVISION_MISMATCH' | 'PREVIEW_STALE'
+  | 'JOB_NOT_FOUND' | 'JOB_CLOSED' | 'PREVIEW_JOB_MISMATCH' | 'TARGET_ALREADY_IN_JOB';
 
 export class ConfirmError extends Error {
   readonly code: ConfirmErrorCode;
@@ -64,6 +79,8 @@ export interface ConfirmDeps<J> {
   readonly createJob: (rec: ConfirmationRecord) => J;
   /** 已建任务直接返回（重放不因后来的撤销而“丢”任务；外传由 runner 发送前复核） */
   readonly findJob: (jobId: string) => J | undefined;
+  /** F29a：任务仍可追加目标（未取消/失败） */
+  readonly jobOpen?: (jobId: string) => boolean;
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -76,6 +93,7 @@ export class ConfirmationStore {
   readonly file: string;
   readonly #byRequest = new Map<string, ConfirmationRecord>();
   readonly #byPreview = new Map<string, string>();
+  readonly #appends = new Map<string, AppendRecord>();
 
   private constructor(file: string) { this.file = file; }
 
@@ -87,8 +105,9 @@ export class ConfirmationStore {
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       try {
-        const r = JSON.parse(line) as ConfirmationRecord;
-        if ((r.t === 'accepted' || r.t === 'aborted') && typeof r.requestId === 'string') s.#index(r);
+        const r = JSON.parse(line) as ConfirmationRecord | AppendRecord;
+        if (r.t === 'appended' && typeof r.requestId === 'string') s.#indexAppend(r);
+        else if ((r.t === 'accepted' || r.t === 'aborted') && typeof r.requestId === 'string') s.#index(r);
       } catch { /* 半行：写到一半被杀，未 fsync 的接受视为没发生 */ }
     }
     return s;
@@ -99,15 +118,30 @@ export class ConfirmationStore {
     this.#byPreview.set(r.previewId, r.requestId);
   }
 
+  #indexAppend(r: AppendRecord): void {
+    this.#appends.set(r.requestId, r);
+    this.#byPreview.set(r.previewId, r.requestId);
+  }
+
   get(requestId: string): ConfirmationRecord | undefined { return this.#byRequest.get(requestId); }
+  getAppend(requestId: string): AppendRecord | undefined { return this.#appends.get(requestId); }
+  appendsOf(jobId: string): AppendRecord[] { return [...this.#appends.values()].filter((r) => r.jobId === jobId); }
+  /** 任务的全部目标（原确认 + 追加），按加入顺序去重 */
+  targetsOf(jobId: string): PreviewTarget[] {
+    const base = this.byJob(jobId);
+    if (!base) return [];
+    const out = new Map<string, PreviewTarget>();
+    for (const t of [...base.snapshot.targets, ...this.appendsOf(jobId).flatMap((a) => a.targets)]) out.set(`${t.connectorId}\u0000${t.targetId}`, t);
+    return [...out.values()];
+  }
   requestOfPreview(previewId: string): string | undefined { return this.#byPreview.get(previewId); }
   byJob(jobId: string): ConfirmationRecord | undefined { return this.all().find((r) => r.jobId === jobId); }
   all(): ConfirmationRecord[] { return [...this.#byRequest.values()]; }
 
-  append(r: ConfirmationRecord): void {
+  append(r: ConfirmationRecord | AppendRecord): void {
     const fd = fs.openSync(this.file, 'a', 0o600);
     try { fs.writeSync(fd, `${JSON.stringify(r)}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    this.#index(r);
+    if (r.t === 'appended') this.#indexAppend(r); else this.#index(r);
   }
 }
 
@@ -149,6 +183,44 @@ export class ConfirmationService<J> {
     this.#store.append(rec);
     this.#deps.previews.cancel(p.previewId);
     return { job: this.#deps.createJob(rec), confirmation: rec, replayed: false };
+  }
+
+  /**
+   * F29a：追加目标。预览必须绑定同一 jobId；同 requestId 重放返回原记录（响应丢失后重试仍关联原任务）；
+   * 不新建任务、不改 items/确认进度；新目标与已有目标不得重叠（旧目标不会再发）。
+   */
+  confirmAppend(input: AppendInput): { record: AppendRecord; replayed: boolean } {
+    if (!ID_RE.test(input.requestId ?? '')) throw new ConfirmError('INVALID', 'requestId 需为 8–128 位字母数字/_/-');
+    if (typeof input.previewId !== 'string' || typeof input.revision !== 'string' || typeof input.jobId !== 'string') throw new ConfirmError('INVALID', '缺 jobId/previewId/revision');
+    const fp = createHash('sha256').update(JSON.stringify(['append', input.jobId, input.previewId, input.revision, input.notifyOnComplete, input.acknowledged])).digest('hex');
+    const prior = this.#store.getAppend(input.requestId);
+    if (prior) {
+      if (prior.fingerprint !== fp) throw new ConfirmError('REQUEST_ID_CONFLICT', '同一 requestId 的确认内容不一致');
+      return { record: prior, replayed: true };
+    }
+    if (this.#store.get(input.requestId)) throw new ConfirmError('REQUEST_ID_CONFLICT', 'requestId 已用于其它确认');
+    if (this.#store.requestOfPreview(input.previewId)) throw new ConfirmError('PREVIEW_ALREADY_CONFIRMED', '这个预览已经确认过了');
+    const base = this.#store.byJob(input.jobId);
+    if (!base || base.t !== 'accepted' || this.#deps.findJob(input.jobId) === undefined) throw new ConfirmError('JOB_NOT_FOUND', '任务不存在或不是外传任务');
+    if (this.#deps.jobOpen && !this.#deps.jobOpen(input.jobId)) throw new ConfirmError('JOB_CLOSED', '任务已取消或失败，不能追加目标');
+    const p0 = this.#deps.previews.get(input.previewId);
+    if (p0 && p0.jobId !== input.jobId) throw new ConfirmError('PREVIEW_JOB_MISMATCH', '预览不属于该任务');
+    const current = p0 ? this.#deps.currentPhotoIds(p0.projectId, p0.photoIds) : [];
+    const chk = this.#deps.previews.check(input.previewId, input.revision, this.#deps.state(), current);
+    if (!chk.ok) throw new ConfirmError(chk.code, '预览已失效，请重新预览', chk.detail);
+    const p = chk.preview;
+    if (p.jobId !== input.jobId) throw new ConfirmError('PREVIEW_JOB_MISMATCH', '预览不属于该任务');
+    if (!p.targets.length) throw new ConfirmError('INVALID', '没有新增目标');
+    const have = new Set(this.#store.targetsOf(input.jobId).map((t) => `${t.connectorId}\u0000${t.targetId}`));
+    if (p.targets.some((t) => have.has(`${t.connectorId}\u0000${t.targetId}`))) throw new ConfirmError('TARGET_ALREADY_IN_JOB', '目标已在任务中；失败重试请用重试入口');
+    if (input.acknowledged !== true) throw new ConfirmError('CONSENT_REQUIRED', '有外部目标时需确认外传');
+    const record: AppendRecord = {
+      t: 'appended', requestId: input.requestId, jobId: input.jobId, previewId: p.previewId, revision: p.revision, fingerprint: fp,
+      targets: p.targets.map((t) => ({ ...t })), notifyOnComplete: input.notifyOnComplete, at: new Date(this.#now()).toISOString(),
+    };
+    this.#store.append(record);
+    this.#deps.previews.cancel(p.previewId);
+    return { record, replayed: false };
   }
 
   /** 启动恢复：对每条 accepted 记录幂等补建任务；授权已撤销的标 aborted。返回恢复/中止数。 */

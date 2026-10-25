@@ -30,6 +30,7 @@ export interface DeliveryApiDeps {
 const CONFIRM_STATUS: Record<string, number> = {
   INVALID: 400, CONSENT_REQUIRED: 400, REQUEST_ID_CONFLICT: 409, PREVIEW_ALREADY_CONFIRMED: 409, AUTHORIZATION_REVOKED: 409,
   PREVIEW_NOT_FOUND: 404, PREVIEW_EXPIRED: 410, PREVIEW_REVISION_MISMATCH: 409, PREVIEW_STALE: 409,
+  JOB_NOT_FOUND: 404, JOB_CLOSED: 409, PREVIEW_JOB_MISMATCH: 409, TARGET_ALREADY_IN_JOB: 409,
 };
 const RETRY_STATUS: Record<string, number> = { JOB_NOT_FOUND: 404, TARGET_NOT_IN_JOB: 400, NOTHING_TO_RETRY: 409, DUPLICATE_RISK: 409, ATTEMPT_IN_FLIGHT: 409 };
 
@@ -185,6 +186,44 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryApiDe
         });
       } catch (e) {
         if (e instanceof ConfirmError) return reply.code(CONFIRM_STATUS[e.code] ?? 400).send({ error: '确认失败', code: e.code, ...(e.detail ? { detail: e.detail } : {}) });
+        throw e;
+      }
+    });
+
+    // F29a：追加目标——预览绑定已有 jobId（照片/参数取原确认快照），零发送
+    scope.post('/api/v1/jobs/:id/delivery-previews', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body;
+      if (!isObj(b)) return err(reply, 400, 'INVALID_FIELD', '请求体不合法');
+      for (const k of Object.keys(b)) if (k !== 'targets') return err(reply, 400, 'UNKNOWN_FIELD', '不接受该字段');
+      const base = confirmations.store.byJob(id);
+      if (!base || base.t !== 'accepted') return err(reply, 404, 'JOB_NOT_FOUND', '任务不存在或不是外传任务');
+      if (!Array.isArray(b['targets']) || !b['targets'].length || b['targets'].length > 64) return err(reply, 400, 'INVALID_FIELD', 'targets 必填且非空');
+      let targets: TargetRef[];
+      try { targets = b['targets'].map((t, i) => parseTargetRef(t, `targets[${i}]`)); } catch (e) { return policyError(reply, e); }
+      const have = new Set(confirmations.store.targetsOf(id).map((t) => `${t.connectorId}\u0000${t.targetId}`));
+      if (targets.some((t) => have.has(`${t.connectorId}\u0000${t.targetId}`))) return err(reply, 409, 'TARGET_ALREADY_IN_JOB', '目标已在任务中；失败重试请用重试入口');
+      const r = deps.previews.create({ projectId: base.snapshot.projectId, photoIds: base.snapshot.photoIds, params: base.snapshot.params, targets, jobId: id }, { connectors: deps.connectors.current, policies: deps.policies.current });
+      if (!r.ok) return err(reply, r.code === 'EMPTY_SELECTION' ? 400 : 409, r.code, '目标不可用或未授权该项目，请重新选择');
+      const { photoIds: _ids, ...view } = r.preview;
+      return reply.code(201).send({ ...view, existingTargets: confirmations.store.targetsOf(id) });
+    });
+
+    scope.post('/api/v1/jobs/:id/delivery-appends', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body;
+      if (!isObj(b)) return err(reply, 400, 'INVALID', '请求体不合法');
+      for (const k of Object.keys(b)) if (!['previewId', 'revision', 'requestId', 'notifyOnComplete', 'acknowledged'].includes(k)) return err(reply, 400, 'UNKNOWN_FIELD', '不接受该字段');
+      if (typeof b['notifyOnComplete'] !== 'boolean' && b['notifyOnComplete'] !== undefined) return err(reply, 400, 'INVALID', 'notifyOnComplete 须为布尔');
+      try {
+        const r = confirmations.confirmAppend({
+          jobId: id, previewId: String(b['previewId'] ?? ''), revision: String(b['revision'] ?? ''), requestId: String(b['requestId'] ?? ''),
+          notifyOnComplete: b['notifyOnComplete'] === true, acknowledged: b['acknowledged'] === true,
+        });
+        const deliveries = r.replayed ? dispatcher.list(id) ?? [] : dispatcher.startAppend(r.record);
+        return reply.code(r.replayed ? 200 : 201).send({ accepted: true, replayed: r.replayed, requestId: r.record.requestId, jobId: id, targets: r.record.targets, deliveries });
+      } catch (e) {
+        if (e instanceof ConfirmError) return reply.code(CONFIRM_STATUS[e.code] ?? 400).send({ error: '追加失败', code: e.code, ...(e.detail ? { detail: e.detail } : {}) });
         throw e;
       }
     });
