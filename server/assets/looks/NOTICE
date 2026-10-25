@@ -1,0 +1,22 @@
+FrameFlow 内置胶片风格（assets/looks/*.cube）
+
+这些 3D LUT 由 RawTherapee Film Simulation HaldCLUT 合集转换而来（HaldCLUT PNG → 33³ .cube，
+转换脚本 server/tools/import-looks.mjs，未做其他调色修改）。
+
+原作品：RawTherapee Film Simulation collection
+作者：Pat David、Pavlov Dmitry、Michael Ezra
+许可：Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0），全文见同目录 LICENSE
+获取来源：https://github.com/cedeber/hald-clut ，revision 3b3180f82d4dcea1e6e8c5648473539a910d7f49
+原始说明：https://rawpedia.rawtherapee.com/Film_Simulation
+
+本目录中的 .cube 文件属于改编作品，同样以 CC BY-SA 4.0 发布。
+
+风格对应关系（名称为中性命名；胶卷名仅用于说明近似对象，与相关厂商无关联、未获其认可，
+商标归各自所有者）：
+  portrait160  ← Kodak Portra 160 2
+  portrait400  ← Kodak Portra 400 2
+  vivid100     ← Kodak Ektar 100
+  chrome64     ← Kodak Kodachrome 64
+  pastel400    ← Fuji 400H 2
+  everyday400  ← Fuji Superia 400 2
+  mono400      ← Kodak TRI-X 400 2
