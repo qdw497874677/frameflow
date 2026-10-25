@@ -54,3 +54,15 @@ test('源码只有三层加组装根', () => {
 test('依赖只指向内层', () => {
   assert.deepEqual(walk(SRC).flatMap(violations), []);
 });
+
+test('飞书模块只经 adapters/feishu/index.ts 对外', () => {
+  const entry = 'adapters/feishu/index.ts';
+  const leaks = walk(SRC)
+    .filter((f) => !rel(f).startsWith('adapters/feishu/'))
+    .flatMap((f) => importsOf(f)
+      .filter((spec) => spec.startsWith('.'))
+      .map((spec) => rel(path.resolve(path.dirname(f), spec)))
+      .filter((target) => target.startsWith('adapters/feishu/') && target !== entry)
+      .map((target) => `${rel(f)} → ${target}`));
+  assert.deepEqual(leaks, []);
+});
