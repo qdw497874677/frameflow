@@ -1,0 +1,9 @@
+[
+  { "id": "portrait160", "name": "Portrait 160", "inspiredBy": "近似 Kodak Portra 160" },
+  { "id": "portrait400", "name": "Portrait 400", "inspiredBy": "近似 Kodak Portra 400" },
+  { "id": "vivid100", "name": "Vivid 100", "inspiredBy": "近似 Kodak Ektar 100" },
+  { "id": "chrome64", "name": "Chrome 64", "inspiredBy": "近似 Kodak Kodachrome 64" },
+  { "id": "pastel400", "name": "Pastel 400", "inspiredBy": "近似 Fujifilm Pro 400H" },
+  { "id": "everyday400", "name": "Everyday 400", "inspiredBy": "近似 Fujifilm Superia 400" },
+  { "id": "mono400", "name": "Mono 400", "inspiredBy": "近似 Kodak Tri-X 400" }
+]
