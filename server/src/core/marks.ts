@@ -3,14 +3,16 @@
  *
  * 两个落点，各司其职：
  *  - **状态**落照片旁的 XMP（见 xmp.ts）—— 别的软件看得见，应用没了成果还在；
- *  - **每次实际变化**落 `dataDir/marks.jsonl`（追加型、不回改）—— 谁在什么时候把什么从什么改成了什么。
+ *  - **每次成功写入（包括同值确认）**落 `dataDir/marks.jsonl`（追加型、不回改）—— 谁在什么时候把什么从什么改成了什么。
  *    它是把批注任务推给外部渠道（飞书、其他客户端）、再把别人的批注并回来时的对账凭据。
  *
  * 降级：XMP 写不进去时（只读共享、相机卡、权限不够），状态退到 marks.jsonl，
- * 也就是「服务端日志成为这一张的真相」，能写的时候再回写 —— 不因为盘只读就让打星失败。
+ * 也就是「服务端日志成为这一张的真相」，后续显式写入可再尝试回写（恢复不自动写侧车）—— 不因为盘只读就让打星失败。
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { MarksLog, hash, validInput, validateRequest, type MarkEnvelope, type MarkEntry, type MarkTransactionRequest, type MarkTransactionResult, type MarksLogOptions } from './mark-transaction.ts';
 import { join } from 'node:path';
 import { writeXmpMarks, type XmpMarks } from './xmp.ts';
 
@@ -60,40 +62,38 @@ export interface MarkTarget {
   sidecarPath?: string | null;
 }
 
+const inputId = (item: unknown): string => item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' ? item.id : '';
 const clampStars = (n: number): number => Math.max(0, Math.min(5, Math.trunc(n) || 0));
 
 export class MarksStore {
-  private readonly logFile: string;
+  private readonly log: MarksLog;
   private readonly state = new Map<string, MarkState>();
-  /** 最新的在前 */
+  private readonly revisions = new Map<string, number>();
+  private readonly operations = new Map<string, { hash: string; result: MarkTransactionResult }>();
   private readonly changes: MarkChange[] = [];
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, options: MarksLogOptions = {}) {
     mkdirSync(dataDir, { recursive: true });
-    this.logFile = join(dataDir, 'marks.jsonl');
-    this.loadLog();
-  }
-
-  private loadLog(): void {
-    if (!existsSync(this.logFile)) return;
-    let text: string;
-    try {
-      text = readFileSync(this.logFile, 'utf8');
-    } catch {
-      return; // 日志读不动不致命：这一轮就先靠 XMP
-    }
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const ch = JSON.parse(line) as MarkChange;
-        if (!ch?.photoId || !ch.field) continue;
-        this.changes.unshift(ch);
-        this.applyToState(ch);
-      } catch {
-        // 半行（写到一半被杀）跳过
+    this.log = new MarksLog(join(dataDir, 'marks.jsonl'), options);
+    // MarksLog validates the full replay chain before any tail repair or recovery flush.
+    for (const row of this.log.rows) {
+      if ('version' in row) {
+        for (const entry of row.entries) {
+          this.state.set(entry.id, entry.state);
+          this.revisions.set(entry.id, entry.newRevision);
+          for (const ch of entry.changes) this.changes.unshift(ch);
+        }
+        this.operations.set(row.opId, { hash: row.requestHash, result: row.result });
+      } else {
+        this.changes.unshift(row);
+        this.applyToState(row);
+        this.revisions.set(row.photoId, this.revisionOf(row.photoId) + 1);
       }
     }
   }
+
+  get repair() { return this.log.repair; }
+  revisionOf(photoId: string): number { return this.revisions.get(photoId) ?? 0; }
 
   private applyToState(ch: MarkChange): void {
     const prev = this.state.get(ch.photoId) ?? { stars: 0, del: false, by: ch.by, channel: ch.channel, at: ch.at };
@@ -120,7 +120,8 @@ export class MarksStore {
   }
 
   get(photoId: string): MarkState | undefined {
-    return this.state.get(photoId);
+    const state = this.state.get(photoId);
+    return state && { ...state };
   }
 
   starsOf(photoId: string): number {
@@ -145,7 +146,7 @@ export class MarksStore {
     for (const ch of this.changes) {
       if (opts.photoId && ch.photoId !== opts.photoId) continue;
       if (opts.jobId && ch.jobId !== opts.jobId) continue;
-      out.push(ch);
+      out.push({ ...ch });
       if (out.length >= limit) break;
     }
     return out;
@@ -157,73 +158,96 @@ export class MarksStore {
    * 日志写失败不发布任何变更；XMP 写失败时，日志里必须有。
    */
   async apply(items: MarkInput[], lookup: (photoId: string) => MarkTarget | null): Promise<MarkResultDto[]> {
+    // Legacy API isolates invalid items, and historically permits omitted/undefined fields.
+    const normalized = (items as unknown[]).map(item => validInput(item) ? item : { id: inputId(item), del: null });
+    try {
+      const result = await this.commit({ opId: randomUUID(), items: JSON.parse(JSON.stringify(normalized)) }, lookup, true);
+      return result.results;
+    } catch (err) {
+      return items.map(item => ({ id: item?.id ?? '', ok: false, error: !validInput(item) ? 'INVALID_MARK_INPUT' :
+        !lookup(item.id) ? '不认识这张照片（可能刚被移走或重命名）' : `变更日志写不进去：${String(err)}` }));
+    }
+  }
+
+  /** Internal stable-op API. A committed replay never looks up a target or rewrites XMP.
+   * Results describe the durable commit; XMP warnings belong only to this invocation.
+   */
+  async transact(request: MarkTransactionRequest, lookup: (photoId: string) => MarkTarget | null): Promise<MarkTransactionResult> {
+    return this.commit(request, lookup, false);
+  }
+
+  private async commit(request: MarkTransactionRequest, lookup: (photoId: string) => MarkTarget | null, reportXmp: boolean): Promise<MarkTransactionResult> {
+    validateRequest(request);
+    this.log.assertWritable();
+    const requestHash = hash(request);
+    const previous = this.operations.get(request.opId);
+    if (previous) {
+      if (previous.hash !== requestHash) throw new Error('OP_ID_REUSED');
+      return structuredClone(previous.result);
+    }
+    for (const [id, expected] of Object.entries(request.expectedRevisions ?? {})) {
+      if (this.revisionOf(id) !== expected) throw new Error(`REVISION_CONFLICT: ${id}`);
+    }
     const now = new Date().toISOString();
     const results: MarkResultDto[] = [];
-    const lines: string[] = [];
     const stagedState = new Map<string, MarkState>();
-    const stagedChanges: MarkChange[] = [];
+    const stagedRevisions = new Map<string, number>();
+    const entries: MarkEntry[] = [];
     const xmpJobs: { sidecarPath: string; stars: number; del: boolean }[] = [];
 
-    for (const item of items) {
+    for (const item of request.items) {
+      if (!validInput(item)) {
+        results.push({ id: inputId(item), ok: false, error: 'INVALID_MARK_INPUT' });
+        continue;
+      }
       const target = lookup(item.id);
       if (!target) {
         results.push({ id: item.id, ok: false, error: '不认识这张照片（可能刚被移走或重命名）' });
         continue;
       }
-      // 同一批里的重复 id 必须接着前一项的暂存状态算变化。
       const prev = stagedState.get(item.id) ?? this.state.get(item.id);
       const by = item.by ?? 'me';
       const channel = item.channel ?? 'inapp';
       const at = item.at ?? now;
       const jobId = item.jobId ?? null;
-
       let stars = clampStars(item.stars ?? prev?.stars ?? 0);
       let del = item.del ?? prev?.del ?? false;
-      if (del) stars = 0; // 互斥：待删优先
+      if (del) stars = 0;
       else if (stars > 0) del = false;
-
-      const prevStars = prev?.stars ?? 0;
-      const prevDel = prev?.del ?? false;
       const changed: MarkChange[] = [];
-      if (stars !== prevStars) {
-        changed.push({ photoId: item.id, displayName: target.displayName, field: 'stars', from: prevStars, to: stars, by, channel, at, jobId });
-      }
-      if (del !== prevDel) {
-        changed.push({ photoId: item.id, displayName: target.displayName, field: 'del', from: prevDel, to: del, by, channel, at, jobId });
-      }
-
-      stagedState.set(item.id, { stars, del, by, channel, at });
-      for (const ch of changed) {
-        lines.push(JSON.stringify(ch));
-        stagedChanges.push(ch);
-      }
+      const common = { photoId: item.id, ...(target.displayName === undefined ? {} : { displayName: target.displayName }), by, channel, at, jobId };
+      if (stars !== (prev?.stars ?? 0)) changed.push({ ...common, field: 'stars', from: prev?.stars ?? 0, to: stars });
+      if (del !== (prev?.del ?? false)) changed.push({ ...common, field: 'del', from: prev?.del ?? false, to: del });
+      const state = { stars, del, by, channel, at };
+      const expectedRevision = stagedRevisions.get(item.id) ?? this.revisionOf(item.id);
+      const newRevision = expectedRevision + 1;
+      if (!Number.isSafeInteger(newRevision)) throw new Error('MARK_REVISION_EXHAUSTED');
+      entries.push({ id: item.id, expectedRevision, newRevision, state, changes: changed });
+      stagedState.set(item.id, state);
+      stagedRevisions.set(item.id, newRevision);
       if (target.sidecarPath) xmpJobs.push({ sidecarPath: target.sidecarPath, stars, del });
-
       results.push({ id: item.id, ok: true, stars, del, error: null });
     }
-
-    if (lines.length) {
-      try {
-        appendFileSync(this.logFile, `${lines.join('\n')}\n`, 'utf8');
-      } catch (err) {
-        return results.map((r) => (r.ok ? { ...r, ok: false, error: `变更日志写不进去：${String(err)}` } : r));
-      }
-    }
-
+    const result: MarkTransactionResult = { opId: request.opId, results, revisions: Object.fromEntries(stagedRevisions) };
+    const body = { version: 1 as const, kind: 'mark-transaction' as const, opId: request.opId, requestHash, entries,
+      ...(request.confirmation === undefined ? {} : { confirmation: structuredClone(request.confirmation) }), result };
+    const envelope: MarkEnvelope = { ...body, checksum: hash(body) };
+    this.log.append(envelope);
     for (const [id, state] of stagedState) this.state.set(id, state);
-    for (const ch of stagedChanges) this.changes.unshift(ch);
+    for (const [id, revision] of stagedRevisions) this.revisions.set(id, revision);
+    for (const entry of entries) for (const ch of entry.changes) this.changes.unshift(ch);
+    this.operations.set(request.opId, { hash: requestHash, result: structuredClone(result) });
 
-    // 回写 XMP：失败不改状态（日志已经是真相），只在结果里说一声。
-    // 异步：侧车在照片目录里，而照片目录可能在网络挂载上（同步写会把事件循环冻住）
+    // No await before the durable index/publication. Concurrent duplicate calls replay it.
     const failed = new Map<string, string>();
     for (const job of xmpJobs) {
-      try {
-        await writeXmpMarks(job.sidecarPath, { stars: job.stars, del: job.del });
-      } catch (err) {
+      try { await writeXmpMarks(job.sidecarPath, { stars: job.stars, del: job.del }); }
+      catch (err) {
         failed.set(job.sidecarPath, String(err));
+        if (!reportXmp) console.warn('MARKS_XMP_WRITE_FAILED', request.opId, String(err));
       }
     }
-    if (failed.size) {
+    if (reportXmp && failed.size) {
       const sample = failed.values().next().value ?? '';
       for (const r of results) {
         const target = lookup(r.id);
@@ -232,6 +256,6 @@ export class MarksStore {
         }
       }
     }
-    return results;
+    return result;
   }
 }

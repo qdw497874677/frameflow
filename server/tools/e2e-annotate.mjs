@@ -506,7 +506,10 @@ const audit = await req(`/marks/history?jobId=${jobId}&limit=200`);
 const kinds = (audit.body?.items ?? []).map((c) => `${c.by}/${c.channel}`);
 check(new Set(kinds).size >= 2, '一次往返在日志里留下两个来源（批注人 + 自己回滚）', [...new Set(kinds)].join(','));
 const jsonl = readFileSync(join(DATA_DIR, 'marks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-check(jsonl.some((c) => c.by === 'link:老婆' && c.jobId === jobId), '落盘也在：marks.jsonl 里能看到 link:老婆 + jobId', `${jsonl.length} 行`);
+// 旧格式每行一个变更；新格式每行一个可靠提交，变更仍需实际存在于落盘envelope中。
+const persistedChanges = jsonl.flatMap(row => row.version === 1 && row.kind === 'mark-transaction'
+  ? row.entries.flatMap(entry => entry.changes) : [row]);
+check(persistedChanges.some((c) => c.by === 'link:老婆' && c.jobId === jobId), '落盘也在：marks.jsonl 里能看到 link:老婆 + jobId', `${jsonl.length} 行、${persistedChanges.length} 个变更`);
 
 // ── 8. 范围 token 绑在签发它的 API token 上 ───────────────────────────────
 console.log('\n── 撤销签发它的 API token，链接立刻作废 ──');

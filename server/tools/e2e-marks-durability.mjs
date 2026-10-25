@@ -86,7 +86,13 @@ test('duplicate IDs use staged values and unchanged repeats do not add history',
   ]);
   const persisted = readFileSync(log, 'utf8');
   await store.apply([{ id: 'photo', stars: 3 }], lookup);
-  assert.equal(readFileSync(log, 'utf8'), persisted);
+  // F03: same-value writes commit a new full-state revision, but no fake changes.
+  const after = readFileSync(log, 'utf8');
+  assert.ok(after.startsWith(persisted));
+  const confirmation = JSON.parse(after.slice(persisted.length));
+  assert.equal(confirmation.version, 1);
+  assert.equal(confirmation.entries[0].newRevision, 5);
+  assert.deepEqual(confirmation.entries[0].changes, []);
   assert.deepEqual(new MarksStore(data).list(), store.list());
   assert.equal(new MarksStore(data).starsOf('photo'), 3);
   assert.deepEqual(await readXmpMarks(sidecar), { stars: 3 });
