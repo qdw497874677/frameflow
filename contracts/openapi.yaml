@@ -502,6 +502,94 @@ paths:
       responses:
         "200": { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Channel" } } } } } } }
 
+  /connectors:
+    get:
+      summary: 连接器实例列表（脱敏 + 运行状态）
+      description: |
+        只放已登录的管理 session（bearer/链接/范围 token 一律 403 `SESSION_REQUIRED`）；未设应用密码 403 `PASSWORD_REQUIRED`。
+        响应只有 `secretConfigured`，永不回传 Secret。
+      x-implemented: true
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorPage" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: 新建连接器（强制 disabled；body 不允许原始 Secret）
+      description: "写操作要求同源（Origin 与 Host 一致，或 Sec-Fetch-Site=same-origin），否则 403 CSRF_REJECTED。"
+      x-implemented: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, instance]
+              properties:
+                expectedRevision: { type: integer }
+                instance: { $ref: "#/components/schemas/ConnectorInstanceInput" }
+      responses:
+        "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorMutation" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /connectors/{id}:
+    patch:
+      summary: 修改配置/启停（携带 expectedRevision）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, patch]
+              properties:
+                expectedRevision: { type: integer }
+                patch: { type: object, description: "可改字段：label/appId/secretEnv/tenantId/enabled/targets/creatorActorIds/creatorProjectIds" }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorMutation" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: 删除连接器（启用中 409 CONNECTOR_ENABLED；被引用 409 CONNECTOR_REFERENCED；不级联删任务）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: expectedRevision, in: query, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, required: [revision], properties: { revision: { type: integer } } } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /connectors/{id}/test:
+    post:
+      summary: 测试连接（仅验证凭据/连接，不发送任何消息）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorVerifyResult" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /connectors/{id}/targets:
+    get:
+      summary: 已配置的接收目标（不拉取通讯录）
+      x-implemented: true
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/ConnectorTarget" } } } } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     session:
@@ -828,3 +916,67 @@ components:
         error: { type: string, description: 机器可读错误码 }
         message: { type: string }
         detail: { type: object, additionalProperties: true }
+        code: { type: string, description: 连接器接口的稳定错误代码（如 REVISION_CONFLICT） }
+
+    ConnectorTarget:
+      type: object
+      required: [id, connectorId, label, kind, externalId, projectIds, allowedActorIds, canAnnotate, canRequestJpeg]
+      properties:
+        id: { type: string }
+        connectorId: { type: string }
+        label: { type: string }
+        kind: { type: string, enum: [group, user] }
+        externalId: { type: string, description: 飞书 chat_id / open_id }
+        projectIds: { type: array, items: { type: string } }
+        allowedActorIds: { type: array, items: { type: string } }
+        canAnnotate: { type: boolean }
+        canRequestJpeg: { type: boolean }
+    ConnectorInstanceInput:
+      type: object
+      required: [id, kind, label, appId, secretEnv, tenantId, targets, creatorActorIds, creatorProjectIds]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [feishu] }
+        label: { type: string }
+        appId: { type: string }
+        secretEnv: { type: string, description: 存放 Secret 的环境变量名（不是 Secret 本身） }
+        tenantId: { type: string, nullable: true }
+        enabled: { type: boolean, enum: [false] }
+        targets: { type: array, items: { $ref: "#/components/schemas/ConnectorTarget" } }
+        creatorActorIds: { type: array, items: { type: string } }
+        creatorProjectIds: { type: array, items: { type: string } }
+    ConnectorStatus:
+      type: object
+      required: [state]
+      properties:
+        state: { type: string, enum: [disabled, connecting, connected, degraded, error] }
+        reason: { type: string }
+        lastConnectedAt: { type: string, format: date-time }
+    Connector:
+      allOf:
+        - { $ref: "#/components/schemas/ConnectorInstanceInput" }
+        - type: object
+          required: [enabled, secretConfigured, status]
+          properties:
+            enabled: { type: boolean }
+            secretConfigured: { type: boolean }
+            status: { $ref: "#/components/schemas/ConnectorStatus" }
+    ConnectorPage:
+      type: object
+      required: [revision, items, nextCursor]
+      properties:
+        revision: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/Connector" } }
+        nextCursor: { type: string, nullable: true }
+    ConnectorMutation:
+      type: object
+      required: [revision, item]
+      properties:
+        revision: { type: integer }
+        item: { $ref: "#/components/schemas/Connector" }
+    ConnectorVerifyResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        code: { type: string }
