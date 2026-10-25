@@ -47,6 +47,15 @@ export class SessionStore {
   constructor(dataDir: string) {
     this.#log = new JsonlLog<Row>(path.join(dataDir, 'feishu', 'sessions.jsonl'));
     for (const r of this.#log.load()) this.#apply(r);
+    this.#compact();
+  }
+
+  /** message 行折叠进 session 行；revoke 行保留（撤销必须跨重启生效） */
+  #compact(): void {
+    this.#log.compactIfNeeded(this.#byId.size + this.#revoked.size, () => [
+      ...[...this.#byId.values()].map((s): Row => ({ t: 'session', s })),
+      ...[...this.#revoked].map((sessionId): Row => ({ t: 'revoke', sessionId })),
+    ]);
   }
 
   #apply(r: Row): void {
@@ -60,6 +69,7 @@ export class SessionStore {
     const row: Row = { t: 'session', s };
     this.#log.append(row);
     this.#apply(row);
+    this.#compact();
     return s;
   }
 
@@ -69,6 +79,7 @@ export class SessionStore {
     const row: Row = { t: 'message', sessionId, messageId };
     this.#log.append(row);
     this.#apply(row);
+    this.#compact();
   }
 
   get(sessionId: string): CardSession | undefined { return this.#byId.get(sessionId); }
@@ -79,6 +90,7 @@ export class SessionStore {
     const row: Row = { t: 'revoke', sessionId };
     this.#log.append(row);
     this.#apply(row);
+    this.#compact();
   }
 
   revoked(sessionId: string): boolean { return this.#revoked.has(sessionId); }

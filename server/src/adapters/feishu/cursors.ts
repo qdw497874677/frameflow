@@ -22,12 +22,16 @@ export class CursorStore {
   constructor(dataDir: string) {
     this.#log = new JsonlLog<TargetCursor>(path.join(dataDir, 'feishu', 'cursors.jsonl'));
     for (const c of this.#log.load()) this.#map.set(key(c.jobId, c.targetId), c);
+    this.#compact();
   }
+  /** 每个 (job, target) 只保留最后一行 */
+  #compact(): void { this.#log.compactIfNeeded(this.#map.size, () => [...this.#map.values()]); }
   get(jobId: string, targetId: string): TargetCursor | undefined { return this.#map.get(key(jobId, targetId)); }
   set(c: Omit<TargetCursor, 'at'>, now = Date.now()): TargetCursor {
     const row = { ...c, at: now };
     this.#log.append(row);
     this.#map.set(key(c.jobId, c.targetId), row);
+    this.#compact();
     return row;
   }
   listJob(jobId: string): TargetCursor[] { return [...this.#map.values()].filter((c) => c.jobId === jobId); }
