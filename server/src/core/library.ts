@@ -28,6 +28,7 @@ import {
   type TrashEntryDto,
 } from './dto.ts';
 import { dirPath, parseDirPath } from './ids.ts';
+import { sourceGeneration, verifySourceGeneration } from './source-generation.ts';
 import { MarksStore, type MarkChange, type MarkInput, type MarkResultDto } from './marks.ts';
 import type { PhotoRecord } from './photo.ts';
 import { matchesSelection, selectionIsEmpty, type Selection } from './selection.ts';
@@ -208,7 +209,9 @@ export class Library {
       this.fileCount = res.fileCount;
       this.records = new Map(res.records.map((r) => [r.id, r]));
       this.reindex();
-      // 照片旁的 XMP 作为基线（日志里已有更晚记录的不会被覆盖）
+      // F04：先绑定源版本（同路径换源 → 旧状态只留审计），再用照片旁的 XMP 作为基线
+      // （同源已提交事务优先：日志里已有记录的不会被旧 XMP 覆盖）
+      for (const rec of res.records) this.marks.bindGeneration(rec.id, sourceGeneration(rec));
       for (const rec of res.records) {
         if (rec.stars > 0 || rec.del) this.marks.seedFromXmp(rec.id, { stars: rec.stars, del: rec.del });
       }
@@ -914,10 +917,17 @@ export class Library {
   // ── 标注 ────────────────────────────────────────────────────────────────
 
   async applyMarks(items: MarkInput[]): Promise<MarkResultDto[]> {
+    // F04：写入前重新确认源可达并取当下版本；不可达不确认，也不把未验证缓存写回 XMP。
+    const verified = new Map<string, string | null>();
+    await Promise.all([...new Set(items.map((i) => i?.id).filter((id): id is string => typeof id === 'string'))].map(async (id) => {
+      const rec = this.records.get(id);
+      if (rec) verified.set(id, await verifySourceGeneration(rec));
+    }));
     const results = await this.marks.apply(items, (id) => {
       const rec = this.records.get(id);
       if (!rec) return null;
-      return { displayName: rec.displayName, sidecarPath: this.sidecarPath(rec) };
+      const generation = verified.has(id) ? verified.get(id)! : sourceGeneration(rec);
+      return { displayName: rec.displayName, sidecarPath: generation === null ? null : this.sidecarPath(rec), generation };
     });
     // 内存里的记录跟着走，免得下次扫描之前列表是旧的
     for (const r of results) {

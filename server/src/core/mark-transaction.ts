@@ -8,6 +8,8 @@ export interface MarkTransactionRequest {
   items: MarkInput[];
   /** Checked against the pre-batch revision, including when a photo occurs twice. */
   expectedRevisions?: Record<string, number>;
+  /** F04：调用方看到的源版本；与当前不同则 SOURCE_GENERATION_CONFLICT。 */
+  expectedGenerations?: Record<string, string>;
   confirmation?: Record<string, unknown>;
 }
 export interface MarkTransactionResult {
@@ -21,6 +23,8 @@ export interface MarkEntry {
   newRevision: number;
   state: MarkState;
   changes: MarkChange[];
+  /** F04：该状态所属的源版本；旧记录无此字段（兼容基线）。 */
+  generation?: string;
 }
 export interface MarkEnvelope {
   version: 1;
@@ -72,6 +76,7 @@ export function validInput(v: unknown): v is MarkInput {
 export function validateRequest(r: MarkTransactionRequest): void {
   if (!object(r) || !id(r.opId) || r.opId.length > 200 || !Array.isArray(r.items) ||
       (r.expectedRevisions !== undefined && (!object(r.expectedRevisions) || !Object.entries(r.expectedRevisions).every(([k, v]) => id(k) && revision(v)))) ||
+      (r.expectedGenerations !== undefined && (!object(r.expectedGenerations) || !Object.entries(r.expectedGenerations).every(([k, v]) => id(k) && id(v)))) ||
       (r.confirmation !== undefined && !object(r.confirmation))) throw new Error('INVALID_MARK_TRANSACTION');
   canonical(r); // Internal callers must send a lossless JSON request.
 }
@@ -101,7 +106,8 @@ export function parseRow(line: string): MarkChange | MarkEnvelope {
           e.newRevision !== e.expectedRevision + 1 || !object(e.state) || !stars(e.state.stars) ||
           typeof e.state.del !== 'boolean' || (e.state.del && e.state.stars !== 0) ||
           !['by', 'channel', 'at'].every(k => text((e.state as Record<string, unknown>)[k])) ||
-          !Array.isArray(e.changes) || !e.changes.every(c => validChange(c) && c.photoId === e.id)) throw Error();
+          !Array.isArray(e.changes) || !e.changes.every(c => validChange(c) && c.photoId === e.id) ||
+          (e.generation !== undefined && !id(e.generation))) throw Error();
     }
     for (const r of v.result.results) {
       if (!object(r) || !text(r.id) || typeof r.ok !== 'boolean' ||
