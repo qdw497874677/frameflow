@@ -47,7 +47,7 @@ git diff --check
 - 验证：`(cd server && node --test tools/marks-transaction.test.mjs && node tools/e2e-marks-durability.mjs)`。
 - 完成：新旧混合日志显式校验、同值操作也推进revision；原有“同值不追加日志”断言改为“同值新意图追加事务但不增加可视历史”，保留原失败/重复ID断言。独立复核后先RED再修稀疏数组、有损UTF-8、完整行语义损坏前误修尾行；防御性复制回归通过。事务13/13、旧持久化3/3，最终独立静态评审无阻塞；提交 `029f0fd`。F04源身份与F05锁未提前实现，不能据此部署真实连接器。
 
-### [ ] 检查点 A — 风险验证
+### [x] 检查点 A — 风险验证
 F01–F03通过并独立复核，形成SDK字段证据与磁盘失败矩阵；不接真实飞书。缺失能力/恢复保证必须先修计划。**人工确认继续。**
 
 基础回归（2026-10-23，F03变更前）：旧marks持久化3/3、隔离jobs 81/0、隔离annotate 94/0、项目树真实浏览器回归通过；前端类型与构建通过（既有>500kB体积警告）。只使用临时实例/测试库，未重启8787。F03完成后须在最终代码版本重新执行，不能沿用此基线成绩。
@@ -60,27 +60,32 @@ F01–F03通过并独立复核，形成SDK字段证据与磁盘失败矩阵；�
 
 检查点A最终证据（2026-10-23）：F01 9/9 + F02 19/19 + F03事务13/13 + 旧持久化3/3，共44/44；隔离jobs 81/81、annotate 94/94；前后端类型检查、前端构建、项目树真实浏览器回归均通过。隔离e2e只替换副本的临时路径/端口，没有改断言：`/tmp/frameflow-checkpoint-a-a3npo28g`；浏览器日志 `/tmp/checkpoint-a-navigation.log`。既有前端包>500kB警告及Fastify low审计项仍存在。F01/F02/F03复核全部无剩余阻塞；仍需人工确认检查点A，未开始F04。
 
+**人工确认（2026-10-25）：用户确认检查点A通过，同意tenantId与ID格式选择，继续阶段B起。**
+
 ## 阶段 B：源版本与公共并发边界（V0/V4基础）
 
-### [ ] F04 — 标记绑定源 generation
+### [x] F04 — 标记绑定源 generation
 - 模块：feishu-interaction；验收：FI-03/04/05/09。依赖：F03。
 - 验收：①同源重启版本稳定，同路径换源产生新generation，旧状态只留审计；②不可达源不确认，不将未验证缓存写回XMP；③同源已提交事务优先于旧XMP，旧无generation数据按兼容规则建立基线。
 - 文件：`server/src/core/mark-transaction.ts`、`server/src/core/marks.ts`、`server/src/core/library.ts`、`server/src/core/source-generation.ts`、`server/tools/marks-generation.test.mjs`。
 - 验证：`(cd server && node --test tools/marks-generation.test.mjs)`；包含同路径替换、提交后XMP前崩溃和失联恢复。
+- 完成（2026-10-25）：source-generation(path/size/mtime sha256)；marks绑定generation，换源不继承旧状态只留审计，不可达返回SOURCE_UNAVAILABLE不写XMP；marks-generation 6/6、jobs 81/81、annotate 94/94。
 
-### [ ] F05 — 照片写入与回收站共用串行边界
+### [x] F05 — 照片写入与回收站共用串行边界
 - 模块：feishu-interaction；验收：FI-03/05/09。依赖：F04。
 - 验收：①普通写标、回收站清标/移动/还原/真删共用photo gate，锁内检查源与可访问性；②XMP按照片有序，失败可诊断且旧值不能晚写覆盖新值；③已持锁内部方法不重入死锁，一张挂载慢不阻塞别的项目。
 - 文件：`server/src/core/operation-gates.ts`、`server/src/core/library.ts`、`server/src/core/marks.ts`、`server/src/api/server.ts`、`server/tools/photo-gates.test.mjs`。
 - 验证：`(cd server && node --test tools/photo-gates.test.mjs && node tools/e2e-marks-durability.mjs)`；真删仅用临时库。
+- 完成（2026-10-25）：operation-gates按key串行、排序加锁、AsyncLocalStorage可重入；applyMarks/移入/还原/真删共用photo gate且锁内复核源；photo-gates 5/5、durability 3/3。
 
-### [ ] F06 — 任务取消、撤销与回流共用 job gate
+### [x] F06 — 任务取消、撤销与回流共用 job gate
 - 模块：feishu-interaction；验收：FI-03/04/05/09。依赖：F05。
 - 验收：①cancel/undo/旧inbound按job→photo顺序执行，锁内重新检查终态与undone；②普通标记不反向取job锁，竞争测试无死锁；③旧任务完成/撤销/重复回执语义不退化。
 - 文件：`server/src/jobs/service.ts`、`server/src/jobs/annotate.ts`、`server/src/core/operation-gates.ts`、`server/tools/job-gates.test.mjs`。
 - 验证：`(cd server && node --test tools/job-gates.test.mjs && node tools/e2e-jobs.mjs && node tools/e2e-annotate.mjs)`。
+- 完成（2026-10-25）：cancel/undo/inbound改用job gate（替代原inboundLocks），锁内重读状态；持photo再取job锁即GATE_ORDER_VIOLATION；job-gates 3/3、jobs 81/81、annotate 94/94。
 
-### [ ] 检查点 B — 写入基础安全
+### [x] 检查点 B — 写入基础安全
 F04–F06的换源、并发与旧任务回归通过；复核锁的持有范围，不允许以“单线程”代替并发证明。先提交可独立运行的兼容基础，连接器仍未启用。
 
 ## 阶段 C：管理端口与受控配置（V1）

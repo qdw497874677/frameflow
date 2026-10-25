@@ -60,6 +60,11 @@ export interface MarkResultDto {
 export interface MarkTarget {
   displayName?: string;
   sidecarPath?: string | null;
+  /**
+   * F04：锁内刚复核的源版本。`null` = 源不可达，拒绝确认且不回写 XMP；
+   * `undefined` = 调用方不做源绑定（旧调用兼容）。
+   */
+  generation?: string | null;
 }
 
 const inputId = (item: unknown): string => item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' ? item.id : '';
@@ -69,6 +74,8 @@ export class MarksStore {
   private readonly log: MarksLog;
   private readonly state = new Map<string, MarkState>();
   private readonly revisions = new Map<string, number>();
+  /** 每张照片当前绑定的源版本；无记录 = 旧数据，按首次见到的版本建立基线。 */
+  private readonly generations = new Map<string, string>();
   private readonly operations = new Map<string, { hash: string; result: MarkTransactionResult }>();
   private readonly changes: MarkChange[] = [];
 
@@ -81,6 +88,7 @@ export class MarksStore {
         for (const entry of row.entries) {
           this.state.set(entry.id, entry.state);
           this.revisions.set(entry.id, entry.newRevision);
+          if (entry.generation) this.generations.set(entry.id, entry.generation);
           for (const ch of entry.changes) this.changes.unshift(ch);
         }
         this.operations.set(row.opId, { hash: row.requestHash, result: row.result });
@@ -101,6 +109,23 @@ export class MarksStore {
     if (ch.field === 'stars') next.stars = typeof ch.to === 'number' ? ch.to : 0;
     if (ch.field === 'del') next.del = ch.to === true;
     this.state.set(ch.photoId, next);
+  }
+
+  generationOf(photoId: string): string | undefined { return this.generations.get(photoId); }
+
+  /**
+   * F04：扫描后绑定源版本。旧数据（无版本）采用首个见到的版本为基线；
+   * 版本变化（同路径换源）→ 旧状态只留在日志里审计，内存状态清空，改由新文件的 XMP 建立基线。
+   * revision 链继续递增（不重置），旧卡片的 expectedRevision 自然冲突。
+   */
+  bindGeneration(photoId: string, generation: string | null): 'adopted' | 'same' | 'replaced' | 'skipped' {
+    if (!generation) return 'skipped';
+    const current = this.generations.get(photoId);
+    if (current === generation) return 'same';
+    this.generations.set(photoId, generation);
+    if (current === undefined) return 'adopted';
+    this.state.delete(photoId);
+    return 'replaced';
   }
 
   /**
@@ -188,10 +213,14 @@ export class MarksStore {
     for (const [id, expected] of Object.entries(request.expectedRevisions ?? {})) {
       if (this.revisionOf(id) !== expected) throw new Error(`REVISION_CONFLICT: ${id}`);
     }
+    for (const [id, expected] of Object.entries(request.expectedGenerations ?? {})) {
+      if (this.generations.get(id) !== expected) throw new Error(`SOURCE_GENERATION_CONFLICT: ${id}`);
+    }
     const now = new Date().toISOString();
     const results: MarkResultDto[] = [];
     const stagedState = new Map<string, MarkState>();
     const stagedRevisions = new Map<string, number>();
+    const stagedGenerations = new Map<string, string>();
     const entries: MarkEntry[] = [];
     const xmpJobs: { sidecarPath: string; stars: number; del: boolean }[] = [];
 
@@ -205,7 +234,14 @@ export class MarksStore {
         results.push({ id: item.id, ok: false, error: '不认识这张照片（可能刚被移走或重命名）' });
         continue;
       }
-      const prev = stagedState.get(item.id) ?? this.state.get(item.id);
+      if (target.generation === null) {
+        results.push({ id: item.id, ok: false, error: 'SOURCE_UNAVAILABLE：照片源当前不可达，未确认' });
+        continue;
+      }
+      const bound = stagedGenerations.get(item.id) ?? this.generations.get(item.id);
+      // 源已更换但尚未重扫：旧状态不继承，从零开始（旧值仅审计）。
+      const replaced = target.generation !== undefined && bound !== undefined && bound !== target.generation;
+      const prev = stagedState.get(item.id) ?? (replaced ? undefined : this.state.get(item.id));
       const by = item.by ?? 'me';
       const channel = item.channel ?? 'inapp';
       const at = item.at ?? now;
@@ -222,7 +258,9 @@ export class MarksStore {
       const expectedRevision = stagedRevisions.get(item.id) ?? this.revisionOf(item.id);
       const newRevision = expectedRevision + 1;
       if (!Number.isSafeInteger(newRevision)) throw new Error('MARK_REVISION_EXHAUSTED');
-      entries.push({ id: item.id, expectedRevision, newRevision, state, changes: changed });
+      const generation = target.generation ?? bound;
+      entries.push({ id: item.id, expectedRevision, newRevision, state, changes: changed, ...(generation ? { generation } : {}) });
+      if (generation) stagedGenerations.set(item.id, generation);
       stagedState.set(item.id, state);
       stagedRevisions.set(item.id, newRevision);
       if (target.sidecarPath) xmpJobs.push({ sidecarPath: target.sidecarPath, stars, del });
@@ -235,6 +273,7 @@ export class MarksStore {
     this.log.append(envelope);
     for (const [id, state] of stagedState) this.state.set(id, state);
     for (const [id, revision] of stagedRevisions) this.revisions.set(id, revision);
+    for (const [id, generation] of stagedGenerations) this.generations.set(id, generation);
     for (const entry of entries) for (const ch of entry.changes) this.changes.unshift(ch);
     this.operations.set(request.opId, { hash: requestHash, result: structuredClone(result) });
 

@@ -28,6 +28,8 @@ import {
   type TrashEntryDto,
 } from './dto.ts';
 import { dirPath, parseDirPath } from './ids.ts';
+import { OperationGates } from './operation-gates.ts';
+import { sourceGeneration, verifySourceGeneration } from './source-generation.ts';
 import { MarksStore, type MarkChange, type MarkInput, type MarkResultDto } from './marks.ts';
 import type { PhotoRecord } from './photo.ts';
 import { matchesSelection, selectionIsEmpty, type Selection } from './selection.ts';
@@ -122,6 +124,8 @@ export class Library {
   readonly trash: TrashStore;
   /** 预览缓存的容量策略（票 013）：上限 + 按 atime 的 LRU 淘汰 */
   readonly cache: CacheJanitor;
+  /** F05：标记与回收站共用的照片串行边界（F06 的 job gate 也用它，顺序 job → photo） */
+  readonly gates: OperationGates;
 
   private readonly cfg: Config;
   private records = new Map<string, PhotoRecord>();
@@ -149,6 +153,7 @@ export class Library {
 
   constructor(cfg: Config) {
     this.cfg = cfg;
+    this.gates = new OperationGates();
     mkdirSync(cfg.dataDir, { recursive: true });
     this.thumbs = new Thumbs(cfg.dataDir);
     this.marks = new MarksStore(cfg.dataDir);
@@ -208,7 +213,9 @@ export class Library {
       this.fileCount = res.fileCount;
       this.records = new Map(res.records.map((r) => [r.id, r]));
       this.reindex();
-      // 照片旁的 XMP 作为基线（日志里已有更晚记录的不会被覆盖）
+      // F04：先绑定源版本（同路径换源 → 旧状态只留审计），再用照片旁的 XMP 作为基线
+      // （同源已提交事务优先：日志里已有记录的不会被旧 XMP 覆盖）
+      for (const rec of res.records) this.marks.bindGeneration(rec.id, sourceGeneration(rec));
       for (const rec of res.records) {
         if (rec.stars > 0 || rec.del) this.marks.seedFromXmp(rec.id, { stars: rec.stars, del: rec.del });
       }
@@ -689,13 +696,16 @@ export class Library {
     const failed: OpFailureDto[] = [];
     let ok = 0;
     for (const id of ids) {
-      const rec = this.records.get(id);
-      if (!rec) {
-        failed.push({ id, error: this.trashedById.has(id) ? '已经在回收站里了' : '找不到这张照片' });
-        continue;
-      }
       try {
-        await this.trashOne(rec);
+        // 锁内重新取记录并复核源可达：排队期间可能已被移走/换源/失联
+        const err = await this.gates.run([OperationGates.photo(id)], async () => {
+          const rec = this.records.get(id);
+          if (!rec) return this.trashedById.has(id) ? '已经在回收站里了' : '找不到这张照片';
+          if ((await verifySourceGeneration(rec)) === null) return 'SOURCE_UNAVAILABLE：照片源当前不可达';
+          await this.trashOne(rec);
+          return null;
+        });
+        if (err) { failed.push({ id, error: err }); continue; }
         ok++;
       } catch (err) {
         failed.push({ id, error: err instanceof Error ? err.message : String(err) });
@@ -783,17 +793,18 @@ export class Library {
   }
 
   /** 从回收站拿回来：能回原目录就回，位子被占了就排号 —— 绝不覆盖别人的文件 */
-  restoreFromTrash(ids: string[]): OpResultDto {
+  async restoreFromTrash(ids: string[]): Promise<OpResultDto> {
     const failed: OpFailureDto[] = [];
     let ok = 0;
     for (const id of ids) {
-      const entry = this.trash.get(id);
-      if (!entry) {
-        failed.push({ id, error: '回收站里没有这张' });
-        continue;
-      }
       try {
-        this.untrashOne(entry);
+        const done = await this.gates.run([OperationGates.photo(id)], () => {
+          const entry = this.trash.get(id);
+          if (!entry) return false;
+          this.untrashOne(entry);
+          return true;
+        });
+        if (!done) { failed.push({ id, error: '回收站里没有这张' }); continue; }
         ok++;
       } catch (err) {
         failed.push({ id, error: err instanceof Error ? err.message : String(err) });
@@ -846,20 +857,21 @@ export class Library {
   }
 
   /** 真删（唯一会 `rmSync` 的地方）。`ids` 为空 = 清空整个回收站。 */
-  emptyTrash(ids?: string[]): OpResultDto {
+  async emptyTrash(ids?: string[]): Promise<OpResultDto> {
     const wanted = ids && ids.length ? ids : this.trash.list().map((t) => t.photoId);
     const failed: OpFailureDto[] = [];
     let ok = 0;
     for (const id of wanted) {
-      const entry = this.trash.get(id);
-      if (!entry) {
-        failed.push({ id, error: '回收站里没有这张' });
-        continue;
-      }
       try {
-        removeTrashDir(entry.diskDir);
-        this.trashedById.delete(id);
-        this.trash.remove(id);
+        const done = await this.gates.run([OperationGates.photo(id)], () => {
+          const entry = this.trash.get(id);
+          if (!entry) return false;
+          removeTrashDir(entry.diskDir);
+          this.trashedById.delete(id);
+          this.trash.remove(id);
+          return true;
+        });
+        if (!done) { failed.push({ id, error: '回收站里没有这张' }); continue; }
         ok++;
       } catch (err) {
         failed.push({ id, error: err instanceof Error ? err.message : String(err) });
@@ -914,10 +926,24 @@ export class Library {
   // ── 标注 ────────────────────────────────────────────────────────────────
 
   async applyMarks(items: MarkInput[]): Promise<MarkResultDto[]> {
+    // F05：整批按照片加锁（排序加锁防死锁；trashOne 内嵌调用已持锁可重入），XMP 写在锁内按序完成，
+    // 旧值不能晚于新值覆盖侧车。
+    const keys = items.map((i) => i?.id).filter((id): id is string => typeof id === 'string').map(OperationGates.photo);
+    return this.gates.run(keys, () => this.applyMarksLocked(items));
+  }
+
+  private async applyMarksLocked(items: MarkInput[]): Promise<MarkResultDto[]> {
+    // F04：写入前重新确认源可达并取当下版本；不可达不确认，也不把未验证缓存写回 XMP。
+    const verified = new Map<string, string | null>();
+    await Promise.all([...new Set(items.map((i) => i?.id).filter((id): id is string => typeof id === 'string'))].map(async (id) => {
+      const rec = this.records.get(id);
+      if (rec) verified.set(id, await verifySourceGeneration(rec));
+    }));
     const results = await this.marks.apply(items, (id) => {
       const rec = this.records.get(id);
       if (!rec) return null;
-      return { displayName: rec.displayName, sidecarPath: this.sidecarPath(rec) };
+      const generation = verified.has(id) ? verified.get(id)! : sourceGeneration(rec);
+      return { displayName: rec.displayName, sidecarPath: generation === null ? null : this.sidecarPath(rec), generation };
     });
     // 内存里的记录跟着走，免得下次扫描之前列表是旧的
     for (const r of results) {
