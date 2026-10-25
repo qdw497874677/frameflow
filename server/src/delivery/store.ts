@@ -42,6 +42,8 @@ const k = (p: PartKey) => `${p.jobId}\u0000${p.connectorId}\u0000${p.targetId}\u
 
 export class DeliveryStore {
   readonly file: string;
+  /** F31：完整行损坏（非未换行的尾部半行）→ 账本不可信，拒绝一切外传，等人工处理 */
+  corrupt: string | null = null;
   readonly #parts = new Map<string, Mut>();
   readonly #now: () => number;
 
@@ -52,10 +54,17 @@ export class DeliveryStore {
     const s = new DeliveryStore(path.join(dataDir, 'deliveries.jsonl'), now);
     let text = '';
     try { text = fs.readFileSync(s.file, 'utf8'); } catch { /* 首次 */ }
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      try { const r = JSON.parse(line) as LedgerLine; if (r.t === 'part') s.#apply(r); } catch { /* 半行 */ }
-    }
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      if (!line.trim()) return;
+      const tail = i === lines.length - 1; // 没有换行结尾 = 写到一半被杀，视为未发生
+      try {
+        const r = JSON.parse(line) as LedgerLine;
+        if (r.t === 'part') s.#apply(r);
+        else if (!tail) s.corrupt ??= `LINE_${i + 1}_UNKNOWN_RECORD`;
+      } catch { if (!tail) s.corrupt ??= `LINE_${i + 1}_INVALID_JSON`; }
+    });
+    if (s.corrupt) return s; // 损坏：不做 sending→unknown 收敛写入，文件保持原样
     // 重启收敛：没有结果的 sending → unknown
     for (const m of s.#parts.values()) {
       for (const [id, l] of m.intents) if (l.state === 'sending') s.#write({ ...m.key, t: 'part', state: 'unknown', intentId: id, at: s.#iso(), error: 'RESTART_WHILE_SENDING' });
@@ -78,6 +87,7 @@ export class DeliveryStore {
   }
 
   #write(r: LedgerLine): void {
+    if (this.corrupt) throw new Error(`DELIVERY_LEDGER_CORRUPT:${this.corrupt}`); // 损坏时只读：不改写、不外传
     const fd = fs.openSync(this.file, 'a', 0o600);
     try { fs.writeSync(fd, `${JSON.stringify(r)}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     this.#apply(r);

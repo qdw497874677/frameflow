@@ -39,3 +39,32 @@ Isolated jobs e2e passed 81/81. Original annotate e2e passed 93/94: its one fail
 Evidence: `/tmp/f03-isolated-e2e-q9chjats` (original assertion result), `/tmp/f03-envelope-e2e-art_9vaz` (final jobs and envelope-aware annotate output). The owning agent subsequently registered and completed F03a in `tasks/todo.md`: repository `server/tools/e2e-annotate.mjs` now flattens legacy/new rows for that same persisted by/jobId assertion, without removing it.
 
 Review regression RED → GREEN: the two recursive sparse-array cases initially committed instead of rejecting; duplicate-operation and rechecksummed revision-chain cases initially truncated the partial suffix before throwing; malformed multibyte UTF-8 initially decoded to the checksummed U+FFFD and opened successfully. All five reproductions now pass. Rejections preserve log bytes, memory/history and revisions; defensive-copy coverage mutates `get`, `list`, initial transaction results and replay results, both live and after reopen. Verification commands: `node --test server/tools/marks-transaction.test.mjs server/tools/e2e-marks-durability.mjs` (16/16), and `cd server && npm run typecheck` (pass). No service restarts or public API changes.
+
+## F31：连接器故障注入与备份/恢复演练
+
+自动化演练：`(cd server && node --test tools/connector-recovery.test.mjs)`，夹具 `server/tools/connector-fixture.mjs`
+在 `os.tmpdir()` 下建临时照片库与 dataDir，进程内起真实 `buildServer`，飞书 SDK 为可编排假实现（不触网、零真实发送）。
+覆盖的中断点与结论：
+
+| 中断点 | 恢复后行为 |
+| --- | --- |
+| 发送意图已落账、平台未回即崩溃 | 重启收敛为 `unknown`（`RESTART_WHILE_SENDING`），不自动重发；重试必须显式接受 `DUPLICATE_RISK`，重发沿用幂等 uuid |
+| SDK 超过传输超时后迟到成功 | 记 `unknown` 而非 `failed`，重启后仍为 `unknown`，不自动重发 |
+| 平台成功、messageId 行写到一半（尾部无换行） | 半行视为未发生 → `unknown`，不重发 |
+| 投递账本中间完整行损坏 | 账本只读：不收敛写入、不建分片、不调用 SDK；文件字节保持原样，等待人工处理 |
+| 确认记录完整行损坏 | 确认/追加/恢复返回 `503 STORE_CORRUPT`；仅尾部半行仍按"未发生"容忍 |
+| 重启后停用实例 / 已送达目标 | 停用后重试零外传；`sent` 为终态，重试返回 `NOTHING_TO_RETRY` |
+| 长连接在恢复完成前推送事件 | 服务在 `feishu.recover()` 完成后才开接收，之前的事件返回 `RECOVERING`，不落动作日志、不回写卡片 |
+
+### 备份/恢复步骤（仅临时 dataDir 演练过）
+
+1. 停服务（确保没有进程持有 `deliveries.jsonl` / `delivery-confirmations.jsonl` / `feishu/`）。
+2. 整目录复制 dataDir（`cp -a`）；不要只复制部分文件——确认记录与投递账本必须同一时刻。
+3. 恢复时整目录替换后再启动。恢复点之后的投递记录消失，但**不会被自动补发**；平台上若已有恢复点之后发出的消息，它们不会被识别，需人工判断后再派发。
+4. 任务与标记存放在照片库侧（marks/jobs），恢复 dataDir 不会回滚它们；二者时间点不一致时，以照片库侧为准，连接器侧只影响"是否已投递"的展示与重试。
+
+### 旧格式降级限制
+
+- 连接器数据全部位于新增文件（`connectors.json`、`deliveries.jsonl`、`delivery-confirmations.jsonl`、`feishu/`），旧版本会忽略它们，可直接降级运行；降级期间网页标记照常写 marks.log。
+- 降级后再升级：降级期间产生的标记会被飞书进度正常读取；但降级期间没有投递对账，任何处于 `sending/unknown` 的分片升级后仍保持 `unknown`，需人工确认后重试。
+- 不提供把连接器账本转换回旧格式的工具，也不做破坏性迁移；损坏文件需人工修复（删除损坏行前先备份）。

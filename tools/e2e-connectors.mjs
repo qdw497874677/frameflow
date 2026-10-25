@@ -6,6 +6,7 @@
  *   node tools/e2e-connectors.mjs --scenario=delivery   # F18：两实例三目标部分失败、单目标重试、unknown 风险确认
  *   node tools/e2e-connectors.mjs --scenario=progress   # F27：显式确认进度（假飞书回流 + 网页共享，重标不重复计数）
  *   node tools/e2e-connectors.mjs --scenario=test-send  # F30：无消息验证与显式测试卡分开；测试卡展示目标并二次确认；假 SDK 记账证明零误发
+ *   node tools/e2e-connectors.mjs --scenario=all        # F32：逐个子进程跑全部场景（各自临时库），任一失败即非零退出
  *   node tools/e2e-connectors.mjs --scenario=redispatch # F29b：任务详情追加目标：预览→二次确认；取消零发送；不建新任务、已有目标不重发
  * dispatch/delivery 用 FRAMEFLOW_FAKE_TRANSPORT=e2e 的离线假传输（externalId 以 oc_fail 开头的失败），绝不触网。
  * 独立临时库与数据目录；后端未注册任何平台适配器（零外传），Secret 只用假环境变量；CDP 真鼠标/键盘。
@@ -407,6 +408,16 @@ async function run(dir, { password, width, mode }) {
 
 async function main() {
   const scenario = (process.argv.find((a) => a.startsWith('--scenario=')) ?? '--scenario=settings').split('=')[1];
+  if (scenario === 'all') {
+    const all = ['settings', 'test-send', ...FLOW_MODES];
+    for (const s of all) {
+      const child = spawn(process.execPath, [FILE, `--scenario=${s}`], { stdio: 'inherit' });
+      const [code] = await once(child, 'exit');
+      assert.equal(code, 0, `场景 ${s} 失败`);
+    }
+    console.log(`PASS all（${all.length} 个场景：${all.join(', ')}）`);
+    return;
+  }
   assert.ok(['settings', 'test-send', ...FLOW_MODES].includes(scenario), `未知场景 ${scenario}`);
   const dir = await mkdtemp(join(tmpdir(), 'frameflow-connectors-'));
   try {
