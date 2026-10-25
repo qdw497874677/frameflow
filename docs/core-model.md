@@ -160,7 +160,7 @@ POST /jobs { kind: 'annotate', selection: { where: { marked: false } }, params: 
 }}
 ```
 
-输入图像取自 `GET /photos/{id}/thumb?size=2048`（票 001 的分层预览管线正好是它的输入源），产出的标注记 `by: 'ai:<model>'`。
+输入图像取自 `GET /photos/{id}/thumb?size=2048`（历史决策 001 的分层预览管线正好是它的输入源），产出的标注记 `by: 'ai:<model>'`。
 
 **B. AI 作为客户端（pull）** —— 外部 agent（Claude / GPT / 本地脚本，甚至另一个 pi 会话）自己来取活干：
 **这是「AI 介入选片工作流」的默认形态** —— 我们的进程不存模型 key、不花钱、换模型只换客户端。
@@ -170,7 +170,7 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 或直接 HTTP：GET /photos?sel=… → 取 2048 缩略图 → PUT /marks（带 by: 'ai:claude'）
 ```
 
-两种形态需要的机制**都已在不变量里**：幂等键（7）、`by/at/channel` provenance（5）、任务可被外部领取（见票 009）、`GET /capabilities` 自描述、三种凭据的认证面（ADR 0005）。
+两种形态需要的机制**都已在不变量里**：幂等键（7）、`by/at/channel` provenance（5）、任务可被外部领取（见历史决策 009）、`GET /capabilities` 自描述、三种凭据的认证面（ADR 0005）。
 
 **建议层还是直接落定**：AI 直接写标注，靠 `by` 区分来源；UI 按来源显示（「AI 建议 ★★★」），选择集加 `by:` 词即可一键过滤/清空。
 **不引入独立的「提案」实体** —— 省一张表；回滚依据是 `marks.jsonl`。
@@ -180,11 +180,11 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 1. **签发长期 Bearer token**：`POST /api-tokens`（列出 / 签发 / 撤销），明文只在签发响应里出现一次，服务端存哈希 + `label/lastUsedAt/scope`；agent 用 `Authorization: Bearer …` 调 API。
 2. **缩略图 URL 必须自认证**：`GET /photos/{id}/thumb?size=2048&t=<linkToken>`。原因很实在 —— agent 是把 URL 交给自己的图像加载器（甚至模型服务商）去取的，**带不上自定义 header**；URL 里必须自带凭据。
    已实现：签发 API token（`POST /api-tokens`）时响应里一并给出 `linkToken` 与 `thumbUrlTemplate`（把 `{id}` / `{size}` 填上即可）。签名载荷是 `link|<tokenId>|<exp>`（30 天）——绑的是**签发它的那条 API token**，不是单张照片，所以一个 linkToken 能取全库缩略图；撤销 API token 立刻失效。范围只有 `/thumb`：`?t=` 只在缩略图路由上被消费，写接口仍然只认 cookie / Bearer。
-范围受限的外部批注链接（`by: link:<批注人>`）**已落地（2026-10-07，票 008/015）**：载荷 `annotate|<jobId>|<批注人>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图、`GET /jobs/{id}`（**只读 token 里那一个任务**：批注页刷新后靠它读回已经标过的 items）与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
+范围受限的外部批注链接（`by: link:<批注人>`）**已落地（2026-10-07，历史决策 008/015）**：载荷 `annotate|<jobId>|<批注人>|<exp>|<tokenId>`（30 天，HMAC 签名、不落 `tokens.json`；第 5 段绑签发它的 API token，`-` = 会话/免认证签发），只放行本任务 items 的缩略图、`GET /jobs/{id}`（**只读 token 里那一个任务**：批注页刷新后靠它读回已经标过的 items）与 `POST /jobs/{id}/inbound`，撤销签发它的 API token 即失效；缩略图用的 `linkToken` 是只读凭据，拿去写回流一律 401。
 
 **权限边界**：AI 客户端默认可做状态层（读 + 写标注）与只写新位置的任务；**真删磁盘文件仍必须人工确认**（不变量 1 已保证——那是唯一删盘入口）。
 
-已拍板（2026-10-08，[票 009](../wayfinder/tickets/009-ai-access.md) 全部五问）：①先 pull 后 push；②直接落标不做建议层（`by: 'ai:<model>'` + `sel=by:ai`，回滚靠 `marks.jsonl`）；③MCP 不进 v1（REST + Bearer + 自认证缩略图 + `/capabilities` + [agent 接入指南](agent-access.md) 即够，MCP 待第二消费者出现再作薄包装）；④Bearer v1 全权限（`scope` 字段已存未强制），只读缩略图走 linkToken，真删磁盘仍须人工；⑤不做 claim/lease（无状态循环 + 后写覆盖留痕；确定性用任务层）。
+已拍板（2026-10-08，历史决策 009 的全部五问，原记录可查 Git 历史）：①先 pull 后 push；②直接落标不做建议层（`by: 'ai:<model>'` + `sel=by:ai`，回滚靠 `marks.jsonl`）；③MCP 不进 v1（REST + Bearer + 自认证缩略图 + `/capabilities` + [agent 接入指南](agent-access.md) 即够，MCP 待第二消费者出现再作薄包装）；④Bearer v1 全权限（`scope` 字段已存未强制），只读缩略图走 linkToken，真删磁盘仍须人工；⑤不做 claim/lease（无状态循环 + 后写覆盖留痕；确定性用任务层）。
 
 ## 12. 插件扩展面：内置能力与第三方模块同一套契约
 
@@ -207,4 +207,4 @@ MCP 工具（同一 API 的薄适配器）：list_photos / get_photo / set_marks
 其结构属于**不可重建**的那一类（与 XMP、事件日志同级），存应用数据目录的项目文件（照片目录可写时也可写 `.artworks/`）。
 把它做成插件而不是核心，是为了让「不来这套的人」完全看不到它。
 
-已拍板（2026-10-08，[票 010](../wayfinder/tickets/010-plugins.md) 全部六问）：内置与第三方**同一套 manifest 契约**，v1 只加载内置（代码内注册表）；冻结的贡献点只有 `JobHandler` 与 `Channel`，`FolderProvider` / `SelectionTerm` / 设置页留缝不冻结；副作用五档进 manifest 形状、v1 不做运行时强制；虚拟目录 = 默认关闭插件、结构存应用数据目录（照片目录只出 .xmp 与 .trash 不变）；加载 = 启动扫描 + 重启生效；v1 不冻结对外插件 API，宣布开源时再冻结。
+已拍板（2026-10-08，历史决策 010 的全部六问，原记录可查 Git 历史）：内置与第三方**同一套 manifest 契约**，v1 只加载内置（代码内注册表）；冻结的贡献点只有 `JobHandler` 与 `Channel`，`FolderProvider` / `SelectionTerm` / 设置页留缝不冻结；副作用五档进 manifest 形状、v1 不做运行时强制；虚拟目录 = 默认关闭插件、结构存应用数据目录（照片目录只出 .xmp 与 .trash 不变）；加载 = 启动扫描 + 重启生效；v1 不冻结对外插件 API，宣布开源时再冻结。

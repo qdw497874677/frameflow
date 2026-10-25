@@ -8,8 +8,9 @@
 contracts/     前后端契约（语言中立）：openapi.yaml —— 唯一的接口真相
 web/           前端（React + TypeScript + Vite + framer-motion + shadcn/ui），纯客户端，不碰磁盘
                IA / 交互 / 数据流见 web/DESIGN.md
-server/        后端（语言待定，见 wayfinder 票 005），唯一能碰磁盘的进程
-wayfinder/     规划地图与决策票（见 wayfinder/map.md）
+server/        后端（TypeScript / Node 22 LTS+），唯一能碰磁盘的进程
+SPEC.md        产品规格入口
+tasks/         实施规划与待办（plan.md / todo.md）
 prototype/     早期单文件原型（已归档，交互结论已移植进 web/）
 ```
 
@@ -73,7 +74,7 @@ cd server && ./tools/dev.sh start                # 扫描 + 托管 web/dist + �
 
 ## 部署
 
-两套交付物（票 012）：
+两套交付物：
 
 **Docker**（`Dockerfile` + `docker-compose.yml`，多阶段：builder 构建前端，runtime 只留生产依赖 + `web/dist` + ffmpeg/perl，Node 22 原生跑 .ts）：
 
@@ -98,7 +99,7 @@ root 执行则装系统级。模板在 `deploy/artworks.service`，配置示例 
 
 部署要点（细节见 `server/README.md`）：Node >= 22（直跑 .ts）；`VITE_API_BASE=/api/v1` 不能少；对外访问要设 `password` 并把 `host` 改 `0.0.0.0`；网络挂载建议 NFS 直挂（gvfs 挂载在用户会话里，systemd 服务看不到，见 server/README「挂载失联」）。
 
-**远程访问**：只打算局域网 / Tailscale，不加反代与证书（决策见 `wayfinder/tickets/005-stack-deployment.md`）。
+**远程访问**：只打算局域网 / Tailscale，不加反代与证书（历史决策记录可查 Git 历史）。
 在装了 Tailscale 的机器上把 `host` 设 `0.0.0.0`（**必须设密码**），手机/笔记本用 `http://<tailscale主机名>:8787` 访问。
 
 **备份**：`dataDir` 一个目录就是全部可重建状态之外的东西 —— 索引、预览缓存、`tokens.json`（API 密钥）、`marks.jsonl`（标注历史）、`trash.jsonl`（回收站操作日志）。索引与预览缓存丢了可以重扫重建，但 `tokens.json` / `marks.jsonl` / `trash.jsonl` 丢了不可恢复 —— 备份策略：定时 rsync/快照 `dataDir`（排除 `previews/`、`thumbs/`）即可，体积很小。
@@ -134,6 +135,12 @@ node tools/e2e-project-navigation.mjs
 
 测试库可以用 `node server/tools/make-fixture.mjs` 现场造一份。
 
+## 飞书连接器进展
+
+当前仍只有应用内批注通道，**尚不能配置后直接使用飞书**。规格与实施清单已确认，正在做离线基础验证；官方 SDK 已精确锁定，依赖探针和日志/单写者原语仅在临时目录与假传输中测试，未接入生产服务。
+
+SDK证据与限制见 [docs/feishu-sdk-validation.md](docs/feishu-sdk-validation.md)。真实群聊/私聊验收需要专用应用、授权目标及发送许可，不能以离线测试替代。
+
 ## 规划
 
-当前路线与已定决策：`wayfinder/map.md`；票（tickets）在 `wayfinder/tickets/`，研究笔记在 `wayfinder/research/`。
+产品规格：[SPEC.md](SPEC.md)；实施规划：[tasks/plan.md](tasks/plan.md)；当前待办：[tasks/todo.md](tasks/todo.md)。架构决策保留在 [docs/adr/](docs/adr/)，旧规划记录可查 Git 历史，不作为当前任务来源。

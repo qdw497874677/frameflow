@@ -1,11 +1,11 @@
 # ADR 0005：后端用 TypeScript，能力以模块注册
 
 状态：**已接受**（2026-09，用户 m01889「可以 用ts 一些功能要支持后续通过模块化的方式集成」）
-相关：[核心模型](../core-model.md) · [server/README.md](../../server/README.md) · [票 005 技术栈与部署](../../wayfinder/tickets/005-stack-deployment.md) · [ADR 0004](0004-jobs-and-events.md)
+相关：[核心模型](../core-model.md) · [server/README.md](../../server/README.md) · 历史决策 005「技术栈与部署」（原记录可查 Git 历史） · [ADR 0004](0004-jobs-and-events.md)
 
 ## 背景
 
-后端语言此前一直悬着（票 005）。约束是攒出来的，不是猜的：
+后端语言此前一直悬着（历史决策 005）。约束是攒出来的，不是猜的：
 
 - **能力清单**：EXIF 与内嵌 JPEG 预览提取、写共享 XMP、文件移动与回收站、两档 JPEG 缩略图缓存、SSE 进度流、单进程唯一碰盘、单用户认证、家里部署 + Tailscale
 - **后续要加**（用户明确）：**AI 参与选片（急需）**、导出与滤镜（作为导出 recipe）、把批注任务推到飞书等外部渠道

@@ -2,7 +2,7 @@
 
 **状态：已实现并在用（TypeScript / Node 22 LTS+，见 [ADR 0005](../docs/adr/0005-typescript-backend.md)）。**
 已落地：扫描 + RAW/JPEG 配对、两档缩略图（含视频抽帧封面）、XMP 星标/待删 + `marks.jsonl`、回收站、索引缓存、认证四凭据（session/Bearer 链接 token/任务范围 token）、`/capabilities`、`/api-tokens`、任务层（`/jobs*`：计划/派发/事件流/取消/撤销/外部回流）与应用内通道（`/channels`）。
-未落地：`jobs/` 下的第二个 kind（导出、处理…）；运行与部署形态（systemd / Docker / 反代）仍见 `wayfinder/tickets/005-stack-deployment.md`（待定）。
+未落地：`jobs/` 下的第二个 kind（导出、处理…）。已有 systemd / Docker 部署交付物，运行方式见 [README 部署说明](../README.md#部署)；远程访问按局域网 / Tailscale 使用，不加反代与证书。
 本文件先固定**模块边界**与职责，避免前端/后端职责漂移。
 
 ## 职责边界
@@ -11,23 +11,23 @@
 
 ## 内部模块（各自独立、可单独测试）
 
-| 模块 | 职责 | 关键约束（来自已关闭的票） |
+| 模块 | 职责 | 关键约束（历史决策原记录可查 Git 历史） |
 |---|---|---|
-| `scan` | 目录遍历、照片发现、RAW+JPEG **配对** | 同目录 + stem 大小写不敏感相等 + 扩展名分类；多 RAW 取字母序最早；每次扫描重建配对（票 001） |
-| `preview` | 分层预览管线：外部 JPEG → 内嵌 JPEG 提取 → LibRaw 兜底 | 512 / 2048 两档缓存，缓存键 `path+mtime+size`；内嵌 JPEG 缺 Orientation 需回填（票 001） |
-| `marks` | 星级 / 待删的持久化，以及变更日志 | 星级写共享 XMP（`xmpDM:good`，与 LR/C1 互通）；pair 为一等实体，成对写入（票 001）；每个实际变化的字段追加一条 `marks.jsonl`（含 `by/at/channel/from→to`）—— 外部批注回流的对账凭据 |
+| `scan` | 目录遍历、照片发现、RAW+JPEG **配对** | 同目录 + stem 大小写不敏感相等 + 扩展名分类；多 RAW 取字母序最早；每次扫描重建配对（历史决策 001） |
+| `preview` | 分层预览管线：外部 JPEG → 内嵌 JPEG 提取 → LibRaw 兜底 | 512 / 2048 两档缓存，缓存键 `path+mtime+size`；内嵌 JPEG 缺 Orientation 需回填（历史决策 001） |
+| `marks` | 星级 / 待删的持久化，以及变更日志 | 星级写共享 XMP（`xmpDM:good`，与 LR/C1 互通）；pair 为一等实体，成对写入（历史决策 001）；每个实际变化的字段追加一条 `marks.jsonl`（含 `by/at/channel/from→to`）—— 外部批注回流的对账凭据 |
 | `jobs` | 任务层：一个能力一个 handler（`core/jobs.ts` 状态机 + `jobs/registry.ts` + `jobs/service.ts`） | 契约 `validate → plan → apply → undo?`，只依赖 `core/`，handler 之间不互相 import；先预演再执行；每个任务落 `dataDir/jobs.jsonl`（一行一个快照，同 id 后写覆盖先写）+ `dataDir/job-events.jsonl`（追加型，`seq` 单调）；执行队列不持久化，重启把 `queued`/`running` 标 `interrupted`（收回流或 `undo` 都能接着走） |
 | `channels` | 出站投递通道（应用内 / 飞书 / webhook…） | 只负责「怎么把一批照片发出去」；批注回流不走通道，走 `POST /jobs/{id}/inbound`；v1 不建账号体系，用任务签发的范围受限链接 token（`annotate:<jobId>`），回流记 `by: 'link:<批注人>'` |
 | `storage` | 状态与日志的落盘位置 | 索引/缓存可重建；事件日志与 manifest 不可重建，必须追加写（见 `docs/core-model.md` 不变量 6） |
 | `cache` | 预览缓存的容量策略（`core/cache.ts`） | 512/2048 缩略图共用一个上限（`cache.maxBytes`，默认 8 GiB，`0` = 不限）；按**最久未读**（atime，读命中时顺手刷新）淘汰到上限的 90%；正在生成的文件与视频封面受保护；半截 `.tmp` 一小时后就清 |
-| `trash` | 逻辑删除区（产品回收站）—— 已实现 | 删除 = 移入产品回收站，可恢复；pair（含 `.xmp` 侧车）成对进出（票 001 + 用户决策）；搬走时**顺手把标记清掉**（`channel:'trash'`），否则还原后会带着「待删」回来，而挑片默认隐藏待删 —— 照片就像消失了；落地在 `<照片目录>/.trash/<显示名>/`，记录与日志在 `dataDir/trash.jsonl`（`{op:'in'|'out'}` 追加写，重启后按它重建回收站索引）；`dir/.trash` 下的文件**不参与扫描配对**；还原时同名文件排号（`名字 (2)`），绝不覆盖 |
-| `roots` | 根目录列表与在线检测 | 多根（本地盘/挂载点）；`online=false` 表示当前不可访问，前端只灰显不报错（票 004） |
-| `auth` | 单用户认证与会话 | 家用 + Tailscale 场景下的最简方案（票 005） |
+| `trash` | 逻辑删除区（产品回收站）—— 已实现 | 删除 = 移入产品回收站，可恢复；pair（含 `.xmp` 侧车）成对进出（历史决策 001 + 用户决策）；搬走时**顺手把标记清掉**（`channel:'trash'`），否则还原后会带着「待删」回来，而挑片默认隐藏待删 —— 照片就像消失了；落地在 `<照片目录>/.trash/<显示名>/`，记录与日志在 `dataDir/trash.jsonl`（`{op:'in'|'out'}` 追加写，重启后按它重建回收站索引）；`dir/.trash` 下的文件**不参与扫描配对**；还原时同名文件排号（`名字 (2)`），绝不覆盖 |
+| `roots` | 根目录列表与在线检测 | 多根（本地盘/挂载点）；`online=false` 表示当前不可访问，前端只灰显不报错（历史决策 004） |
+| `auth` | 单用户认证与会话 | 家用 + Tailscale 场景下的最简方案（历史决策 005） |
 | `httpapi` | HTTP 层：路由、序列化、错误码 | 严格实现 `contracts/openapi.yaml`；不含业务逻辑，只做编解码与调用 |
 | `annotate` | AI 参与选片（`jobs/annotate.ts`） | 两种形态：作为执行者（我们调模型，`executor: openai-compatible / anthropic / ark / ollama`）与作为客户端（外部 agent 自己来取活干）；产出标注记 `by: 'ai:<model>'`；输入图像取 `GET /photos/{id}/thumb?size=2048`（见 `docs/core-model.md` §11） |
 | `mcp` | 把同一批端点包成 MCP 工具（`list_photos` / `get_photo` / `set_marks` / `create_job` / `job_status`） | 薄适配器，不含业务语义；与 `httpapi` 共用 `core/` 的调用面；给 Claude Code 等 agent 直接用 |
 | `capabilities` | 能力自描述（`GET /capabilities`） | 注册表投影：job kinds + 参数 schema + 副作用等级 + 通道 + 执行者；前端与 AI 客户端都靠它发现能力（ADR 0005） |
-| `plugins` | 第三方模块的加载与校验 | 与内置同一 manifest 契约，从数据目录加载；**模块不能直接碰磁盘**，只能经 `core/`；副作用等级不符则拒绝（见 `docs/core-model.md` §12 / 票 010） |
+| `plugins` | 第三方模块的加载与校验 | 与内置同一 manifest 契约，从数据目录加载；**模块不能直接碰磁盘**，只能经 `core/`；副作用等级不符则拒绝（见 `docs/core-model.md` §12 / 历史决策 010） |
 
 ## 前端已经依赖的接口
 
@@ -94,12 +94,12 @@ export const annotate: JobHandler = {
 启动顺序不变（**先监听、再后台扫描**），但列表不必等扫描：`dataDir/index.json` 里除了 `metaCache`（EXIF：mtime+size 没变就跳过 exiftool），还存了上次扫描的 `records`/目录树/root 在线态（`version: 2`）。
 
 - `Library.loadIndex()` 恢复完就是可服务状态，`refresh()` 随后在后台校正；`/capabilities.library.scanning` 为 `true` 时前端展示的是「先用缓存，补扫中」。
-- **启动不碰文件系统**：`roots()` 优先用缓存里的 `online`，避免对可能挂死的挂载点做 `existsSync`（票 011 的方向）。
+- **启动不碰文件系统**：`roots()` 优先用缓存里的 `online`，避免对可能挂死的挂载点做 `existsSync`（历史决策 011 的方向）。
 - 星标/待删不依赖扫描：`MarksStore` 启动即读 `marks.jsonl`，DTO 里的 `stars`/`del` 以它为准（XMP 只是种子）。
 - 失效即重建：版本号不符、JSON 坏了、`records` 为空 → 当没有缓存，照旧全量扫描覆盖。
 - 回归：`node tools/e2e-cold-start.mjs`（重启后断言「扫描还没跑完就能出照片」+ 日志里的「索引缓存已就绪」）。
 
-## 预览缓存与自动补扫（2026-10-07，票 013）
+## 预览缓存与自动补扫（2026-10-07，历史决策 013）
 
 缓存目录 `dataDir/previews`（512/2048 两档）与 `dataDir/thumbs` 合起来算一个容量账，上限 `cache.maxBytes`（默认 8 GiB；`ARTWORKS_CACHE_MAX_BYTES` 可覆盖；`0` 或写错 = 不限）：
 
@@ -113,7 +113,7 @@ export const annotate: JobHandler = {
 
 回归：`node tools/e2e-cache.mjs` —— A 段直接驱动 `CacheJanitor`（伪造 atime，断言淘汰顺序、90% 停止、单轮预算、在途保护、`maxBytes=0` 不动手），B 段起独立实例（小上限 + 过期索引）断言启动淘汰、`/capabilities` 字段、淘汰后缩略图照常按需重建、`lastScanAt` 放旧后启动补扫。
 
-## 挂载失联时的行为（2026-10-06，票 011）
+## 挂载失联时的行为（2026-10-06，历史决策 011）
 
 网络挂载（NAS / gvfs）会在没有征兆的情况下挂死：`stat`/`read` 永远不返回。策略是「**只让出问题的根不可用，不让整个进程陪葬**」：
 

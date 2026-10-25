@@ -1,7 +1,7 @@
 # Agent 接入指南（pull 形态）
 
 > 给 AI agent（Claude / GPT / 本地脚本 / 另一个 pi 会话）的操作说明。
-> 决策背景：[票 009](../wayfinder/tickets/009-ai-access.md) —— AI 介入选片走 **pull**：agent 当普通 API 客户端来取活干，
+> 决策背景：历史决策 009（原记录可查 Git 历史） —— AI 介入选片走 **pull**：agent 当普通 API 客户端来取活干，
 > 服务进程不存模型 key、不花钱、换模型只换客户端。push 形态（我们调模型，`/capabilities.executors`）
 > 全部是 `status: 'planned'` 的占位，**尚未实现，别用**。
 
@@ -64,7 +64,7 @@ curl -s -X PUT $BASE/marks -H "authorization: Bearer $TOK" -H 'content-type: app
 # → 每项 { ok, stars, del, error }；409 = 全部失败，看 results 里逐项原因
 ```
 
-**循环无状态、无租约**（票 009 决定：不做 claim/lease）——两个 agent 撞车最多同一张写两次，`marks.jsonl` 留痕后写覆盖，能收敛。要「领一批」的确定性，用任务层（§4）。
+**循环无状态、无租约**（历史决策 009 决定：不做 claim/lease）——两个 agent 撞车最多同一张写两次，`marks.jsonl` 留痕后写覆盖，能收敛。要「领一批」的确定性，用任务层（§4）。
 
 ## 3. 语义与坑（读一遍少踩一轮）
 
