@@ -39,6 +39,12 @@ function resolveTarget(state: PreviewState, projectId: string, t: TargetRef): Pr
   return { connectorId: t.connectorId, targetId: t.targetId, label: target.label };
 }
 
+/** 恢复/发送前复核授权：目标仍启用、仍允许该项目（F14/F15 共用） */
+export function targetsStillAllowed(state: PreviewState, projectId: string, targets: readonly TargetRef[]): TargetRef | null {
+  for (const t of targets) if (!resolveTarget(state, projectId, t)) return t;
+  return null;
+}
+
 function fingerprint(p: Omit<DeliveryPreview, 'revision' | 'previewId' | 'createdAt' | 'expiresAt' | 'warnings'>): string {
   const canon = JSON.stringify([p.projectId, [...p.photoIds], p.params, p.targets.map((t) => [t.connectorId, t.targetId, t.label]), p.policyRevision, p.connectorRevision]);
   return createHash('sha256').update(canon).digest('hex');
