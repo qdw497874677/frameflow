@@ -214,3 +214,16 @@ test('F28 原图 JPEG：只发真实 JPEG 字节（hash 一致），RAW/伪 JPEG
   const noOrig = new FeishuTransport({ instance: inst, secret: 's', sdk: f.sdk });
   assert.equal((await noOrig.send({ targetId: inst.targets[0].id, intentId: 'j_x', content: { type: 'file', mediaRef: 'a' } })).code, 'JPEG_UNAVAILABLE');
 });
+
+test('F30 真联调工具：--help 可用；不带 opt-in 拒绝联网（退出码 2）', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const tool = new URL('./feishu-live-check.mjs', import.meta.url).pathname;
+  const help = spawnSync(process.execPath, [tool, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0); assert.match(help.stdout, /不连接网络、不发送消息/);
+  for (const a of [[], ['--live'], ['--i-understand-network'], ['--send-test-card', '--chat-id=oc_x']]) {
+    const r = spawnSync(process.execPath, [tool, ...a], { encoding: 'utf8', env: { PATH: process.env.PATH, FEISHU_LIVE_APP_ID: 'cli_x', FEISHU_LIVE_SECRET_ENV: 'S', S: 'v' } });
+    assert.equal(r.status, 2, `参数 ${a} 应拒绝`);
+  }
+  const noSend = spawnSync(process.execPath, [tool, '--live', '--i-understand-network', '--send-test-card', '--chat-id=oc_x'], { encoding: 'utf8', env: { PATH: process.env.PATH, FEISHU_LIVE_APP_ID: 'cli_x', FEISHU_LIVE_SECRET_ENV: 'S', S: 'v' } });
+  assert.equal(noSend.status, 2, '发送缺 --i-understand-sending 必须在联网前拒绝');
+});

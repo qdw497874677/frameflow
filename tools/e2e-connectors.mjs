@@ -5,6 +5,7 @@
  *   node tools/e2e-connectors.mjs --scenario=dispatch   # F17：派发框勾选目标/预览/确认/取消零发送
  *   node tools/e2e-connectors.mjs --scenario=delivery   # F18：两实例三目标部分失败、单目标重试、unknown 风险确认
  *   node tools/e2e-connectors.mjs --scenario=progress   # F27：显式确认进度（假飞书回流 + 网页共享，重标不重复计数）
+ *   node tools/e2e-connectors.mjs --scenario=test-send  # F30：无消息验证与显式测试卡分开；测试卡展示目标并二次确认；假 SDK 记账证明零误发
  *   node tools/e2e-connectors.mjs --scenario=redispatch # F29b：任务详情追加目标：预览→二次确认；取消零发送；不建新任务、已有目标不重发
  * dispatch/delivery 用 FRAMEFLOW_FAKE_TRANSPORT=e2e 的离线假传输（externalId 以 oc_fail 开头的失败），绝不触网。
  * 独立临时库与数据目录；后端未注册任何平台适配器（零外传），Secret 只用假环境变量；CDP 真鼠标/键盘。
@@ -15,7 +16,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -75,6 +76,7 @@ export default async function probe(send) {
 
   const mode = await evaluate(`new URLSearchParams(location.search).get('e2eMode')`);
 
+  if (mode === 'test-send') return testSend({ evaluate, waitFor, clickAt, center, clickText, button, card, status, noOverflow, smallControls });
   if (FLOW_MODES.includes(mode)) return flow(mode, { evaluate, waitFor, clickAt, center, send });
   if (mode === 'noauth') {
     await waitFor(`${card}`, '设置页未显示连接器卡片');
@@ -124,7 +126,7 @@ export default async function probe(send) {
   await clickText('启用');
   await waitFor(`${card}.querySelector('[data-testid="connector-state"]')?.textContent === '出错'`, '启用后应如实显示错误状态');
   assert.match(await evaluate(`${card}.querySelector('[data-testid="connector-row"]').innerText`), /CONNECTOR_KIND_UNSUPPORTED/);
-  await clickText('测试连接');
+  await clickText('无消息验证');
   await waitFor(`/CONNECTOR_KIND_UNSUPPORTED|失败/.test(${card}.querySelector('[role="status"]').textContent)`, '无适配器时测试应失败并显示原因');
   console.log('ok 启用：真实状态/错误码（无适配器，零外传）；测试连接失败如实显示');
 
@@ -137,6 +139,43 @@ export default async function probe(send) {
   assert.equal(await evaluate(`document.querySelector('[aria-label="目标名称"]')?.value`), '摄影组群');
   await noOverflow('错误态');
   console.log('ok 保存失败：错误码显示，表单内容保留；390px 无横向溢出');
+}
+
+async function testSend({ evaluate, waitFor, clickAt, center, clickText, button, card, status, noOverflow, smallControls }) {
+  const api = (method, path, body) => evaluate(`fetch(${JSON.stringify(path)}, { method: ${JSON.stringify(method)}, headers: { 'content-type': 'application/json' }, body: ${body ? JSON.stringify(JSON.stringify(body)) : 'undefined'} }).then(async r => ({ s: r.status, j: r.status === 204 ? null : await r.json() }))`);
+  assert.ok((await api('POST', '/api/v1/session', { password: PASSWORD })).s < 300, '登录失败');
+  let rev = (await api('GET', '/api/v1/connectors')).j.revision;
+  const inst = { id: 'c1', kind: 'feishu', label: '飞书甲', appId: 'cli_e2e_fake', secretEnv: FAKE_ENV, tenantId: 't1', creatorActorIds: [], creatorProjectIds: [],
+    targets: [['g1', '摄影群', 'oc_test_one'], ['g2', '客户群', 'oc_test_two']].map(([id, label, externalId]) => ({ id, connectorId: 'c1', label, kind: 'group', externalId, projectIds: ['e2e'], allowedActorIds: [], canAnnotate: false, canRequestJpeg: false })) };
+  let r = await api('POST', '/api/v1/connectors', { expectedRevision: rev, instance: inst });
+  assert.ok(r.s < 300, JSON.stringify(r)); rev = r.j.revision;
+  r = await api('PATCH', '/api/v1/connectors/c1', { expectedRevision: rev, patch: { enabled: true } });
+  assert.ok(r.s < 300, JSON.stringify(r));
+  await evaluate(`location.reload()`);
+  await sleep(2000);
+  await waitFor(`(${button('无消息验证')})()`, '没有无消息验证按钮');
+  await waitFor(`(${button('发送测试卡…')})() && !(${button('发送测试卡…')})().disabled`, '启用后应可发送测试卡');
+  await clickText('无消息验证');
+  await waitFor(`/验证通过（未发送任何消息）/.test(${card}.querySelector('[role="status"]').textContent)`, '无消息验证应通过');
+  console.log('ok 无消息验证：通过且不发送（假 SDK 只记 verifyToken）');
+  await clickText('发送测试卡…');
+  const box = `${card}.querySelector('[data-testid="test-card-confirm"]')`;
+  await waitFor(box, '测试卡须先展示目标确认');
+  assert.match(await evaluate(`${box}.innerText`), /将真实发送一张测试卡到「摄影群」/);
+  await noOverflow('测试卡确认');
+  assert.deepEqual(await smallControls(), [], '主控件须≥44px');
+  await clickAt(await center(`() => [...${box}.querySelectorAll('button')].find(b => b.textContent.trim() === '取消')`));
+  await sleep(500);
+  assert.equal(await evaluate(`${box} === null`), true, '取消后收起');
+  console.log('ok 测试卡：展示目标并二次确认；取消零发送');
+  await clickText('发送测试卡…');
+  await waitFor(box, '确认框未出现');
+  await evaluate(`(() => { const s = ${box}.querySelector('select'); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, 'g2'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await waitFor(`/客户群/.test(${box}.querySelector('p').textContent)`, '切换目标后确认文案应更新');
+  await clickAt(await center(`() => [...${box}.querySelectorAll('button')].find(b => b.textContent.trim() === '确认发送测试卡')`));
+  await waitFor(`/测试卡已发送/.test(${card}.querySelector('[role="status"]').textContent)`, '测试卡应发送成功');
+  console.log('ok 确认后只向所选目标发送一张测试卡');
+  void status;
 }
 
 async function flow(mode, { evaluate, waitFor, clickAt, center }) {
@@ -332,7 +371,7 @@ async function run(dir, { password, width, mode }) {
   await writeFile(config, JSON.stringify({ host: '127.0.0.1', port, password, dataDir: join(dir, `data-${mode}`), roots: [{ id: 'e2e', label: '连接器测试', path: library }] }));
   let log = '';
   const server = spawn(process.execPath, ['src/index.ts', `--config=${config}`], {
-    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: 'disabled', ...(FLOW_MODES.includes(mode) ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: mode === 'test-send' ? 'fake-e2e' : 'disabled', FRAMEFLOW_FAKE_SDK_LOG: join(dir, `sdk-${mode}.jsonl`), ...(FLOW_MODES.includes(mode) ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (b) => { log += b; });
   server.stderr.on('data', (b) => { log += b; });
@@ -348,6 +387,14 @@ async function run(dir, { password, width, mode }) {
     const browser = spawn(process.execPath, [SHOT, '--url', `${base}/?view=settings&e2eMode=${mode}`, '--out', `/tmp/frameflow-connectors-${mode}.png`, '--width', String(width), '--height', '844', '--dsf', '1', '--wait', '1500', '--script', FILE, '--chrome', chrome], { stdio: 'inherit' });
     const [code] = await once(browser, 'exit');
     assert.equal(code, 0, `浏览器回归失败（${mode}）\n${log.slice(-2000)}`);
+    if (mode === 'test-send') {
+      const calls = existsSync(join(dir, `sdk-${mode}.jsonl`)) ? readFileSync(join(dir, `sdk-${mode}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+      const sends = calls.filter((c) => c.op === 'createMessage');
+      assert.deepEqual(sends.map((c) => c.receiveId), ['oc_test_two'], `只允许一次测试卡发送且发往所选目标 ${JSON.stringify(calls)}`);
+      assert.ok(calls.some((c) => c.op === 'verifyToken'), '无消息验证应调用 verifyToken');
+      assert.ok(!JSON.stringify(calls).includes('fake-value'), '记录不得含 Secret');
+      console.log('ok 假 SDK 记账：仅 1 次 createMessage（取消零发送、验证零发送）');
+    }
   } finally {
     if (server.exitCode === null) {
       const stopped = once(server, 'exit');
@@ -360,7 +407,7 @@ async function run(dir, { password, width, mode }) {
 
 async function main() {
   const scenario = (process.argv.find((a) => a.startsWith('--scenario=')) ?? '--scenario=settings').split('=')[1];
-  assert.ok(['settings', ...FLOW_MODES].includes(scenario), `未知场景 ${scenario}`);
+  assert.ok(['settings', 'test-send', ...FLOW_MODES].includes(scenario), `未知场景 ${scenario}`);
   const dir = await mkdtemp(join(tmpdir(), 'frameflow-connectors-'));
   try {
     if (scenario !== 'settings') {

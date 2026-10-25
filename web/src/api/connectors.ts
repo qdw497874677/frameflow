@@ -88,6 +88,7 @@ export const deliveryApi = {
   confirm: (body: { previewId: string; revision: string; requestId: string; notifyOnComplete: boolean; acknowledged: boolean }) =>
     call<DeliveryConfirmationDto>('POST', '/delivery-confirmations', body),
   deliveries: (jobId: string) => call<DeliveryPartPageDto>('GET', `/jobs/${encodeURIComponent(jobId)}/deliveries`),
+  /** F30：显式测试卡——调用方必须先完成二次确认（UI 展示目标）；confirm 字段只是后端的第二道闸 */
   /** F29a：追加目标——预览（零发送）与确认（requestId 稳定，重放仍关联原任务） */
   appendPreview: (jobId: string, targets: DeliveryTargetRefDto[]) =>
     call<DeliveryAppendPreviewDto>('POST', `/jobs/${encodeURIComponent(jobId)}/delivery-previews`, { targets }),
