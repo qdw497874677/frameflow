@@ -31,6 +31,7 @@ import { dirPath, parseDirPath } from './ids.ts';
 import { OperationGates } from './operation-gates.ts';
 import { sourceGeneration, verifySourceGeneration } from './source-generation.ts';
 import { MarksStore, type MarkChange, type MarkInput, type MarkResultDto } from './marks.ts';
+import type { MarkTransactionRequest, MarkTransactionResult } from './mark-transaction.ts';
 import type { PhotoRecord } from './photo.ts';
 import { matchesSelection, selectionIsEmpty, type Selection } from './selection.ts';
 import { scanLibrary, type CachedMeta } from './scan.ts';
@@ -953,6 +954,40 @@ export class Library {
       rec.del = r.del ?? rec.del;
     }
     return results;
+  }
+
+  /**
+   * 稳定操作 id 的标记事务（F23/F24）：照片锁内复核源可达与版本；同 opId 重放返回首次结果。
+   * expectedRevisions/expectedGenerations 不符 → 抛 REVISION_CONFLICT / SOURCE_GENERATION_CONFLICT。
+   */
+  async transactMarks(request: MarkTransactionRequest): Promise<MarkTransactionResult> {
+    const keys = request.items.map((i) => i?.id).filter((id): id is string => typeof id === 'string').map(OperationGates.photo);
+    return this.gates.run(keys, async () => {
+      if (this.marks.hasOperation(request.opId)) return this.marks.transact(request, () => null);
+      const verified = new Map<string, string | null>();
+      for (const id of new Set(keys.map((k) => k.slice(6)))) {
+        const rec = this.records.get(id);
+        if (rec) verified.set(id, await verifySourceGeneration(rec));
+      }
+      const result = await this.marks.transact(request, (id) => {
+        const rec = this.records.get(id);
+        if (!rec) return null;
+        const generation = verified.has(id) ? verified.get(id)! : sourceGeneration(rec);
+        return { displayName: rec.displayName, sidecarPath: generation === null ? null : this.sidecarPath(rec), generation };
+      });
+      for (const r of result.results) {
+        const rec = this.records.get(r.id);
+        if (rec && r.ok) { rec.stars = r.stars ?? rec.stars; rec.del = r.del ?? rec.del; }
+      }
+      return result;
+    });
+  }
+
+  /** 照片当前标记版本与源版本（卡片 session 绑定用） */
+  markVersion(photoId: string): { revision: number; generation: string | null } | null {
+    const rec = this.records.get(photoId);
+    if (!rec) return null;
+    return { revision: this.marks.revisionOf(photoId), generation: this.marks.generationOf(photoId) ?? sourceGeneration(rec) };
   }
 
   history(limit?: number, photoId?: string, jobId?: string): MarkChange[] {

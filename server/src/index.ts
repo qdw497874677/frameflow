@@ -20,8 +20,9 @@ const feishuSdk = process.env.FRAMEFLOW_FEISHU_SDK === 'disabled' ? null : await
 const app = await buildServer(cfg, lib, {
   connectorFactories: feishuSdk
     ? {
-        feishu: (l) => feishuFactory({
+        feishu: (l, ctx) => feishuFactory({
           sdk: () => feishuSdk,
+          resolve: ctx.resolve,
           preview: async (photoId) => {
             const rec = l.get(photoId);
             if (!rec) throw new Error('PHOTO_NOT_FOUND');

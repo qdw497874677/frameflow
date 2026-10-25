@@ -14,7 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { OperationGates } from '../core/operation-gates.ts';
-import { JobError, JobsStore, itemsSettled, type Job, type JobEvent, type JobItem, type JobProblem } from '../core/jobs.ts';
+import { JobError, JobsStore, itemsSettled, type ConfirmationProjection, type Job, type JobEvent, type JobItem, type JobProblem } from '../core/jobs.ts';
 import type { MarkResultDto } from '../core/marks.ts';
 import type { Selection } from '../core/selection.ts';
 import type { InboundInput, JobContext, JobHandler, JobSink } from './registry.ts';
@@ -46,10 +46,14 @@ export interface ConfirmedJobInput {
   items: Array<{ id: string; displayName?: string }>;
   by?: string | null;
   tokenId?: string | null;
+  /** F23：明确确认模式（外部目标派发时启用）；缺省旧语义 */
+  confirmationMode?: 'explicit' | null;
 }
 
-export function confirmedFingerprint(input: Pick<ConfirmedJobInput, 'jobId' | 'kind' | 'selection' | 'params' | 'items'>): string {
-  const canon = JSON.stringify([input.jobId, input.kind, canonical(input.selection), canonical(input.params), input.items.map((i) => i.id)]);
+export function confirmedFingerprint(input: Pick<ConfirmedJobInput, 'jobId' | 'kind' | 'selection' | 'params' | 'items' | 'confirmationMode'>): string {
+  const base = [input.jobId, input.kind, canonical(input.selection), canonical(input.params), input.items.map((i) => i.id)];
+  // 旧指纹保持不变：只有 explicit 模式才追加
+  const canon = JSON.stringify(input.confirmationMode === 'explicit' ? [...base, 'explicit'] : base);
   return createHash('sha256').update(canon).digest('hex');
 }
 
@@ -201,6 +205,7 @@ export class JobsService {
       reversible: handler.undoable,
       state: 'planned',
       by: input.by ?? null,
+      confirmationMode: input.confirmationMode ?? null,
     });
     return this.enqueue(job.id, input.tokenId ?? null);
   }
@@ -293,6 +298,27 @@ export class JobsService {
       progress: () => this.store.get(jobId)?.progress ?? { done: 0, total: 0 },
     };
   }
+
+  // ── 明确确认投影（F23）──────────────────────────────────────────────────
+
+  /** 任务级串行边界（供确认控制器在锁内复验 + 提交 + 投影） */
+  runInJobGate<T>(id: string, fn: () => Promise<T> | T): Promise<T> {
+    return this.withJob(id, fn);
+  }
+
+  /** 已提交 marks 事务 → 任务确认投影；调用方持 job gate 或由这里取。重复 sourceOpId 不重复计数。 */
+  async projectConfirmation(id: string, p: ConfirmationProjection): Promise<{ replayed: boolean; job: Job }> {
+    return this.withJob(id, () => {
+      const job = this.get(id);
+      if (!['running', 'interrupted', 'done'].includes(job.state)) throw new JobError('conflict', `任务处于 ${job.state}，不收确认`);
+      if (job.state === 'interrupted') this.store.setState(id, 'running');
+      const out = this.store.projectConfirmation(id, p);
+      if (!out.replayed && job.state !== 'done') this.settle(id);
+      return { replayed: out.replayed, job: this.get(id) };
+    });
+  }
+
+  hasProjected(id: string, sourceOpId: string): boolean { return this.store.hasProjected(id, sourceOpId); }
 
   // ── 取消 / 撤销 / 回流 ──────────────────────────────────────────────────
 

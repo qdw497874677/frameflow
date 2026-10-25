@@ -76,7 +76,7 @@ export class MarksStore {
   private readonly revisions = new Map<string, number>();
   /** 每张照片当前绑定的源版本；无记录 = 旧数据，按首次见到的版本建立基线。 */
   private readonly generations = new Map<string, string>();
-  private readonly operations = new Map<string, { hash: string; result: MarkTransactionResult }>();
+  private readonly operations = new Map<string, { hash: string; result: MarkTransactionResult; confirmation?: Record<string, unknown> }>();
   private readonly changes: MarkChange[] = [];
 
   constructor(dataDir: string, options: MarksLogOptions = {}) {
@@ -91,7 +91,7 @@ export class MarksStore {
           if (entry.generation) this.generations.set(entry.id, entry.generation);
           for (const ch of entry.changes) this.changes.unshift(ch);
         }
-        this.operations.set(row.opId, { hash: row.requestHash, result: row.result });
+        this.operations.set(row.opId, { hash: row.requestHash, result: row.result, ...(row.confirmation ? { confirmation: row.confirmation } : {}) });
       } else {
         this.changes.unshift(row);
         this.applyToState(row);
@@ -101,6 +101,17 @@ export class MarksStore {
   }
 
   get repair() { return this.log.repair; }
+  /** 已提交且带确认元数据的操作（F23 恢复补投影用）；按 confirmation.jobId 过滤 */
+  confirmedOps(jobId: string): Array<{ opId: string; confirmation: Record<string, unknown>; result: MarkTransactionResult }> {
+    const out: Array<{ opId: string; confirmation: Record<string, unknown>; result: MarkTransactionResult }> = [];
+    for (const [opId, op] of this.operations) {
+      if (op.confirmation && op.confirmation['jobId'] === jobId) out.push({ opId, confirmation: structuredClone(op.confirmation), result: structuredClone(op.result) });
+    }
+    return out;
+  }
+
+  hasOperation(opId: string): boolean { return this.operations.has(opId); }
+
   revisionOf(photoId: string): number { return this.revisions.get(photoId) ?? 0; }
 
   private applyToState(ch: MarkChange): void {
@@ -275,7 +286,7 @@ export class MarksStore {
     for (const [id, revision] of stagedRevisions) this.revisions.set(id, revision);
     for (const [id, generation] of stagedGenerations) this.generations.set(id, generation);
     for (const entry of entries) for (const ch of entry.changes) this.changes.unshift(ch);
-    this.operations.set(request.opId, { hash: requestHash, result: structuredClone(result) });
+    this.operations.set(request.opId, { hash: requestHash, result: structuredClone(result), ...(request.confirmation ? { confirmation: structuredClone(request.confirmation) } : {}) });
 
     // No await before the durable index/publication. Concurrent duplicate calls replay it.
     const failed = new Map<string, string>();

@@ -31,6 +31,13 @@ import { listChannels } from '../jobs/channels.ts';
 import { getHandler, jobKinds, registry } from '../jobs/registry.ts';
 import type { InboundInput } from '../jobs/registry.ts';
 import { JobsService } from '../jobs/service.ts';
+import { reconcileConfirmations } from '../jobs/confirmations.ts';
+import { FeishuController } from '../integrations/feishu/controller.ts';
+import { SessionStore } from '../integrations/feishu/sessions.ts';
+import { CursorStore } from '../integrations/feishu/cursors.ts';
+import { ActionLog } from '../integrations/feishu/actions.ts';
+import type { CardModel } from '../connectors/feishu/cards.ts';
+import type { SemanticContent } from '../connectors/types.ts';
 import { Auth, type ApiTokenMeta } from './auth.ts';
 
 const VERSION = '0.1.0';
@@ -106,8 +113,13 @@ function jobError(reply: FastifyReply, err: unknown): FastifyReply {
 }
 
 /** 组合根注入（F21）：平台适配器工厂由入口传入；测试注入假 SDK，默认不注册任何适配器（零外网） */
+/** 平台适配器可用的服务端上下文（卡片按 session/任务实时解析） */
+export interface ConnectorFactoryContext {
+  readonly resolve: (content: SemanticContent, sessionId?: string) => Promise<CardModel | null>;
+}
+
 export interface ServerDeps {
-  readonly connectorFactories?: Partial<Record<ConnectorKind, (lib: Library) => ConnectorFactory>>;
+  readonly connectorFactories?: Partial<Record<ConnectorKind, (lib: Library, ctx: ConnectorFactoryContext) => ConnectorFactory>>;
 }
 
 export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = {}): Promise<FastifyInstance> {
@@ -124,8 +136,12 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   // ── 连接器（F08/F09）：配置在 dataDir/connectors.json；尚未注册任何平台适配器，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED
   const connectorStore = ConnectorConfigStore.open(cfg.dataDir);
   const connectorRegistry = new ConnectorRegistry();
-  for (const [kind, make] of Object.entries(deps.connectorFactories ?? {})) if (make) connectorRegistry.register(kind as ConnectorKind, make(lib));
-  const connectorRuntime = new ConnectorRuntime(connectorStore, connectorRegistry, cfg.dataDir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }));
+  // 飞书交互（F22–F24）：控制器晚绑定（依赖投递账本），事件与卡片解析都经它
+  let feishu: FeishuController | null = null;
+  const fctx: ConnectorFactoryContext = { resolve: async (c, sid) => (feishu ? feishu.resolve(c, sid) : null) };
+  for (const [kind, make] of Object.entries(deps.connectorFactories ?? {})) if (make) connectorRegistry.register(kind as ConnectorKind, make(lib, fctx));
+  const connectorRuntime = new ConnectorRuntime(connectorStore, connectorRegistry, cfg.dataDir,
+    async (id, ev) => (feishu ? feishu.handle(id, ev) : { kind: 'rejected', code: 'NO_HANDLER' }));
   await connectorRuntime.sync();
   app.addHook('onClose', async () => connectorRuntime.stopAll());
   // ── 投递策略与预览（F11/F12）：策略在 dataDir/delivery-policies.json，预览只在内存、零发送
@@ -138,8 +154,24 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   // ── 确认与外传（F13–F16）：经连接器运行时发送；未注册适配器/未启用即 failed（不触网）
   const pstate = () => ({ connectors: connectorStore.current, policies: policyStore.current });
   const confirmStore = ConfirmationStore.open(cfg.dataDir);
+  const deliveryStore = DeliveryStore.open(cfg.dataDir);
+  const fsessions = new SessionStore(cfg.dataDir);
+  const fcursors = new CursorStore(cfg.dataDir);
+  feishu = new FeishuController({
+    sessions: fsessions, actions: new ActionLog(cfg.dataDir), cursors: fcursors, config: () => connectorStore.current,
+    jobs: {
+      get: (id) => { try { return jobs.get(id); } catch { return undefined; } },
+      runInJobGate: (id, fn) => jobs.runInJobGate(id, fn),
+      projectConfirmation: (id, p) => jobs.projectConfirmation(id, p),
+    },
+    marks: lib,
+    projectOf: (id) => confirmStore.byJob(id)?.snapshot.projectId,
+    deliveredTargets: (id) => deliveryStore.listJob(id).filter((p) => p.state === 'sent').map((p) => p.targetId),
+    send: (cid, input) => connectorRuntime.send(cid, input),
+    update: (cid, input) => connectorRuntime.update(cid, input),
+  });
   const dispatcher = new DeliveryDispatcher({
-    store: DeliveryStore.open(cfg.dataDir), confirmations: confirmStore, state: pstate,
+    store: deliveryStore, confirmations: confirmStore, state: pstate,
     transport: process.env.FRAMEFLOW_FAKE_TRANSPORT === 'e2e'
       // 仅浏览器 e2e：离线假传输，目标 externalId 以 oc_fail 开头的失败，其余成功；绝不触网
       ? { send: async (r) => {
@@ -149,8 +181,15 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
         } }
       : { send: async (r) => {
           // 真实外传经运行时：执行时刻重新授权（实例停用/目标删除即拒绝）
-          const out = await connectorRuntime.send(r.connectorId, { targetId: r.targetId, intentId: r.intentId, content: { type: 'task-entry', taskId: r.jobId } });
-          if (out.status === 'sent') return { messageId: out.messageId };
+          // 入口卡带 session（按钮只有不透明 sessionId）；发出后绑定消息与该目标游标
+          const inst = connectorStore.current.instances.find((c) => c.id === r.connectorId);
+          const session = fsessions.create({ kind: 'task-entry', connectorId: r.connectorId, tenantId: inst?.tenantId ?? '', targetId: r.targetId, jobId: r.jobId, photoId: null, revision: null, generation: null });
+          const out = await connectorRuntime.send(r.connectorId, { targetId: r.targetId, intentId: r.intentId, content: { type: 'task-entry', taskId: r.jobId }, sessionId: session.sessionId });
+          if (out.status === 'sent') {
+            fsessions.bindMessage(session.sessionId, out.messageId);
+            fcursors.set({ jobId: r.jobId, targetId: r.targetId, photoId: null, messageId: out.messageId, sessionId: session.sessionId });
+            return { messageId: out.messageId };
+          }
           if (out.status === 'unknown') throw new UnknownOutcome(out.code);
           throw new Error(out.code);
         } },
@@ -164,9 +203,23 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
       jobId: rec.jobId, requestId: rec.requestId, kind: 'annotate', selection: { ids: [...rec.snapshot.photoIds], project: rec.snapshot.projectId },
       params: { channel: 'inapp', label: (rec.snapshot.params.alias ?? '').replace(/[|\n\r]/g, ' ').trim().slice(0, 40) || '外部批注', note: rec.snapshot.params.note, notifyOnComplete: rec.snapshot.params.notifyOnComplete, projectId: rec.snapshot.projectId },
       items: rec.snapshot.photoIds.map((id) => ({ id })), by: 'delivery-confirmation',
+      // F23：有外部目标的任务按唯一照片明确确认计数
+      ...(rec.snapshot.targets.length ? { confirmationMode: 'explicit' as const } : {}),
     }),
   });
   try { confirmations.recover(); } catch (e) { app.log.warn({ err: e }, '确认恢复失败'); }
+  // F23/F24 恢复：先按 marks 日志补已提交未投影的确认，再重放仍为 accepted 的卡片动作
+  for (const j of jobs.list({})) {
+    if (j.confirmationMode !== 'explicit') continue;
+    try {
+      await reconcileConfirmations({
+        confirmedOps: (id) => lib.marks.confirmedOps(id), hasProjected: (id, op) => jobs.hasProjected(id, op),
+        projectConfirmation: (id, p) => jobs.projectConfirmation(id, p), get: (id) => { try { return jobs.get(id); } catch { return undefined; } },
+      }, j.id);
+    } catch (e) { app.log.warn({ err: e, jobId: j.id }, '确认投影对账失败'); }
+  }
+  feishu.recover();
+  app.addHook('onClose', async () => feishu?.idle());
   registerDeliveryRoutes(app, {
     confirmations, dispatcher,
     policies: policyStore, connectors: connectorStore, previews, authEnabled: () => auth.enabled, via: (req) => infoOf(req).via,
