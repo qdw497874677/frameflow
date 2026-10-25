@@ -245,7 +245,7 @@ async function run(dir, { password, width, mode }) {
   await writeFile(config, JSON.stringify({ host: '127.0.0.1', port, password, dataDir: join(dir, `data-${mode}`), roots: [{ id: 'e2e', label: '连接器测试', path: library }] }));
   let log = '';
   const server = spawn(process.execPath, ['src/index.ts', `--config=${config}`], {
-    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', ...(mode === 'dispatch' || mode === 'delivery' ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: join(REPO, 'server'), env: { ...process.env, ARTWORKS_CONFIG: config, [FAKE_ENV]: 'fake-value-not-a-secret', FRAMEFLOW_FEISHU_SDK: 'disabled', ...(mode === 'dispatch' || mode === 'delivery' ? { FRAMEFLOW_FAKE_TRANSPORT: 'e2e' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (b) => { log += b; });
   server.stderr.on('data', (b) => { log += b; });

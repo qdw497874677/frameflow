@@ -7,12 +7,31 @@
 
 import { buildServer } from './api/server.ts';
 import { loadConfig } from './config.ts';
+import { loadRealSdk } from './connectors/feishu/client.ts';
+import { feishuFactory } from './connectors/feishu/transport.ts';
 import { endExif } from './core/exif.ts';
 import { Library } from './core/library.ts';
 
 const cfg = loadConfig();
 const lib = new Library(cfg);
-const app = await buildServer(cfg, lib);
+// 飞书适配器（F21）：SDK 动态加载；只有显式启用的实例才会建连接。
+// FRAMEFLOW_FEISHU_SDK=disabled 时不注册（离线 e2e 用，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED）。
+const feishuSdk = process.env.FRAMEFLOW_FEISHU_SDK === 'disabled' ? null : await loadRealSdk();
+const app = await buildServer(cfg, lib, {
+  connectorFactories: feishuSdk
+    ? {
+        feishu: (l) => feishuFactory({
+          sdk: () => feishuSdk,
+          preview: async (photoId) => {
+            const rec = l.get(photoId);
+            if (!rec) throw new Error('PHOTO_NOT_FOUND');
+            const { path, etag } = await l.thumbs.thumb(rec, 2048);
+            return { path, signature: etag };
+          },
+        }),
+      }
+    : {},
+});
 
 await app.listen({ host: cfg.host, port: cfg.port });
 

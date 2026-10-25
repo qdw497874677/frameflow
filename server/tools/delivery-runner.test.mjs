@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DeliveryStore } from '../src/delivery/store.ts';
-import { DeliveryRunner } from '../src/delivery/runner.ts';
+import { DeliveryRunner, UnknownOutcome } from '../src/delivery/runner.ts';
 
 /** 可控假传输：按 (target, part) 指定行为；记录每次调用 */
 function fakeTransport() {
@@ -84,4 +84,16 @@ test('发送前复核授权：撤销即 failed，不调传输', async (t) => {
   const v = await new DeliveryRunner({ store, transport: tr, authorized: (x) => x.targetId !== 'g1' }).run({ jobId: 'j', targets: T, parts: ['p0'] });
   assert.deepEqual(tr.calls, ['g2#0']);
   assert.equal(v[0].error, 'AUTHORIZATION_REVOKED');
+});
+
+test('F21 传输明确报告 unknown：记 unknown，不自动重发', async (t) => {
+  const dir = setup(t);
+  const store = DeliveryStore.open(dir);
+  let n = 0;
+  const runner = new DeliveryRunner({ store, transport: { send: async () => { n++; throw new UnknownOutcome('TIMEOUT'); } }, authorized: () => true });
+  let v = await runner.run({ jobId: 'j', targets: [T[0]], parts: ['p0'] });
+  assert.equal(v[0].state, 'unknown');
+  v = await runner.run({ jobId: 'j', targets: [T[0]], parts: ['p0'] });
+  assert.equal(v[0].state, 'unknown');
+  assert.equal(n, 1);
 });

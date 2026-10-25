@@ -121,3 +121,65 @@ test('停用后事件拒绝；跨实例身份拒绝', async t => {
   assert.equal((await h(ev('c1'))).code, 'CONNECTOR_DISABLED');
   assert.equal(events.length, 1);
 });
+
+// ── F21：飞书适配器经运行时（假 SDK，零网络）
+import Fastify from 'fastify';
+import { feishuFactory } from '../src/connectors/feishu/transport.ts';
+import { registerConnectorRoutes } from '../src/api/connectors.ts';
+
+function feishuSetup(t) {
+  const dir = tmp(t);
+  const store = ConnectorConfigStore.open(dir);
+  store.replace([inst('c1'), inst('c2')], 0);
+  const n = { api: 0, ws: 0, start: 0, close: 0, create: [] };
+  const sdk = {
+    api() { n.api++; return {
+      createMessage: async (r) => { n.create.push(r); return { code: 0, data: { message_id: 'om_x' } }; },
+      patchMessage: async () => ({ code: 0 }), uploadImage: async () => ({ code: 0, data: { image_key: 'i' } }),
+      uploadFile: async () => ({ code: 0, data: { file_key: 'f' } }), verifyToken: async () => ({ code: 0 }) }; },
+    longConnection() { n.ws++; return { start: async () => { n.start++; }, close: () => { n.close++; } }; },
+  };
+  const reg = new ConnectorRegistry();
+  reg.register('feishu', feishuFactory({ sdk: () => sdk }));
+  const rt = new ConnectorRuntime(store, reg, dir, async () => ({ kind: 'rejected', code: 'NO_HANDLER' }), ENV);
+  t.after(() => rt.stopAll());
+  return { store, rt, n };
+}
+
+test('F21 飞书工厂：未启用零 SDK 调用；启用只建一条长连接；stopAll 关闭', async t => {
+  const { store, rt, n } = feishuSetup(t);
+  await rt.sync();
+  assert.deepEqual([n.api, n.ws, n.start], [0, 0, 0]);
+  enable(store, ['c1']);
+  await rt.sync();
+  assert.equal(n.start, 1);
+  assert.equal(rt.status('c1').state, 'connected');
+  const r = await rt.send('c1', { targetId: 'g1', intentId: 'i1', content: { type: 'test-card' } });
+  assert.equal(r.status, 'sent');
+  assert.equal(n.create[0].receiveId, 'oc_c1_g1');
+  assert.equal((await rt.send('c2', { targetId: 'g1', intentId: 'i2', content: { type: 'test-card' } })).status, 'failed');
+  await rt.stopAll();
+  assert.equal(n.close, 1);
+});
+
+test('F21 测试卡 API：须确认、只发已授权目标、须启用', async t => {
+  const { store, rt, n } = feishuSetup(t);
+  store.replace(store.current.instances.map((i) => i.id === 'c1' ? { ...i, targets: [...i.targets, { ...target('c1', 'g2'), projectIds: [] }] } : i), store.current.revision);
+  const app = Fastify();
+  registerConnectorRoutes(app, { store, runtime: rt, env: ENV, authEnabled: () => true, via: (req) => req.headers['x-test-via'] ?? 'disabled' });
+  await app.ready();
+  t.after(() => app.close());
+  const call = (payload, via = 'session') => app.inject({ method: 'POST', url: '/api/v1/connectors/c1/test-card', payload, headers: { 'x-test-via': via, host: 'h', origin: 'http://h' } });
+  assert.equal((await call({ targetId: 'g1', confirm: true }, 'bearer')).statusCode, 403);
+  assert.equal((await call({ targetId: 'g1' })).json().code, 'CONFIRM_REQUIRED');
+  assert.equal((await call({ targetId: 'g1', confirm: true })).json().code, 'CONNECTOR_DISABLED');
+  enable(store, ['c1']);
+  await rt.sync();
+  assert.equal((await call({ targetId: 'nope', confirm: true })).json().code, 'TARGET_NOT_FOUND');
+  assert.equal((await call({ targetId: 'g2', confirm: true })).json().code, 'TARGET_NOT_AUTHORIZED');
+  assert.equal(n.create.length, 0);
+  const ok = await call({ targetId: 'g1', confirm: true });
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().result.status, 'sent');
+  assert.equal(n.create.length, 1);
+});

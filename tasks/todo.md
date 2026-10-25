@@ -194,28 +194,32 @@ F16–F18通过，用户审核网页派发交互；不使用真实目标。未�
 
 ## 阶段 G：官方传输适配（V3）
 
-### [ ] F19 — SDK 生命周期与可信事件映射
+### [x] F19 — SDK 生命周期与可信事件映射
 - 模块：feishu-connector；验收：FC-01/02/05、CC-02/04。依赖：F01、F08。
 - 验收：①每实例一个国内WSClient，SDK负责重连、状态区分出站与长连接；②新版卡片/消息事件映射可信租户/用户/目标，缺上下文拒绝；③日志净化、限流/超时结果正确，回调有界受理3秒内完成。
 - 文件：`server/src/connectors/feishu/client.ts`、`server/src/connectors/feishu/events.ts`、`server/src/connectors/feishu/transport.ts`、`server/tools/feishu-connector.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-connector.test.mjs)`；先假SDK，不启动真实WS。
+- 完成（2026-10-25）：feishu/events.ts、media.ts、cards.ts；可信租户/用户/目标映射，预览上传缓存，14天更新窗口（保守常量）。
 
-### [ ] F20 — 压缩预览与卡片发送/更新
+### [x] F20 — 压缩预览与卡片发送/更新
 - 模块：feishu-connector；验收：FC-03/04/06。依赖：F19、F15。
 - 验收：①≤2048预览受控读取/上传≤10MB，不回退原片；②按app+源签名缓存key、失效重传，open_id/chat_id映射正确；③session语义卡片与更新有效期受限，超期仅显式操作重开，平台更新失败不撤销标记。
 - 文件：`server/src/connectors/feishu/media.ts`、`server/src/connectors/feishu/cards.ts`、`server/src/connectors/feishu/transport.ts`、`server/tools/feishu-connector.test.mjs`。
 - 验证：`(cd server && node --test tools/feishu-connector.test.mjs)`；断言上传字节/参数和发送次数。
+- 完成（2026-10-25）：feishu/transport.ts 实现 ManagedConnectorPort；超时/迟到→unknown，限流可重试，图片失效重传一次；假SDK测试 tools/feishu-connector.test.mjs。
 
-### [ ] F21 — 启动装配、连接状态与显式测试卡
+### [x] F21 — 启动装配、连接状态与显式测试卡
 - 模块：connector-core、feishu-connector；验收：CC-01/02/06/07、FC-01。依赖：F09、F19、F20。
 - 验收：①组合根注入适配器/恢复顺序，默认disabled零外网，关闭服务正确停止；②无消息连接测试与明确确认的测试卡区分，测试卡只发授权目标；③能力摘要真实反映启用状态，普通凭据不能调用管理测试发送。
 - 文件：`server/src/index.ts`、`server/src/api/connectors.ts`、`contracts/openapi.yaml`、`web/src/api/contract.ts`、`server/tools/connector-runtime.test.mjs`。
 - 验证：`(cd server && node --test tools/connector-runtime.test.mjs)`；只用依赖注入假SDK证明装配，真发送留F33。
+- 完成（2026-10-25）：index.ts 组合根注入 feishuFactory（动态加载SDK，FRAMEFLOW_FEISHU_SDK=disabled 可关闭）；POST /connectors/{id}/test-card 须确认且只发授权目标；capabilities.connectors 反映真实状态；派发经运行时发送，UnknownOutcome 记 unknown。
 
-### [ ] 检查点 G — 传输隔离
+### [x] 检查点 G — 传输隔离
 F19–F21通过，SDK类型不进入策略模块；核对长连接/更新限制和最小权限。未经联调许可不打开真实连接。
 
 ## 阶段 H：确认动作与共享进度（V4）
+- 完成（2026-10-25）：F19–F21 通过；SDK 仅在 feishu/ 目录，策略模块零 SDK 类型；未打开真实连接。
 
 ### [ ] F22 — 卡片 session、动作意图与目标游标
 - 模块：feishu-interaction；验收：FI-04/06/08。依赖：F07、F15、F19。

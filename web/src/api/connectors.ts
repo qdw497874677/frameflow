@@ -66,6 +66,9 @@ export const connectorsApi = {
   remove: (id: string, expectedRevision: number) =>
     call<{ revision: number }>('DELETE', `/connectors/${encodeURIComponent(id)}?expectedRevision=${expectedRevision}`),
   test: (id: string) => call<ConnectorVerifyResultDto>('POST', `/connectors/${encodeURIComponent(id)}/test`),
+  /** 显式测试卡（F21）：会真实发送一条消息，调用方须先让用户确认 */
+  testCard: (id: string, targetId: string) =>
+    call<{ targetId: string; result: { status: string; code?: string } }>('POST', `/connectors/${encodeURIComponent(id)}/test-card`, { targetId, confirm: true }),
 };
 
 /** 投递策略 / 预览 / 确认 / 外传状态（F12/F16） */
