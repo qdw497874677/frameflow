@@ -4,10 +4,11 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
-import { ConnectorConfigStore } from '../src/connectors/config.ts';
-import { ConnectorRegistry } from '../src/connectors/registry.ts';
-import { ConnectorRuntime } from '../src/connectors/runtime.ts';
-import { registerConnectorRoutes } from '../src/api/connectors.ts';
+import { ConnectorConfigStore } from '../src/adapters/outbound/fs/connector-config-store.ts';
+import { ConnectorRegistry } from '../src/application/connectors/registry.ts';
+import { ConnectorRuntime } from '../src/application/connectors/runtime.ts';
+import { PidFileLock } from '../src/adapters/outbound/fs/writer-lock.ts';
+import { registerConnectorRoutes } from '../src/adapters/inbound/http/connectors.ts';
 
 const SECRET = 'fake-secret-value-xyz';
 const ENV = { FF_C1: SECRET };
@@ -26,7 +27,7 @@ async function setup(t, { authEnabled = true, referenced = false } = {}) {
     async update() { calls.push('update'); return { status: 'sent', messageId: 'm' }; },
     async verify() { calls.push('verify'); return { ok: true }; },
   }));
-  const runtime = new ConnectorRuntime(store, reg, dir, async () => ({ kind: 'accepted' }), ENV);
+  const runtime = new ConnectorRuntime(store, reg, new PidFileLock(dir), async () => ({ kind: 'accepted' }), ENV);
   const app = Fastify();
   registerConnectorRoutes(app, { store, runtime, env: ENV, authEnabled: () => authEnabled, via: (req) => req.headers['x-test-via'] ?? 'disabled', isReferenced: () => referenced });
   await app.ready();

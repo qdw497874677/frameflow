@@ -6,7 +6,7 @@
  *
  * 它自己起一个**独立端口、独立数据目录**的服务实例（不动 dev.sh 那个），用
  * `ARTWORKS_TEST_HANG_ROOT=<rootId>` 让某个根在扫描时「永远不返回」——这是扫描器里的
- * 测试钩子（`server/src/core/scan.ts` 的 `fakeHang()`），比真去拔网线稳定得多。
+ * 测试钩子（`server/src/adapters/outbound/fs/scan.ts` 的 `fakeHang()`），比真去拔网线稳定得多。
  *
  * 断言：
  *   ① 挂死根卡住的那几秒里，`/health`、`/roots`、`/photos` 仍然秒回（服务没被冻住）；

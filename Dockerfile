@@ -43,7 +43,7 @@ WORKDIR /app
 COPY --from=builder /app/server/node_modules server/node_modules
 COPY server/package.json server/package-lock.json server/
 COPY server/src server/src
-# server/src/api/server.ts 用 `join(process.cwd(), '..', 'web', 'dist')` 找前端产物，
+# server/src/index.ts 用 `join(process.cwd(), '..', 'web', 'dist')` 找前端产物，
 # 所以 cwd 必须是 /app/server，dist 落在 /app/web/dist
 COPY --from=builder /app/web/dist web/dist
 

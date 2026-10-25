@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MarksStore } from '../src/core/marks.ts';
-import { sourceGeneration, verifySourceGeneration } from '../src/core/source-generation.ts';
+import { MarksStore } from '../src/adapters/outbound/fs/marks-store.ts';
+import { sourceGeneration, verifySourceGeneration } from '../src/adapters/outbound/fs/source-generation.ts';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(join(tmpdir(), 'marks-generation-'));

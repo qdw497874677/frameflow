@@ -7,10 +7,10 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
-import { JsonlLog, StoreCorruptError } from '../src/integrations/feishu/jsonl.ts';
-import { SessionStore } from '../src/integrations/feishu/sessions.ts';
-import { LoginLimiter } from '../src/api/login-limiter.ts';
-import { Auth } from '../src/api/auth.ts';
+import { JsonlLog, StoreCorruptError } from '../src/adapters/feishu/jsonl.ts';
+import { SessionStore } from '../src/adapters/feishu/sessions.ts';
+import { LoginLimiter } from '../src/adapters/inbound/http/login-limiter.ts';
+import { Auth } from '../src/adapters/inbound/http/auth.ts';
 import { makeFixture, PASSWORD } from './connector-fixture.mjs';
 
 const tmp = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ff-hard-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
@@ -111,9 +111,9 @@ test('HTTP：登录 429 + Retry-After；DELETE /session 吊销；Secure 按配�
 });
 
 test('HTTP：trustProxy + X-Forwarded-Proto=https 时 auto 加 Secure；cookieSecure=always 强制', async (t) => {
-  const { loadConfig } = await import('../src/config.ts');
-  const { Library } = await import('../src/core/library.ts');
-  const { buildServer } = await import('../src/api/server.ts');
+  const { loadConfig } = await import('../src/adapters/outbound/config-file.ts');
+  const { Library } = await import('../src/application/library.ts');
+  const { buildServer } = await import('../src/adapters/inbound/http/server.ts');
   const d = tmp(t);
   fs.mkdirSync(path.join(d, 'lib'));
   for (const [mode, trust, proto, expect] of [['auto', true, 'https', true], ['auto', false, 'https', false], ['always', false, undefined, true], ['never', true, 'https', false]]) {

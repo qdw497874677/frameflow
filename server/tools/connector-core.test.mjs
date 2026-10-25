@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ConnectorConfigStore, CONNECTORS_FILE, parseInstance, resolveSecret, sanitize } from '../src/connectors/config.ts';
-import { decideAccess } from '../src/connectors/access.ts';
+import { ConnectorConfigStore, CONNECTORS_FILE } from '../src/adapters/outbound/fs/connector-config-store.ts';
+import { parseInstance, resolveSecret, sanitize } from '../src/domain/connectors/config.ts';
+import { decideAccess } from '../src/domain/connectors/access.ts';
 
 function tmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'connector-core-'));
@@ -94,7 +95,7 @@ test('Secret只从环境读取并脱敏，配置/列表不含值', t => {
 
 test('通用类型不引入飞书SDK', () => {
   for (const f of ['types.ts', 'config.ts', 'access.ts']) {
-    const src = fs.readFileSync(new URL(`../src/connectors/${f}`, import.meta.url), 'utf8');
+    const src = fs.readFileSync(new URL(`../src/domain/connectors/${f}`, import.meta.url), 'utf8');
     assert.ok(!/larksuite|lark|feishu\//i.test(src.replace(/'feishu'/g, '')), f);
   }
 });

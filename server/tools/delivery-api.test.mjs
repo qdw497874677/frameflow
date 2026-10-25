@@ -4,10 +4,10 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
-import { ConnectorConfigStore } from '../src/connectors/config.ts';
-import { PolicyStore } from '../src/delivery/policies.ts';
-import { PreviewService } from '../src/delivery/previews.ts';
-import { registerDeliveryRoutes } from '../src/api/delivery.ts';
+import { ConnectorConfigStore } from '../src/adapters/outbound/fs/connector-config-store.ts';
+import { PolicyStore } from '../src/adapters/outbound/fs/policy-store.ts';
+import { PreviewService } from '../src/application/delivery/previews.ts';
+import { registerDeliveryRoutes } from '../src/adapters/inbound/http/delivery.ts';
 
 const inst = (id, projectIds = ['p']) => ({ id, kind: 'feishu', label: id, appId: `cli_${id}`, secretEnv: 'FF_X', tenantId: 't1',
   targets: [{ id: 'g1', connectorId: id, label: `${id}群`, kind: 'group', externalId: `oc_${id}`, projectIds, allowedActorIds: [], canAnnotate: false, canRequestJpeg: false }],
@@ -96,9 +96,10 @@ test('管理门：无密码 / 非 session / 跨站 一律拒绝', async (t) => {
 });
 
 // ── F16：确认、投递查询与单目标重试（假传输，零真实发送）
-import { ConfirmationService, ConfirmationStore } from '../src/delivery/confirmations.ts';
-import { DeliveryDispatcher } from '../src/delivery/dispatcher.ts';
-import { DeliveryStore } from '../src/delivery/store.ts';
+import { ConfirmationService } from '../src/application/delivery/confirmation-service.ts';
+import { ConfirmationStore } from '../src/adapters/outbound/fs/delivery-confirmations.ts';
+import { DeliveryDispatcher } from '../src/application/delivery/dispatcher.ts';
+import { DeliveryStore } from '../src/adapters/outbound/fs/delivery-ledger.ts';
 
 async function setupF16(t, behave) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-f16-'));

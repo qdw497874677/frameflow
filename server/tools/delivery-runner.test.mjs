@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DeliveryStore } from '../src/delivery/store.ts';
-import { DeliveryRunner, UnknownOutcome } from '../src/delivery/runner.ts';
+import { DeliveryStore } from '../src/adapters/outbound/fs/delivery-ledger.ts';
+import { DeliveryRunner, UnknownOutcome } from '../src/application/delivery/runner.ts';
 
 /** 可控假传输：按 (target, part) 指定行为；记录每次调用 */
 function fakeTransport() {
@@ -99,8 +99,8 @@ test('F21 传输明确报告 unknown：记 unknown，不自动重发', async (t)
 });
 
 test('F29 partOffset：完成通知分片独立序号段，不与派发分片混账', async (t) => {
-  const { DeliveryRunner } = await import('../src/delivery/runner.ts');
-  const { DeliveryStore } = await import('../src/delivery/store.ts');
+  const { DeliveryRunner } = await import('../src/application/delivery/runner.ts');
+  const { DeliveryStore } = await import('../src/adapters/outbound/fs/delivery-ledger.ts');
   const fsm = await import('node:fs'); const osm = await import('node:os'); const pm = await import('node:path');
   const dir = fsm.mkdtempSync(pm.join(osm.tmpdir(), 'runner-off-'));
   t.after(() => fsm.rmSync(dir, { recursive: true, force: true }));

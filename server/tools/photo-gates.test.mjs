@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { OperationGates } from '../src/core/operation-gates.ts';
+import { OperationGates } from '../src/application/operation-gates.ts';
 
 const P = OperationGates.photo;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

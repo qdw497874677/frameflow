@@ -48,7 +48,7 @@ async function main() {
   const chatId = val('--chat-id');
   if (wantSend && (!chatId || !/^oc_[A-Za-z0-9]+$/.test(chatId) || !has('--i-understand-sending'))) refuse('发送测试卡需要 --chat-id=oc_… 与 --i-understand-sending');
 
-  const { loadRealSdk } = await import('../src/connectors/feishu/client.ts');
+  const { loadRealSdk } = await import('../src/adapters/feishu/client.ts');
   const sdk = await loadRealSdk();
   const api = sdk.api(appId, process.env[secretEnv]);
   const v = await api.verifyToken();
