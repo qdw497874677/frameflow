@@ -13,3 +13,10 @@ test('Bug 7：搜索时项目文件列表让位给结果，只显示命中项', 
   assert.equal(projectListVisible(true), false);
   assert.equal(projectListVisible(false), true);
 });
+
+test('UX：有子目录的目录不显示「暂无照片或视频」', async () => {
+  const { emptyHintVisible } = await import('./file-search.ts');
+  assert.equal(emptyHintVisible({ photos: 0, subfolders: 3 }), false);
+  assert.equal(emptyHintVisible({ photos: 0, subfolders: 0 }), true);
+  assert.equal(emptyHintVisible({ photos: 2, subfolders: 0 }), false);
+});

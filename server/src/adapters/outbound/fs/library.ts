@@ -288,16 +288,17 @@ export class Library implements PhotoCatalog {
     const path = resolvePath(expandHome(String(input.path ?? '').trim()));
     if (!input.path?.trim() || !path.startsWith('/')) throw new Error('要给一个绝对路径（以 / 开头）');
     if (this.cfg.roots.some((r) => resolvePath(r.path) === path)) throw new Error(`这个目录已经是项目了：${path}`);
-    const reachable = await Promise.race([
+    const kind = await Promise.race([
       stat(path).then(
-        () => true,
-        () => false,
+        (st) => (st.isDirectory() ? 'dir' : 'file'),
+        () => 'missing',
       ),
-      new Promise<boolean>((done) => {
-        setTimeout(() => done(false), 3000).unref();
+      new Promise<'missing'>((done) => {
+        setTimeout(() => done('missing'), 3000).unref();
       }),
     ]);
-    if (!reachable) throw new Error(`路径访问不到（不存在，或挂载无响应）：${path}`);
+    if (kind === 'missing') throw new Error(`路径访问不到（不存在，或挂载无响应）：${path}`);
+    if (kind === 'file') throw new Error(`这是一个文件，不是目录：${path}`);
     const label = (input.label ?? '').trim() || basename(path);
     // id 从 label 派生，撞了就加 -2/-3 —— 与 loadConfig.normalizeRoots 同一套规则。
     // 但移除过的同路径项目优先用回原 id：标注/回收站记录都挂在 id 上，换了 id 就全断了。

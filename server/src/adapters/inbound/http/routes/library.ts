@@ -5,7 +5,7 @@ import { createReadStream, existsSync, type Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { selectionFromLegacyFilter, selectionFromQuery } from '../../../../domain/selection.ts';
+import { parseSelectionQuery, selectionFromLegacyFilter } from '../../../../domain/selection.ts';
 import { expandHome } from '../../../outbound/config-file.ts';
 import type { Library } from '../../../outbound/fs/library.ts';
 import { PreviewUnavailable } from '../../../outbound/thumbs.ts';
@@ -100,7 +100,9 @@ export function registerLibraryRoutes(app: FastifyInstance, { lib }: LibraryRout
   app.get('/api/v1/photos', async (req, reply) => {
     const q = req.query as { dir?: string; cursor?: string; limit?: string; sel?: string; filter?: string; recursive?: string };
     if (!q.dir) return reply.code(400).send({ error: '要带 dir（虚拟路径 /<rootId>/子目录 或真实磁盘路径）' });
-    const selection = q.sel ? selectionFromQuery(q.sel) : q.filter && q.filter !== 'all' ? selectionFromLegacyFilter(q.filter) : {};
+    const parsed = q.sel ? parseSelectionQuery(q.sel) : null;
+    if (parsed?.unknown.length) return reply.code(400).send({ error: `sel 里有认不出的条件：${parsed.unknown.slice(0, 3).join(', ').slice(0, 120)}` });
+    const selection = parsed ? parsed.selection : q.filter && q.filter !== 'all' ? selectionFromLegacyFilter(q.filter) : {};
     const page = lib.listPhotos({
       dir: q.dir,
       selection,

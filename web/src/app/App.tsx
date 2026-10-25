@@ -153,10 +153,10 @@ function SaveStatus() {
 }
 
 function CullProgress() {
-  const { items, cursor, total, nextCursor, loading, seen, unseenOnly, selection } = useAppState();
+  const { items, cursor, total, nextCursor, loading, seen, unseenOnly } = useAppState();
   const seenCount = items.filter(p => seen[p.id]).length;
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 text-xs text-muted-foreground">
-    <span className="tabular-nums" data-photo-position>{items[cursor] ? `第 ${cursor + 1} / ${selection.where?.del ? items.length : total} 张` : '没有当前照片'}</span>
+    <span className="tabular-nums" data-photo-position>{items[cursor] ? `第 ${cursor + 1} / ${Math.max(total, items.length)} 张` : '没有当前照片'}</span>
     <span title="仅当前浏览器；打标或主动翻过记为已看，打开不算。筛选待删时只统计当前筛选。" data-seen-progress>
       {nextCursor ? '已载入中' : '当前列表'}已看 {seenCount} / {items.length}
     </span>

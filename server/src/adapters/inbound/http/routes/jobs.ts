@@ -1,6 +1,7 @@
 /** 任务层与出站通道（见 docs/core-model.md §7） */
 
 import type { FastifyInstance } from 'fastify';
+import { hasInvalidStars } from '../../../../domain/marks.ts';
 import { jobKinds } from '../../../../application/jobs/registry.ts';
 import type { JobsService } from '../../../../application/jobs/service.ts';
 import { listChannels } from '../../../../domain/jobs/channels.ts';
@@ -78,6 +79,7 @@ export function registerJobRoutes(app: FastifyInstance, { jobs, lib }: JobRouteD
   // `by` 由凭据推（link:<批注人>），请求体里就算带了也不采信；只能写这个任务 items 里的照片。
   app.post('/api/v1/jobs/:id/inbound', async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (hasInvalidStars((req.body as { items?: unknown } | null)?.items)) return reply.code(400).send({ error: 'stars 只能是 0–5 的整数' });
     const items = inboundItemsOf(req.body);
     if (!items.length) return reply.code(400).send({ error: 'items 不能为空：每项至少要有 photoId' });
     const info = infoOf(req);

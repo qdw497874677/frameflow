@@ -72,8 +72,14 @@ export function matchesSelection(
 
 /** 紧凑字符串 → 选择集；认不出的词忽略（向前兼容）。 */
 export function selectionFromQuery(q?: string | null): Selection {
+  return parseSelectionQuery(q).selection;
+}
+
+/** 解析 `sel`，同时报出认不出的条件（HTTP 层据此回 400，而不是悄悄忽略、返回全集） */
+export function parseSelectionQuery(q?: string | null): { selection: Selection; unknown: string[] } {
   const sel: Selection = {};
-  if (!q) return sel;
+  const unknown: string[] = [];
+  if (!q) return { selection: sel, unknown };
 
   const where: NonNullable<Selection['where']> = {};
   const ids: string[] = [];
@@ -112,11 +118,12 @@ export function selectionFromQuery(q?: string | null): Selection {
 
     if (term === 'del') where.del = true;
     else if (term === 'marked') where.marked = true;
+    else unknown.push(term);
   }
 
   if (Object.keys(where).length) sel.where = where;
   if (ids.length) sel.ids = ids;
-  return sel;
+  return { selection: sel, unknown };
 }
 
 export function selectionIsEmpty(sel?: Selection): boolean {

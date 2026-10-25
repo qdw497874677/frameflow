@@ -12,3 +12,8 @@ export function matchesFileName(photo: Pick<Photo, 'displayName' | 'rawPath' | '
 export function projectListVisible(searchActive: boolean): boolean {
   return !searchActive;
 }
+
+/** 目录里「暂无照片或视频」只在真的空时显示：有子目录（树模式下就列在上面）时不显示，免得看着像出错 */
+export function emptyHintVisible(input: { photos: number; subfolders: number }): boolean {
+  return input.photos === 0 && input.subfolders === 0;
+}
