@@ -27,3 +27,11 @@
 ## 飞书模块
 
 `adapters/feishu/index.ts` 是唯一入口：`loadFeishuSdk`（真实 / 离线假 SDK / 不注册）、`feishuConnector`（连接器工厂）、`openFeishuInteraction`（卡片交互控制器 + 任务入口卡传输）。模块外的源码只能 import 这个文件（架构守卫校验）；测试可以直接测内部文件。
+
+## 备份与启动体检
+
+- `domain/maintenance/data-files.ts`：json / jsonl / 临时文件的体检规则（纯函数）。
+- `application/maintenance/check-data-dir.ts`：体检用例，经 `DataDirReader` 端口读数据目录。
+- `adapters/outbound/fs/data-dir.ts`：端口实现 + `backupDataDir`（复制数据目录并写 sha256 manifest，跳过 thumbs / previews 与 *.tmp）。
+- `adapters/inbound/cli/backup.ts`：`npm run backup -- <目标目录>`。
+- 启动时在 `index.ts` 跑一次体检，只记日志不阻断。

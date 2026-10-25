@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "node --watch src/index.ts",
     "start": "node src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backup": "node src/adapters/inbound/cli/backup.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

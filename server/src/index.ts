@@ -10,6 +10,8 @@ import { loadConfig } from './adapters/outbound/config-file.ts';
 import { feishuConnector, loadFeishuSdk } from './adapters/feishu/index.ts';
 import { endExif } from './adapters/outbound/exif.ts';
 import { Library } from './adapters/outbound/fs/library.ts';
+import { DataDirFiles } from './adapters/outbound/fs/data-dir.ts';
+import { checkDataDir } from './application/maintenance/check-data-dir.ts';
 
 const cfg = loadConfig();
 const lib = new Library(cfg);
@@ -32,6 +34,11 @@ app.log.info(
   },
   'art-workspace server 已启动',
 );
+
+// 启动体检：只报告，不阻断（读取方本就容忍崩溃尾行）；有错误时提示先备份再排查
+for (const f of checkDataDir(new DataDirFiles(cfg.dataDir))) {
+  app.log[f.severity === 'error' ? 'error' : 'warn']({ file: f.file }, `数据目录体检：${f.message}`);
+}
 
 // 冷启动先吃上次的索引：列表立刻能服务，随后 refresh() 在后台把盘上的变化扫进来
 const cached = lib.restoredFromCache;
