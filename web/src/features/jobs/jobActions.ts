@@ -7,18 +7,28 @@ import type { Job } from '../../core/types';
  * - 批注链接：任务取消/失败后链接已失效，不再给复制/打开。
  * - 进度：撤销后标注已回滚，进度条归零，并注明原进度。
  */
-export function jobActions(job: Pick<Job, 'state' | 'reversible' | 'progress'>, undone: boolean) {
+/**
+ * 任务进度的唯一口径：侧栏列表与详情页都用这一个（之前两处各算各的）。
+ * 显式确认任务按「已确认」计；撤销后归零并注明原进度。
+ */
+export function jobProgressView(job: Pick<Job, 'progress' | 'confirmation'>, undone = false) {
+  const base = job.confirmation ? { done: job.confirmation.confirmed, total: job.confirmation.total } : job.progress;
+  const done = undone ? 0 : base.done;
+  const text = `${job.confirmation ? '已确认 ' : ''}${base.done}/${base.total}`;
+  return {
+    done,
+    total: base.total,
+    percent: base.total ? Math.round((done / base.total) * 100) : 0,
+    label: undone ? `已撤销（原进度 ${text}）` : text,
+  };
+}
+
+export function jobActions(job: Pick<Job, 'state' | 'reversible' | 'progress' | 'confirmation'>, undone: boolean) {
   const ended = job.state === 'done' || job.state === 'failed' || job.state === 'cancelled';
-  const done = undone ? 0 : job.progress.done;
   return {
     canCancel: !ended,
     canUndo: Boolean(job.reversible) && !undone,
     linkUsable: job.state !== 'cancelled' && job.state !== 'failed',
-    progress: {
-      done,
-      total: job.progress.total,
-      percent: job.progress.total ? Math.round((done / job.progress.total) * 100) : 0,
-      label: undone ? `已撤销（原进度 ${job.progress.done}/${job.progress.total}）` : `${job.progress.done}/${job.progress.total}`,
-    },
+    progress: jobProgressView(job, undone),
   };
 }

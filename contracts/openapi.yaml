@@ -1135,6 +1135,7 @@ components:
             look: { type: string, nullable: true, description: 覆盖风格；null = 不套用 }
             strength: { type: number, minimum: 0, maximum: 1 }
             reviewedAt: { type: string, format: date-time, nullable: true }
+        source: { type: string, enum: [embedded_jpeg], nullable: true, description: "grade：像素来源；embedded_jpeg = 只有 RAW，预览与成品都用机内内嵌 JPEG（不做 RAW 解码）" }
 
     JobEvent:
       type: object

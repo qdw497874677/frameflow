@@ -39,6 +39,8 @@ export interface JobItem {
   sourceOpId?: string | null;
   /** 滤镜设置阶段（kind=grade）：逐张覆盖与过目时刻；缺省跟任务默认 */
   grade?: GradeItemState | null;
+  /** grade：像素来源 —— `embedded_jpeg` = 只有 RAW，看片台与成品都用机内内嵌 JPEG（不做 RAW 解码） */
+  source?: 'embedded_jpeg' | null;
 }
 
 export interface GradeItemState {

@@ -3,6 +3,7 @@ import { Palette } from 'lucide-react';
 import { jobSource } from '@/api';
 import { store, useAppState } from '@/core/store';
 import type { Job, Look, Selection } from '@/core/types';
+import { isRawEmbedded } from './cube';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -16,6 +17,7 @@ export function DispatchGradeButton() {
   const [error, setError] = useState<string | null>(null);
   const [looks, setLooks] = useState<Look[]>([]);
   const [look, setLook] = useState<string | null>(null);
+  const [keepGps, setKeepGps] = useState(false);
 
   const rootId = dir?.split('/')[1] ?? '';
   const empty = !selection.where || Object.keys(selection.where).length === 0;
@@ -49,13 +51,14 @@ export function DispatchGradeButton() {
   }, [open, scoped]);
 
   const photos = plan?.items.filter((i) => i.status !== 'skipped').length ?? 0;
+  const raws = plan?.items.filter(isRawEmbedded).length ?? 0;
   const videos = (plan?.items.length ?? 0) - photos;
 
   const start = async () => {
     if (busy) return;
     setBusy(true);
     try {
-      const job = await jobSource.createJob({ kind: 'grade', selection: scoped, params: { look }, mode: 'apply' });
+      const job = await jobSource.createJob({ kind: 'grade', selection: scoped, params: { look, keepGps }, mode: 'apply' });
       setOpen(false);
       store.setView('jobs');
       window.history.replaceState({}, '', `?view=jobs&job=${encodeURIComponent(job.id)}`);
@@ -101,6 +104,15 @@ export function DispatchGradeButton() {
             ))}
           </div>
           <p className="text-[11px] text-muted-foreground">先定任务默认风格，进去后可逐张改。</p>
+          {raws > 0 && (
+            <p className="text-[11px] text-muted-foreground" data-testid="dispatch-raw-notice">
+              其中 {raws} 张只有 RAW：预览与成品都用相机机内内嵌的 JPEG（不做 RAW 解码）。
+            </p>
+          )}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={keepGps} onChange={(e) => setKeepGps(e.target.checked)} />
+            成品保留 GPS 位置（缺省剥掉；拍摄时间、相机/镜头、作者/版权总会保留）
+          </label>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>取消</Button>
             <Button disabled={busy || !plan || photos === 0 || !look} onClick={() => void start()}>开始设置</Button>

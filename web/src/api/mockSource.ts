@@ -453,6 +453,7 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
     // 滤镜阶段：mock 没有风格文件（预览即原图），只演示状态流转
     async jobAction(id: string, name: string, body: Record<string, unknown> = {}): Promise<Job> {
       const job = await api.getJob(id);
+      if (name !== 'complete' && job.phase) throw new Error('正在后台导出，配方已锁定');
       if (name === 'set') {
         const item = job.items.find((i) => i.id === body.photoId);
         if (!item) throw new Error('这张照片不在这个任务里');
@@ -466,12 +467,25 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
       } else if (name === 'defaults') {
         job.params = { ...job.params, ...body };
       } else if (name === 'complete') {
-        job.items.forEach((i) => { if (i.status === 'planned') i.status = 'done'; });
-        job.progress = itemsProgress(job.items);
-        job.state = 'done';
-        job.finishedAt = new Date().toISOString();
-        job.artifacts = [{ kind: 'dir', path: `exports/${id}` }];
-        pushEvent(id, { type: 'done', note: '（mock）导出完成' });
+        // 与服务端一致：只受理（phase=exporting），后台每 0.6s 出一张
+        if (job.phase) throw new Error('正在后台导出，配方已锁定');
+        job.phase = 'exporting';
+        const tick = () => {
+          const next = job.items.find((i) => i.status === 'planned');
+          if (next && job.state === 'running') {
+            next.status = 'done';
+            job.progress = itemsProgress(job.items);
+            setTimeout(tick, 600);
+            return;
+          }
+          job.phase = null;
+          if (job.state !== 'running') return;
+          job.state = 'done';
+          job.finishedAt = new Date().toISOString();
+          job.artifacts = [{ kind: 'dir', path: `exports/${id}` }];
+          pushEvent(id, { type: 'done', note: '（mock）导出完成' });
+        };
+        setTimeout(tick, 600);
       } else throw new Error(`没有操作 ${name}`);
       return { ...job, items: job.items.map((i) => ({ ...i })) };
     },

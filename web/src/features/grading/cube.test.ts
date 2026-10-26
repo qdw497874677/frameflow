@@ -42,3 +42,18 @@ test('收场后只读：done / failed / cancelled 不能再改', () => {
   const items = [{ status: 'done' }, { status: 'failed' }, { status: 'skipped' }] as JobItem[];
   assert.deepEqual(exportSummary({ items }), { done: 1, failed: 1 });
 });
+
+test('导出中：配方锁定、逐张状态、RAW 内嵌标记', async () => {
+  const { isExporting, isRawEmbedded, itemExportLabel } = await import('./cube.ts');
+  const job = { state: 'running', phase: 'exporting' } as never;
+  assert.equal(isStageEditable(job), false);
+  assert.equal(isExporting(job), true);
+  assert.equal(isExporting({ state: 'done', phase: null } as never), false);
+  assert.equal(isStageEditable({ state: 'running', phase: null } as never), true);
+  assert.equal(itemExportLabel(job, { status: 'planned' } as never), '导出中…');
+  assert.equal(itemExportLabel(job, { status: 'done' } as never), '已导出');
+  assert.equal(itemExportLabel(job, { status: 'failed' } as never), '失败');
+  assert.equal(itemExportLabel({ state: 'running' } as never, { status: 'planned', grade: { reviewedAt: 'x' } } as never), '✓');
+  assert.equal(isRawEmbedded({ source: 'embedded_jpeg' }), true);
+  assert.equal(isRawEmbedded({}), false);
+});
