@@ -48,7 +48,26 @@ paths:
                   channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
                   executors: { type: array, items: { type: object, properties: { kind: { type: string }, model: { type: string }, local: { type: boolean }, status: { type: string, description: "planned = 占位声明，未实现（push 形态后置；当前 AI 接入用 pull：Bearer + GET /photos + PUT /marks）" } } } }
                   library: { $ref: "#/components/schemas/LibraryStatus" }
+                  ingest: { $ref: "#/components/schemas/IngestStatus" }
                   notes: { type: string, description: 给 AI 客户端看的一句话提示（当前能干什么） }
+
+  /library/events:
+    get:
+      summary: 库事件流（SSE）：实时入库的新照片
+      description: |
+        `text/event-stream`。事件：`photos.added` / `photos.updated`（data 为 LibraryEvent JSON，`id` = seq）、
+        `ready`（已追上，data `{lastSeq}`）、`resync`（缓冲已丢失、客户端应整页刷新）；每 25 秒一行 `: ping` 心跳。
+        断线重连带 `Last-Event-ID`（或 `?since=`）补发漏掉的事件。
+      x-implemented: true
+      parameters:
+        - { name: since, in: query, required: false, schema: { type: integer }, description: 从这个 seq 之后开始（默认 = 现在，只收新的） }
+      responses:
+        "200":
+          description: 事件流
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/LibraryEvent" }
+        "401": { $ref: "#/components/responses/Error" }
 
   /session:
     post:
@@ -1235,6 +1254,36 @@ components:
             afterDays: { type: integer, description: 0 = 关 }
             lastScanAt: { type: string, nullable: true }
             triggeredAt: { type: string, nullable: true, description: 这次启动/巡检触发补扫的时间 }
+
+    LibraryEvent:
+      type: object
+      properties:
+        seq: { type: integer }
+        at: { type: string }
+        type: { type: string, enum: [photos.added, photos.updated] }
+        rootId: { type: string }
+        relDir: { type: string }
+        photoIds: { type: array, items: { type: string } }
+        source: { type: string, nullable: true, description: "ftp / watch（逗号分隔）" }
+
+    IngestStatus:
+      type: object
+      description: 实时入库（`ingest` 配置）；enabled=false 时其余字段不出现。绝不含密码
+      properties:
+        enabled: { type: boolean }
+        rootId: { type: string }
+        inbox: { type: string, description: 今天的收件目录（相对根目录） }
+        stats:
+          type: object
+          properties:
+            received: { type: integer }
+            ignored: { type: integer }
+            ingested: { type: integer }
+            failed: { type: integer }
+            watching: { type: integer, description: 正在等写入稳定的文件数 }
+            lastAt: { type: string, nullable: true }
+            lastError: { type: string, nullable: true }
+        sources: { type: array, items: { type: object, additionalProperties: true, properties: { kind: { type: string, enum: [ftp, watch] } } } }
 
     CacheStats:
       type: object

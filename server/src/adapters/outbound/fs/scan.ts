@@ -133,53 +133,90 @@ async function scanRoot(root: RootCfg, opts: ScanOptions): Promise<RootScanOut> 
       continue;
     }
 
-    const groups = new Map<string, Group>();
-    for (const entry of entries) {
-      const name = entry.name;
-      if (entry.isDirectory()) {
-        if (cur.depth + 1 <= opts.maxDepth && !ignore.has(name.toLowerCase())) {
-          stack.push({ abs: join(cur.abs, name), rel: cur.rel ? `${cur.rel}/${name}` : name, depth: cur.depth + 1 });
-        }
-        continue;
+    const dir = await groupDir(cur.abs, cur.rel, entries, opts, (name) => {
+      if (cur.depth + 1 <= opts.maxDepth && !ignore.has(name.toLowerCase())) {
+        stack.push({ abs: join(cur.abs, name), rel: cur.rel ? `${cur.rel}/${name}` : name, depth: cur.depth + 1 });
       }
-      if (entry.isSymbolicLink()) continue; // 不跟软链：NAS 上绕圈是经典事故
-      if (!entry.isFile()) continue;
-
-      if (isJunkFile(name)) continue; // .DS_Store / ._X.JPG / Thumbs.db
-      const cat = classify(name);
-      if (cat === 'other' || cat === 'sidecar') continue;
-
-      let st;
-      try {
-        st = await stat(join(cur.abs, name));
-      } catch {
-        continue; // 扫描一瞬文件被移走：不是错误
-      }
-      fileCount++;
-
-      const key = stemOf(name).toLowerCase();
-      let group = groups.get(key);
-      if (!group) {
-        group = { relDir: cur.rel, stem: stemOf(name), absDir: cur.abs };
-        groups.set(key, group);
-      }
-      const found: Found = { path: join(cur.abs, name), name, ext: extOf(name), mtimeMs: st.mtimeMs, size: st.size };
-      if (cat === 'raw') {
-        if (!group.raw || found.ext < group.raw.ext) group.raw = found;
-      } else if (cat === 'image') {
-        if (!group.image || found.ext < group.image.ext) group.image = found;
-      } else if (cat === 'video') {
-        if (!group.video || found.ext < group.video.ext) group.video = found;
-      }
-    }
-
-    for (const group of groups.values()) {
+    });
+    fileCount += dir.fileCount;
+    for (const group of dir.groups) {
       const rec = await buildRecord(root.id, group, opts, opts.metaCache);
       if (rec) records.push(rec);
     }
   }
 
   return { records, fileCount, errors };
+}
+
+/** 一个目录内的配对分组（配对只看同目录，所以单目录增量扫描与全量扫描结果一致） */
+async function groupDir(
+  abs: string,
+  rel: string,
+  entries: import('node:fs').Dirent[],
+  _opts: ScanOptions,
+  onSubdir: (name: string) => void,
+): Promise<{ groups: Group[]; fileCount: number }> {
+  let fileCount = 0;
+  const groups = new Map<string, Group>();
+  for (const entry of entries) {
+    const name = entry.name;
+    if (entry.isDirectory()) {
+      onSubdir(name);
+      continue;
+    }
+    if (entry.isSymbolicLink()) continue; // 不跟软链：NAS 上绕圈是经典事故
+    if (!entry.isFile()) continue;
+
+    if (isJunkFile(name)) continue; // .DS_Store / ._X.JPG / Thumbs.db
+    const cat = classify(name);
+    if (cat === 'other' || cat === 'sidecar') continue;
+
+    let st;
+    try {
+      st = await stat(join(abs, name));
+    } catch {
+      continue; // 扫描一瞬文件被移走：不是错误
+    }
+    fileCount++;
+
+    const key = stemOf(name).toLowerCase();
+    let group = groups.get(key);
+    if (!group) {
+      group = { relDir: rel, stem: stemOf(name), absDir: abs };
+      groups.set(key, group);
+    }
+    const found: Found = { path: join(abs, name), name, ext: extOf(name), mtimeMs: st.mtimeMs, size: st.size };
+    if (cat === 'raw') {
+      if (!group.raw || found.ext < group.raw.ext) group.raw = found;
+    } else if (cat === 'image') {
+      if (!group.image || found.ext < group.image.ext) group.image = found;
+    } else if (cat === 'video') {
+      if (!group.video || found.ext < group.video.ext) group.video = found;
+    }
+  }
+  return { groups: [...groups.values()], fileCount };
+}
+
+/**
+ * 只扫一个目录（不递归）：实时入库用。返回这个目录下的全部照片实体（含元数据），
+ * 调用方用它整体替换索引里同目录的记录。元数据缓存照样复用（`metaCache` 会被就地更新）。
+ */
+export async function scanDirectory(
+  root: RootCfg,
+  relDir: string,
+  opts: Pick<ScanOptions, 'metaCache' | 'hasExtractedPreview' | 'onError'>,
+): Promise<{ records: PhotoRecord[]; fileCount: number }> {
+  const abs = relDir ? join(resolve(root.path), ...relDir.split('/')) : resolve(root.path);
+  const entries = await readdir(abs, { withFileTypes: true });
+  const full: ScanOptions = { roots: [root], ignore: [], maxDepth: 0, ...opts };
+  const dir = await groupDir(abs, relDir, entries, full, () => undefined);
+  const records: PhotoRecord[] = [];
+  for (const group of dir.groups) {
+    const rec = await buildRecord(root.id, group, full, opts.metaCache);
+    if (rec) records.push(rec);
+  }
+  await fillMetas(records, opts.metaCache, opts.metaCache, (text) => opts.onError?.(text));
+  return { records, fileCount: dir.fileCount };
 }
 
 /** 给一个根套上超时闸；超时/报错都只影响这个根，返回它自己的状态与结果 */
@@ -243,37 +280,43 @@ export async function scanLibrary(opts: ScanOptions): Promise<ScanResult> {
     rootStates.set(root.id, state);
   }
 
-  // 元数据：只有「三件套变了」或第一次见的文件才重算
+  await fillMetas(records, opts.metaCache, metaCache, addError);
+
+  return { records, metaCache, online, rootStates, fileCount, errors };
+}
+
+/**
+ * 元数据：只有「三件套变了」或第一次见的文件才重算。
+ * `prev` 是上一轮的缓存，`next` 收这一轮用到的（全量扫描时两者不同，顺手 prune；单目录时同一个）。
+ */
+async function fillMetas(records: PhotoRecord[], prev: Map<string, CachedMeta>, next: Map<string, CachedMeta>, addError: (text: string) => void): Promise<void> {
   const stale: string[] = [];
   for (const rec of records) {
     const src = rec.jpeg ?? rec.raw;
     if (!src) continue;
-    const cached = metaCache.get(rec.previewPath);
+    const cached = prev.get(rec.previewPath);
     if (cached && cached.mtimeMs === src.mtimeMs && cached.size === src.size) {
       rec.meta = cached.meta;
+      next.set(rec.previewPath, cached);
     } else {
       stale.push(rec.previewPath);
     }
   }
-
-  if (stale.length) {
-    const fresh = await Promise.race([
-      readMetas(stale, (path, err) => addError(`exiftool 读不了 ${path}: ${err instanceof Error ? err.message : String(err)}`)),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), EXIF_BATCH_TIMEOUT_MS).unref?.()),
-    ]);
-    if (fresh === null) addError(`exiftool 这一批超过 ${Math.round(EXIF_BATCH_TIMEOUT_MS / 1000)} 秒没读完：本轮先用缓存/空元数据，下次扫描再补`);
-    for (const rec of records) {
-      const src = rec.jpeg ?? rec.raw;
-      if (!src) continue;
-      const meta = fresh?.get(rec.previewPath);
-      if (meta) {
-        rec.meta = meta;
-        metaCache.set(rec.previewPath, { mtimeMs: src.mtimeMs, size: src.size, meta });
-      }
+  if (!stale.length) return;
+  const fresh = await Promise.race([
+    readMetas(stale, (path, err) => addError(`exiftool 读不了 ${path}: ${err instanceof Error ? err.message : String(err)}`)),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), EXIF_BATCH_TIMEOUT_MS).unref?.()),
+  ]);
+  if (fresh === null) addError(`exiftool 这一批超过 ${Math.round(EXIF_BATCH_TIMEOUT_MS / 1000)} 秒没读完：本轮先用缓存/空元数据，下次扫描再补`);
+  for (const rec of records) {
+    const src = rec.jpeg ?? rec.raw;
+    if (!src) continue;
+    const meta = fresh?.get(rec.previewPath);
+    if (meta) {
+      rec.meta = meta;
+      next.set(rec.previewPath, { mtimeMs: src.mtimeMs, size: src.size, meta });
     }
   }
-
-  return { records, metaCache, online, rootStates, fileCount, errors };
 }
 
 async function buildRecord(
