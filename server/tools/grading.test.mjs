@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parseCube, formatCube, identityLut, sampleLut, LutParseError } from '../src/domain/grading/lut.ts';
 import { lutEffect, runEffects } from '../src/domain/grading/effects.ts';
 import { resolveRecipe, exportName, isValidStrength } from '../src/domain/grading/recipe.ts';
+import { jobProgress } from '../src/domain/jobs/job.ts';
 
 const looksDir = path.join(import.meta.dirname, '..', 'assets', 'looks');
 const near = (a, b, eps = 1e-5) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
@@ -64,4 +65,10 @@ test('内置风格：每个都能解析、33³，并附许可与署名', () => {
   const notice = fs.readFileSync(path.join(looksDir, 'NOTICE'), 'utf8');
   for (const s of ['CC BY-SA 4.0', 'Pat David', 'Pavlov Dmitry', 'Michael Ezra']) assert.ok(notice.includes(s), s);
   assert.match(fs.readFileSync(path.join(looksDir, 'LICENSE'), 'utf8'), /Attribution-ShareAlike 4\.0/);
+});
+
+test('进度不把 skipped 算进去（滤镜任务里的视频不是活）', () => {
+  const items = [{ id: 'a', status: 'planned' }, { id: 'b', status: 'done' }, { id: 'v', status: 'skipped' }];
+  assert.deepEqual(jobProgress(items), { done: 1, total: 2 });
+  assert.deepEqual(jobProgress([{ id: 'v', status: 'skipped' }]), { done: 0, total: 0 });
 });

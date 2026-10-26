@@ -86,8 +86,9 @@ function set(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: Job
   const prev: GradeItemState = body['reset'] === true ? {} : { ...(item.grade ?? {}) };
   if (body['look'] !== undefined) prev.look = body['look'] as string | null;
   if (body['strength'] !== undefined) prev.strength = body['strength'] as number;
-  if (body['reviewed'] !== false) prev.reviewedAt = new Date().toISOString();
-  else prev.reviewedAt = null;
+  // 过目是显式动作（「通过」/ Enter 带 reviewed:true）；只改风格/强度不算看过
+  if (body['reviewed'] === true) prev.reviewedAt = new Date().toISOString();
+  else if (body['reviewed'] === false) prev.reviewedAt = null;
   sink.item(item.id, { grade: prev });
   return {};
 }

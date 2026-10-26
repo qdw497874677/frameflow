@@ -56,7 +56,12 @@ test('grade：逐张覆盖、过目、完成后导出到数据目录，原片不
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.equal(r.json.state, 'running');
     assert.equal(r.json.items[0].grade.look, 'vivid100');
-    assert.ok(r.json.items[0].grade.reviewedAt);
+    assert.ok(!r.json.items[0].grade.reviewedAt, '只改风格/强度不算过目');
+    r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/set`, { photoId: a.id, reviewed: true });
+    assert.ok(r.json.items[0].grade.reviewedAt, '显式通过才算过目');
+    assert.equal(r.json.items[0].grade.look, 'vivid100', '通过不动覆盖');
+    r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/set`, { photoId: a.id, strength: 0.5 });
+    assert.ok(r.json.items[0].grade.reviewedAt, '过目后再调强度不撤回过目');
     r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/set`, { photoId: b.id, look: null });
     assert.equal(r.json.items[1].grade.look, null);
     r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/set`, { photoId: 'nope', look: null });
