@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { LutCanvas } from './LutCanvas';
-import { clampStrength, cycleLook, isOverridden, jobDefaults, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
+import { clampStrength, cycleLook, exportSummary, isStageEditable, isOverridden, jobDefaults, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
 
 /**
  * 滤镜设置阶段（grade 任务 running/interrupted 时的工作台）：
@@ -45,7 +45,8 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
   const ids = looks.map((l) => l.id);
   const nameOf = (id: string | null) => (id ? looks.find((l) => l.id === id)?.name ?? id : '原图');
   const focused = photos.find((p) => p.id === focus) ?? null;
-  const editable = job.state === 'running' || job.state === 'interrupted';
+  const editable = isStageEditable(job);
+  const summary = exportSummary(job);
 
   const act = useCallback((name: string, body: Record<string, unknown>) => onAct(() => jobSource.jobAction(job.id, name, body)), [job.id, onAct]);
   const move = useCallback((step: number) => {
@@ -118,8 +119,17 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
     <div className="mt-3 rounded-lg border border-border/60 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm">滤镜设置</p>
-        <Badge variant="outline">已过目 {progress.reviewed}/{progress.total}</Badge>
-        <span className="text-[11px] text-muted-foreground">没过目的照片按任务默认导出</span>
+        {editable ? (
+          <>
+            <Badge variant="outline">已过目 {progress.reviewed}/{progress.total}</Badge>
+            <span className="text-[11px] text-muted-foreground">没过目的照片按任务默认导出；Enter / 「通过」才算过目</span>
+          </>
+        ) : (
+          <>
+            <Badge variant="outline">已导出 {summary.done}{summary.failed ? ` · 失败 ${summary.failed}` : ''}</Badge>
+            <span className="text-[11px] text-muted-foreground">任务已收场，下面是最终配方（只读）</span>
+          </>
+        )}
         {editable && (
           <Button size="sm" className="ml-auto" disabled={busy} onClick={() => void act('complete', {})}>
             <Check className="size-3.5" />
@@ -128,13 +138,13 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
         )}
       </div>
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-      <div className="mt-2 space-y-2">
+      {editable && <div className="mt-2 space-y-2">
         <p className="text-xs text-muted-foreground">任务默认（未选中照片时 [ ] 与 - = 调这里）</p>
         {strip(defaults.look, (id) => void act('defaults', { look: id }))}
         {strength(defaults.strength, (v) => void act('defaults', { strength: v }))}
-      </div>
+      </div>}
 
-      {focused && (
+      {editable && focused && (
         <div className="mt-3 rounded-md border border-border/60 p-2">
           <LutCanvas
             src={source.thumbUrl(focused.id, 2048)}
@@ -175,12 +185,13 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
             <li key={it.id}>
               <button
                 type="button"
+                disabled={!editable}
                 onClick={() => setFocus(it.id)}
                 className={cn('block w-full overflow-hidden rounded-md border text-left', focus === it.id ? 'border-gold' : 'border-border/60')}
               >
                 <LutCanvas src={source.thumbUrl(it.id, 512)} lut={lutOf(r.look)} strength={r.strength} original={original} alt={it.displayName ?? it.id} className="aspect-square w-full object-cover" />
                 <div className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
-                  <span className="truncate">{nameOf(r.look)}</span>
+                  <span className="truncate">{nameOf(r.look)}{r.look && r.strength < 1 ? ` · ${Math.round(r.strength * 100)}%` : ''}</span>
                   {isOverridden(it) && <span className="text-gold">改</span>}
                   <span className="ml-auto shrink-0 text-muted-foreground">
                     {it.status === 'done' ? '已导出' : it.status === 'failed' ? '失败' : it.grade?.reviewedAt ? '✓' : ''}
