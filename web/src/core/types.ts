@@ -210,6 +210,8 @@ export interface JobItem {
   at?: string | null;
   /** grade（滤镜设置阶段）：这张的覆盖与过目时刻；缺省字段跟任务默认 */
   grade?: { look?: string | null; strength?: number; reviewedAt?: string | null } | null;
+  /** grade：只有 RAW 时像素用机内内嵌 JPEG */
+  source?: 'embedded_jpeg' | null;
 }
 
 /** 内置胶片风格（GET /looks） */
@@ -286,6 +288,8 @@ export interface Job {
   /** F27：显式确认任务（飞书等外部目标回流）才有；跳过不算完成 */
   confirmationMode?: 'explicit';
   confirmation?: { confirmed: number; remaining: number; blocked: number; total: number };
+  /** 后台阶段：grade 完成后导出中 = 'exporting' */
+  phase?: 'exporting' | null;
 }
 
 /** 出站投递通道：只管「怎么把一批照片发出去」；回流一律走任务 */

@@ -6,7 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { LutCanvas } from './LutCanvas';
-import { clampStrength, cycleLook, exportSummary, isStageEditable, isOverridden, jobDefaults, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
+import { clampStrength, cycleLook, exportSummary, isExporting, isRawEmbedded, isStageEditable, isOverridden, itemExportLabel, jobDefaults, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
+import { jobProgressView } from '@/features/jobs/jobActions';
 
 /**
  * 滤镜设置阶段（grade 任务 running/interrupted 时的工作台）：
@@ -47,6 +48,10 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
   const focused = photos.find((p) => p.id === focus) ?? null;
   const editable = isStageEditable(job);
   const summary = exportSummary(job);
+  const exporting = isExporting(job);
+  const exportProgress = jobProgressView(job);
+  const raws = photos.filter(isRawEmbedded).length;
+  const keepGps = job.params?.['keepGps'] === true;
 
   const act = useCallback((name: string, body: Record<string, unknown>) => onAct(() => jobSource.jobAction(job.id, name, body)), [job.id, onAct]);
   const move = useCallback((step: number) => {
@@ -124,6 +129,13 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
             <Badge variant="outline">已过目 {progress.reviewed}/{progress.total}</Badge>
             <span className="text-[11px] text-muted-foreground">没过目的照片按任务默认导出；Enter / 「通过」才算过目</span>
           </>
+        ) : exporting ? (
+          <>
+            <Badge variant="outline" className="border-gold text-gold" data-testid="grade-exporting">
+              导出中 {exportProgress.label}{summary.failed ? ` · 失败 ${summary.failed}` : ''}
+            </Badge>
+            <span className="text-[11px] text-muted-foreground">后台逐张渲染，每张完成即更新；关掉页面也会继续，服务重启后接着跑。配方已锁定</span>
+          </>
         ) : (
           <>
             <Badge variant="outline">已导出 {summary.done}{summary.failed ? ` · 失败 ${summary.failed}` : ''}</Badge>
@@ -137,11 +149,26 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
           </Button>
         )}
       </div>
+      {exporting && (
+        <span className="mt-2 block h-1 overflow-hidden rounded bg-muted-foreground/20">
+          <span className="block h-full rounded bg-gold transition-[width]" style={{ width: `${exportProgress.percent}%` }} />
+        </span>
+      )}
+      {raws > 0 && (
+        <p className="mt-2 text-[11px] text-muted-foreground" data-testid="grade-raw-notice">
+          <Badge variant="outline" className="mr-1 px-1 py-0 text-[10px]">RAW</Badge>
+          {raws} 张只有 RAW：预览与成品都用相机机内内嵌的 JPEG（不做 RAW 解码，尺寸与影调以机内 JPEG 为准）
+        </p>
+      )}
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       {editable && <div className="mt-2 space-y-2">
         <p className="text-xs text-muted-foreground">任务默认（未选中照片时 [ ] 与 - = 调这里）</p>
         {strip(defaults.look, (id) => void act('defaults', { look: id }))}
         {strength(defaults.strength, (v) => void act('defaults', { strength: v }))}
+        <label className="flex items-center gap-2 text-xs text-muted-foreground" title="拍摄时间、相机/镜头、作者/版权总会保留；朝向已摆正">
+          <input type="checkbox" checked={keepGps} disabled={busy} onChange={(e) => void act('defaults', { keepGps: e.target.checked })} />
+          成品保留 GPS 位置（缺省剥掉，外发更安全）
+        </label>
       </div>}
 
       {editable && focused && (
@@ -193,8 +220,11 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
                 <div className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
                   <span className="truncate">{nameOf(r.look)}{r.look && r.strength < 1 ? ` · ${Math.round(r.strength * 100)}%` : ''}</span>
                   {isOverridden(it) && <span className="text-gold">改</span>}
-                  <span className="ml-auto shrink-0 text-muted-foreground">
-                    {it.status === 'done' ? '已导出' : it.status === 'failed' ? '失败' : it.grade?.reviewedAt ? '✓' : ''}
+                  {isRawEmbedded(it) && (
+                    <span className="shrink-0 rounded border border-border/60 px-0.5 text-[9px] text-muted-foreground" title="RAW：使用机内内嵌 JPEG">RAW·内嵌</span>
+                  )}
+                  <span className={cn('ml-auto shrink-0', it.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')} title={it.status === 'failed' ? it.note : undefined}>
+                    {itemExportLabel(job, it)}
                   </span>
                 </div>
               </button>

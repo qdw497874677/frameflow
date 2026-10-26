@@ -52,8 +52,24 @@ export function reviewProgress(job: Pick<Job, 'items'>): { reviewed: number; tot
 }
 
 /** 阶段只在任务 running / interrupted 时可改；收场后（done/failed/cancelled）只读看结果 */
-export function isStageEditable(job: Pick<Job, 'state'>): boolean {
-  return job.state === 'running' || job.state === 'interrupted';
+export function isStageEditable(job: Pick<Job, 'state' | 'phase'>): boolean {
+  return (job.state === 'running' || job.state === 'interrupted') && !job.phase;
+}
+
+/** 已按「完成并导出」、后台还在渲染（服务端 phase=exporting；中断后重启会续跑） */
+export function isExporting(job: Pick<Job, 'state' | 'phase'>): boolean {
+  return job.phase === 'exporting' && (job.state === 'running' || job.state === 'interrupted');
+}
+
+/** 只有 RAW 的照片：预览与成品都用机内内嵌 JPEG（不做 RAW 解码） */
+export const isRawEmbedded = (item: Pick<JobItem, 'source'>) => item.source === 'embedded_jpeg';
+
+/** 每张在导出中的状态文字（卡片右下角） */
+export function itemExportLabel(job: Pick<Job, 'state' | 'phase'>, item: Pick<JobItem, 'status' | 'grade'>): string {
+  if (item.status === 'done') return '已导出';
+  if (item.status === 'failed') return '失败';
+  if (isExporting(job)) return '导出中…';
+  return item.grade?.reviewedAt ? '✓' : '';
 }
 
 /** 收场后的结果计数：导出成功 / 失败（skipped 不计） */

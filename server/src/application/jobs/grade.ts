@@ -58,7 +58,7 @@ function plan(draft: JobDraft, ctx: JobContext): JobItem[] {
   return ctx.lib.select(draft.selection).map((rec) =>
     rec.kind === 'video'
       ? { id: rec.id, displayName: rec.displayName, status: 'skipped' as const, note: '视频不调色' }
-      : { id: rec.id, displayName: rec.displayName, status: 'planned' as const },
+      : { id: rec.id, displayName: rec.displayName, status: 'planned' as const, ...(rec.raw && !rec.jpeg ? { source: 'embedded_jpeg' as const } : {}) },
   );
 }
 

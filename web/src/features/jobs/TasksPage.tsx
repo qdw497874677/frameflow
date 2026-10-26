@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DeliveryStatus } from './DeliveryStatus';
-import { jobActions } from './jobActions';
+import { jobActions, jobProgressView } from './jobActions';
 import { RedispatchDialog } from '@/features/connectors/RedispatchDialog';
 import { describeEvent, eventTone, fmtTime, isActive, itemMark, kindLabel, STATE_LABEL, STATE_TONE } from './jobText';
 import { artifactText } from './artifacts';
@@ -54,6 +54,11 @@ function matchesFilter(job: Job, f: Filter): boolean {
  * 数据全部来自 `GET /jobs`、`GET /jobs/{id}`、`GET /jobs/{id}/events?since=` ——
  * 事件用 `nextSince` 当游标增量拉（v1 轮询；形状与将来的 SSE 一致，换传输不改这里）。
  */
+/** 选中的那条用详情的最新快照（详情 2.5s 轮询，列表 4s）：侧栏与详情同一份数据，进度不会对不上 */
+function withDetail(row: Job, detail: Job | null): Job {
+  return detail && detail.id === row.id ? detail : row;
+}
+
 export function TasksPage() {
   const { roots } = useAppState();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -200,7 +205,7 @@ export function TasksPage() {
             </p>
           ) : (
             <ul className="px-1.5 pb-3">
-              {shown.map((job) => (
+              {shown.map((row) => withDetail(row, detail)).map((job) => (
                 <li key={job.id}>
                   <button
                     onClick={() => setSelectedId(job.id)}
@@ -219,13 +224,13 @@ export function TasksPage() {
                       </Badge>
                     </span>
                     <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                      {job.confirmation ? `已确认 ${job.confirmation.confirmed}/${job.confirmation.total}` : `${job.progress.done}/${job.progress.total}`} · {fmtTime(job.createdAt)}
+                      {jobProgressView(job).label}{job.phase === 'exporting' ? ' · 导出中' : ''} · {fmtTime(job.createdAt)}
                       {jobDirName(job, roots) ? ` · ${jobDirName(job, roots)}` : ''}
                     </span>
                     <span className="mt-1 block h-1 overflow-hidden rounded bg-muted-foreground/20">
                       <span
                         className="block h-full rounded bg-gold"
-                        style={{ width: `${job.progress.total ? Math.round((job.progress.done / job.progress.total) * 100) : 0}%` }}
+                        style={{ width: `${jobProgressView(job).percent}%` }}
                       />
                     </span>
                   </button>
