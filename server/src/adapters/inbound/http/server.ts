@@ -67,6 +67,8 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
     onDone: (job, generation) => { onJobDone(job.id, generation); },
   });
   let onJobDone: (jobId: string, generation: number) => void = () => undefined;
+  // 重启续跑：上次导出到一半的滤镜任务接着跑（等通知等接线都好了再开跑）
+  app.addHook('onReady', async () => { jobs.resumeBackground(); });
   await app.register(cookie);
 
   // ── 连接器（F08/F09）：配置在 dataDir/connectors.json；尚未注册任何平台适配器，启用实例只会报 CONNECTOR_KIND_UNSUPPORTED

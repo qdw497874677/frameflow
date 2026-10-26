@@ -28,4 +28,6 @@ export interface GradingPorts {
   looks: LookSource;
   renderer: Renderer;
   exports: ExportTarget;
+  /** 后台导出同时渲染几张（sharp 自己多线程，缺省 2 张就能吃满 CPU 又不爆内存） */
+  concurrency?: number;
 }

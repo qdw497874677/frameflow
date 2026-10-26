@@ -110,7 +110,15 @@ export interface Job {
   requestFingerprint?: string | null;
   /** 确认模式（F23）：explicit = 按唯一照片的明确确认计数；缺省为旧语义（跳过也算处理） */
   confirmationMode?: 'explicit' | null;
+  /**
+   * 后台阶段（阶段型任务）：非空 = 主人已经推到这一步、执行者在后台跑（如 grade 的 `exporting`）。
+   * 这期间不收改动类操作；重启后 interrupted + phase 非空的任务会被接着跑。
+   */
+  phase?: JobPhase | null;
 }
+
+/** 后台阶段名：目前只有滤镜任务的全尺寸导出 */
+export type JobPhase = 'exporting';
 
 /** 确认进度摘要（F23/F27）：仅 explicit 模式；跳过/失败不计入 confirmed */
 export interface ConfirmationSummary {

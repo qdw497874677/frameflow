@@ -19,6 +19,19 @@ async function running(fx, params = { look: 'mono400' }) {
   throw new Error('任务没进 running');
 }
 
+/** complete 只受理（202 + phase=exporting），轮询到后台导出收尾 */
+async function completeAndWait(fx, id) {
+  const r = await fx.call('POST', `/api/v1/jobs/${id}/actions/complete`, {});
+  assert.equal(r.status, 202, JSON.stringify(r.json));
+  assert.equal(r.json.phase, 'exporting');
+  for (let i = 0; i < 500; i++) {
+    const j = (await fx.call('GET', `/api/v1/jobs/${id}`)).json;
+    if (j.state !== 'running') { assert.equal(j.phase ?? null, null); return j; }
+    await sleep(10);
+  }
+  throw new Error('后台导出没收尾');
+}
+
 test('looks：列表与 .cube', async () => {
   const fx = await makeFixture({ photos: 0 });
   try {
@@ -73,8 +86,7 @@ test('grade：逐张覆盖、过目、完成后导出到数据目录，原片不
     r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/explode`, {});
     assert.equal(r.status, 400);
 
-    r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/complete`, {});
-    assert.equal(r.status, 200, JSON.stringify(r.json));
+    r = { json: await completeAndWait(fx, job.id) };
     assert.equal(r.json.state, 'done');
     assert.deepEqual(r.json.items.map((i) => i.status), ['done', 'done']);
     const dir = r.json.artifacts.find((x) => x.kind === 'dir').path;
@@ -98,12 +110,25 @@ test('grade：mono 风格真的去色，强度 0 等于原图', async () => {
   try {
     const job = await running(fx);
     await fx.call('POST', `/api/v1/jobs/${job.id}/actions/set`, { photoId: job.items[1].id, strength: 0 });
-    const done = (await fx.call('POST', `/api/v1/jobs/${job.id}/actions/complete`, {})).json;
+    const done = await completeAndWait(fx, job.id);
     const dir = path.join(fx.dataDir, 'exports', job.id);
     const stats = async (f) => (await sharp(path.join(dir, f)).stats()).channels.map((c) => c.mean);
     const [r, g, b] = await stats(done.items[0].to);
     assert.ok(Math.abs(r - b) < 4 && Math.abs(r - g) < 4, `mono：${r} ${g} ${b}`);
     const [r1, , b1] = await stats(done.items[1].to);
     assert.ok(b1 - r1 > 50, `原色应偏蓝：${r1} ${b1}`);
+  } finally { await fx.dispose(); }
+});
+
+test('grade：后台导出期间配方锁定（set/defaults/complete 409）', async () => {
+  const fx = await makeFixture({ photos: 3 });
+  try {
+    const job = await running(fx);
+    const r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/complete`, {});
+    assert.equal(r.status, 202);
+    for (const [name, body] of [['set', { photoId: job.items[0].id, look: null }], ['defaults', { look: 'chrome64' }], ['complete', {}]]) {
+      const x = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/${name}`, body);
+      assert.equal(x.status, 409, name);
+    }
   } finally { await fx.dispose(); }
 });
