@@ -55,3 +55,23 @@ cache:
   maxBytes: 8589934592
 
 logLevel: info
+
+# 实时入库：相机 FTP 直传 / 往收件目录拷文件 → 几秒后出现在库里（前端「新到 N 张」）
+# ingest:
+#   rootId: local              # 落到哪个项目
+#   subdir: inbox/{date}       # 收件目录（{date} = 当天 YYYY-MM-DD）
+#   stableMs: 2000             # 文件多久没变化才算写完（目录监听用；FTP 传完即算）
+#   pairWindowMs: 3000         # RAW+JPEG 配对等待
+#   watch: true                # 监听收件目录（SMB/rsync/拷贝进来的也入库）
+#   ftp:
+#     host: 0.0.0.0            # 只想走 Tailscale 就写本机 100.x 地址
+#     port: 2121
+#     pasvMin: 30000           # 被动端口范围（防火墙放行）
+#     pasvMax: 30009
+#     pasvUrl: 100.101.102.103 # PASV 回给相机的地址（相机能连到的那个 IP）
+#     user: camera
+#     passwordFile: ~/.config/frameflow/ftp-password   # 第一行是密码，≥8 位
+#     tls:                     # 索尼相机只支持 FTPES（显式 TLS）；不配则只能明文（仅限可信局域网）
+#       cert: ~/.config/frameflow/ftp-cert.pem
+#       key: ~/.config/frameflow/ftp-key.pem
+#     requireTls: true         # 配了 tls 默认强制加密

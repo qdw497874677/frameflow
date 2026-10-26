@@ -72,6 +72,44 @@ cd server && ./tools/dev.sh start                # 扫描 + 托管 web/dist + �
 也可以用环境变量指定别的文件：`ARTWORKS_CONFIG=/path/to/cfg.yaml ./tools/dev.sh start`
 （优先级：`--config=` > `ARTWORKS_CONFIG` > `artworks.config.local.yaml` > `artworks.config.yaml`）。
 
+## 相机实时入库（FTP / 目录监听）
+
+在配置里加 `ingest` 段（见 `server/artworks.config.example.yaml`）。照片传完几秒就会出现在库里，页面顶部会提示「新到 N 张」。
+
+- **目录监听**：拷进 `<项目>/inbox/<日期>/` 的文件（SMB、rsync、手机 App……）都会入库。
+- **FTP / FTPES**：内置一个只能上传的 FTP 服务。登录后看到的根目录就是当天的收件目录（chroot），**不能下载、删除或改名**。上传先写成 `.名字.ffpart`，传完才改名；同名文件不会覆盖，会另存为 `名字_1.JPG`。
+
+### 生成证书与密码（FTPES）
+
+```bash
+mkdir -p ~/.config/frameflow && cd ~/.config/frameflow
+openssl rand -base64 18 > ftp-password && chmod 600 ftp-password
+# 自签根证书 + 服务器证书（相机要导入的是根证书 cacert.pem）
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=FrameFlow CA" -keyout ca-key.pem -out cacert.pem
+openssl req -newkey rsa:2048 -nodes -subj "/CN=frameflow" -keyout ftp-key.pem -out ftp.csr
+printf "subjectAltName=IP:100.101.102.103\n" > san.ext   # 换成相机连的 IP
+openssl x509 -req -in ftp.csr -CA cacert.pem -CAkey ca-key.pem -CAcreateserial -days 3650 -extfile san.ext -out ftp-cert.pem
+```
+
+### 索尼相机设置（α7 IV / α1 / α7S III / ZV-E1 等；各机型菜单名略有出入）
+
+1. 把 `cacert.pem` 拷到存储卡根目录，然后在相机里选 **网络 → FTP传输功能 → 导入根证书**。
+2. **服务器设置**（选一个空的服务器编号）：
+   - 主机名：服务器地址，局域网 IP 或 Tailscale 的 100.x 地址；
+   - 安全协议：**开**（FTPES）；根证书错误：**不允许**；
+   - 端口：`2121`（与 `ingest.ftp.port` 一致）；
+   - 被动模式：**开**（相机只支持被动模式）；
+   - 用户名：`camera`；密码：`ftp-password` 文件里的那一行；
+   - 目录设置：留空即可（落到当天收件目录）。也可以填一个子目录，例如 `a7iv`。
+3. **FTP传输功能：开**，**自动FTP传输：开**。拍完就会自动上传。也可以在「FTP传输」里手动选片补传。
+4. 可选：「传输目标文件」选 RAW+JPEG 都传，服务器会把同名的 RAW 和 JPEG 配成一张。
+
+### 公网 / 远程
+
+- **Tailscale Funnel 不能用来转发相机 FTP**。Funnel 只开放 443/8443/10000 端口，只走 TLS 加密连接；而 FTPES 的控制连接是先明文、再 AUTH TLS 升级，被动模式还要另开数据端口。
+- 外拍时推荐的做法：用带 Tailscale 的旅行路由器（例如 GL.iNet，开启子网路由或 IP 伪装），相机连路由器 Wi-Fi，主机名填服务器的 100.x 地址。手机热点同理，只要相机能连到那个 IP 就行。
+- 网页界面可以用 Funnel 对外开放（**需要确认后再开**）：`tailscale funnel --bg 8787`，关闭用 `tailscale funnel reset`。开之前请设置好登录密码，并配置 `trustProxy` 和 `cookieSecure`。
+
 ## 部署
 
 两套交付物：
