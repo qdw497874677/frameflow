@@ -509,7 +509,7 @@ paths:
         content: { application/json: { schema: { type: object, additionalProperties: true } } }
       responses:
         "200": { description: 操作后的任务, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
-        "202": { description: 已受理、在后台跑（如 grade 的 complete）；任务 `phase` 非空，轮询 GET /jobs/{id}, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "202": { description: "已受理、在后台跑（如 grade 的 complete）；任务 phase 非空，轮询 GET /jobs/{id}", content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
         "400": { description: 没这个操作或参数不对 }
         "409": { description: 任务不在进行中，或正在后台阶段（phase 非空） }
 
