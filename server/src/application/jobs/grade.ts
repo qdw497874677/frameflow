@@ -45,6 +45,9 @@ function validate(draft: JobDraft, ctx: JobContext): JobProblem[] {
   if (draft.params['strength'] !== undefined && !isValidStrength(draft.params['strength'])) {
     problems.push({ field: 'params.strength', message: '强度是 0–1 的数' });
   }
+  if (draft.params['keepGps'] !== undefined && typeof draft.params['keepGps'] !== 'boolean') {
+    problems.push({ field: 'params.keepGps', message: 'keepGps 是布尔值' });
+  }
   if (!ctx.lib.select(draft.selection).some((r) => r.kind !== 'video')) {
     problems.push({ field: 'selection', message: '这个选择集里没有照片（视频不调色）' });
   }
@@ -96,7 +99,7 @@ function set(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: Job
   return {};
 }
 
-/** defaults：{ look?: string, strength?: number } —— 改任务默认，没覆盖的照片都跟着变 */
+/** defaults：{ look?: string, strength?: number, keepGps?: boolean } —— 改任务默认，没覆盖的照片都跟着变 */
 function defaults(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: JobSink): JobOutcome {
   notExporting(job);
   const next = { ...job.params };
@@ -108,6 +111,10 @@ function defaults(job: Job, body: Record<string, unknown>, ctx: JobContext, sink
   if (body['strength'] !== undefined) {
     if (!isValidStrength(body['strength'])) invalid('强度是 0–1 的数', 'strength');
     next['strength'] = body['strength'];
+  }
+  if (body['keepGps'] !== undefined) {
+    if (typeof body['keepGps'] !== 'boolean') invalid('keepGps 是布尔值', 'keepGps');
+    next['keepGps'] = body['keepGps'];
   }
   sink.patch({ params: next });
   return {};
@@ -148,7 +155,8 @@ async function eachLimited<T>(list: readonly T[], limit: number, fn: (x: T) => P
  * 可重入（重启续跑）：只做还 planned 的；成品按文件名覆盖写，半截的那张重做即可。
  */
 async function exportAll(job: Job, ctx: JobContext, sink: JobSink, signal: BackgroundSignal): Promise<JobOutcome> {
-  const { looks, renderer, exports, concurrency } = ports(ctx);
+  const { looks, renderer, exports, concurrency, metadata } = ports(ctx);
+  const keepGps = job.params?.['keepGps'] === true;
   const base = defaultsOf(job.params ?? {});
   const todo = job.items.filter((i) => i.status === 'planned');
   const renderOne = async (item: JobItem, recipe: Recipe): Promise<{ name: string; bytes: number }> => {
@@ -161,6 +169,7 @@ async function exportAll(job: Job, ctx: JobContext, sink: JobSink, signal: Backg
     const data = await renderer.render(item.id, effects);
     const name = exportName(item.displayName ?? item.id, recipe.look);
     const out = await exports.write(job.id, name, data);
+    await metadata?.carry(item.id, out.path, { keepGps });
     return { name, bytes: out.bytes };
   };
   let done = 0;
@@ -198,6 +207,7 @@ export const grade: JobHandler = {
   params: {
     look: { type: 'string', required: true, description: '默认风格 id（见 GET /looks）' },
     strength: { type: 'number', minimum: 0, maximum: 1, default: DEFAULT_STRENGTH, description: '默认强度' },
+    keepGps: { type: 'boolean', default: false, description: '成品保留 GPS（缺省剥掉；拍摄时间/相机/镜头/作者版权总是保留）' },
   },
   sideEffect: 'file',
   undoable: false,

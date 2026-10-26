@@ -132,3 +132,38 @@ test('grade：后台导出期间配方锁定（set/defaults/complete 409）', as
     }
   } finally { await fx.dispose(); }
 });
+
+test('grade：成品保留拍摄信息，朝向归 1、sRGB，GPS 缺省剥掉、keepGps 才保留', async () => {
+  const { exiftool } = await import('exiftool-vendored');
+  const fx = await makeFixture({ photos: 1 });
+  try {
+    const src = path.join(fx.dir, 'lib', 'P0.jpg');
+    await exiftool.write(src, {
+      DateTimeOriginal: '2024:05:06 07:08:09', OffsetTimeOriginal: '+08:00', Make: 'NIKON CORPORATION', Model: 'NIKON D3200',
+      LensModel: '18-55mm f/3.5-5.6', Artist: '全权', Copyright: '© 全权', FNumber: 5.6, ISO: 200, Orientation: 6,
+      GPSLatitude: 31.2, GPSLatitudeRef: 'N', GPSLongitude: 121.5, GPSLongitudeRef: 'E',
+    }, { writeArgs: ['-overwrite_original'] });
+    const exportOf = async (params) => {
+      const job = await running(fx, { look: 'mono400', ...params });
+      const done = await completeAndWait(fx, job.id);
+      assert.equal(done.state, 'done', JSON.stringify(done.events?.slice(-3)));
+      return exiftool.read(path.join(fx.dataDir, 'exports', job.id, done.items[0].to));
+    };
+    const t = await exportOf({});
+    assert.equal(String(t.DateTimeOriginal).slice(0, 19), '2024-05-06T07:08:09');
+    assert.equal(t.OffsetTimeOriginal, '+08:00');
+    assert.equal(t.Make, 'NIKON CORPORATION');
+    assert.equal(t.Model, 'NIKON D3200');
+    assert.equal(t.LensModel, '18-55mm f/3.5-5.6');
+    assert.equal(t.Artist, '全权');
+    assert.equal(t.Copyright, '© 全权');
+    assert.equal(t.ISO, 200);
+    assert.equal(t.Orientation, 1);
+    assert.match(String(t.ProfileDescription), /sRGB/i);
+    assert.equal(t.GPSLatitude, undefined, '缺省剥 GPS');
+    const g = await exportOf({ keepGps: true });
+    assert.ok(Math.abs(g.GPSLatitude - 31.2) < 1e-3, `keepGps：${g.GPSLatitude}`);
+    const bad = await fx.call('POST', '/api/v1/jobs', { kind: 'grade', selection: {}, params: { look: 'mono400', keepGps: 'yes' }, mode: 'plan' });
+    assert.equal(bad.status, 400);
+  } finally { await fx.dispose(); }
+});
