@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
+    "basic-ftp": "^6.2.3",
     "typescript": "^7.0.2"
   }
 }

@@ -56,6 +56,8 @@ export interface ServerDeps {
   readonly loginLimiter?: LoginLimiter;
   /** 测试注入：库事件日志 */
   readonly events?: LibraryEventLog;
+  /** 测试用：拿到入库模块（例如查 FTP 实际端口） */
+  readonly onIngest?: (mod: IngestModule) => void;
 }
 
 export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = {}): Promise<FastifyInstance> {
@@ -182,8 +184,9 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const events = deps.events ?? new LibraryEventLog();
   let ingest: IngestModule | null = null;
   if (cfg.ingest) {
-    ingest = openIngest(cfg.ingest, lib, events, { onError: (text) => app.log.warn({ ingest: true }, text) });
+    ingest = openIngest(cfg.ingest, lib, events, { onError: (text) => app.log.warn({ ingest: true }, text), log: (text) => app.log.info({ ingest: true }, text) });
     const mod = ingest;
+    deps.onIngest?.(mod);
     app.addHook('onReady', async () => { await mod.start(); });
     app.addHook('onClose', async () => { await mod.stop(); });
   }
