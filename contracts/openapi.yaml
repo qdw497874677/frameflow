@@ -492,11 +492,13 @@ paths:
         `grade`（滤镜设置阶段）的操作：
         - `set`：`{ photoId, look?: string|null, strength?: 0–1, reviewed?: boolean, reset?: boolean }` ——
           改一张的风格（`null` = 不套用）/ 强度；「已过目」只由显式 `reviewed: true`（通过）/ `false`（撤回）改变，只改风格不算；`reset: true` 清掉覆盖与过目、恢复任务默认。写在 `item.grade`。
-        - `defaults`：`{ look?, strength? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
+        - `defaults`：`{ look?, strength?, keepGps? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
         - `complete`：`{}` —— **只受理，回 202**：锁定配方（任务 `phase: exporting`，之后 set/defaults/complete 都 409），
           后台队列按「任务默认 + 逐张覆盖」限并发（缺省 2 张）逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
           （原片不动）。每张完成即更新 `done`（`to` = 文件名）或 `failed`（`note` = 原因，已自动重试 1 次），
           客户端轮询 `GET /jobs/{id}` 看逐张进度。全部做完清 `phase`、加一个 `dir` artifact，任务 `done`；全部失败则 `failed`。
+          成品元数据：从原片抄拍摄时间（含时区）、相机/镜头、曝光参数、作者/版权（EXIF + XMP）；朝向写 1（像素已摆正），
+          ICC 为 sRGB；GPS 缺省剥掉，任务 `params.keepGps: true` 才保留。RAW 的像素来自机内内嵌 JPEG，EXIF 取自 RAW 本身。
           导出途中服务重启：任务启动时被续跑（已完成的不重做）。导出途中取消：停下，已写出的成品保留。
       x-implemented: true
       parameters:

@@ -24,10 +24,17 @@ export interface ExportTarget {
   write(jobId: string, fileName: string, data: Uint8Array): Promise<{ path: string; bytes: number }>;
 }
 
+/** 成品元数据：把原片的拍摄信息抄到导出文件上（朝向归 1、ICC 不动、GPS 按选项） */
+export interface ExportMetadata {
+  carry(photoId: string, outPath: string, opts: { keepGps: boolean }): Promise<void>;
+}
+
 export interface GradingPorts {
   looks: LookSource;
   renderer: Renderer;
   exports: ExportTarget;
+  /** 没接（如单测）就不抄元数据 */
+  metadata?: ExportMetadata;
   /** 后台导出同时渲染几张（sharp 自己多线程，缺省 2 张就能吃满 CPU 又不爆内存） */
   concurrency?: number;
 }

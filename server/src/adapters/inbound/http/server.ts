@@ -35,6 +35,7 @@ import { registerJobRoutes } from './routes/jobs.ts';
 import { registerLookRoutes } from './routes/looks.ts';
 import { CubeLookSource } from '../../outbound/grading/cube-looks.ts';
 import { SharpRenderer } from '../../outbound/grading/sharp-renderer.ts';
+import { ExiftoolMetadata } from '../../outbound/grading/exif-metadata.ts';
 import { DirExportTarget } from '../../outbound/grading/dir-export.ts';
 import { registerLibraryRoutes } from './routes/library.ts';
 import { registerMarksRoutes } from './routes/marks.ts';
@@ -61,7 +62,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const jobs = new JobsService(new JobsStore(cfg.dataDir), registry, {
     lib,
     // 滤镜阶段：内置 .cube 风格、sharp 渲染全尺寸、成品写数据目录 exports/<jobId>/
-    grading: { looks, renderer: new SharpRenderer(lib), exports: new DirExportTarget(cfg.dataDir) },
+    grading: { looks, renderer: new SharpRenderer(lib), exports: new DirExportTarget(cfg.dataDir), metadata: new ExiftoolMetadata(lib) },
     signRangeToken: (jobId, alias, tokenId) => auth.issueRangeToken(jobId, alias, tokenId),
     // F29：完成通知（只发给确认时同意通知的目标；同代次不重发）
     onDone: (job, generation) => { onJobDone(job.id, generation); },
