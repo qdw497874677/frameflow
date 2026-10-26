@@ -177,8 +177,10 @@ const TRANSITIONS: Record<JobState, JobState[]> = {
 
 export const canTransition = (from: JobState, to: JobState): boolean => TRANSITIONS[from].includes(to);
 
+/** 进度只算要做的活：skipped（如滤镜任务里的视频）不进分子也不进分母 */
 export function jobProgress(items: JobItem[]): JobProgress {
-  return { done: items.filter((i) => i.status !== 'planned').length, total: items.length };
+  const work = items.filter((i) => i.status !== 'skipped');
+  return { done: work.filter((i) => i.status !== 'planned').length, total: work.length };
 }
 
 /** items 是否全部有终态（planned 之外都是终态） */

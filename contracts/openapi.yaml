@@ -491,7 +491,7 @@ paths:
 
         `grade`（滤镜设置阶段）的操作：
         - `set`：`{ photoId, look?: string|null, strength?: 0–1, reviewed?: boolean, reset?: boolean }` ——
-          改一张的风格（`null` = 不套用）/ 强度，默认同时标「已过目」；`reset: true` 先清掉覆盖、恢复任务默认。写在 `item.grade`。
+          改一张的风格（`null` = 不套用）/ 强度；「已过目」只由显式 `reviewed: true`（通过）/ `false`（撤回）改变，只改风格不算；`reset: true` 清掉覆盖与过目、恢复任务默认。写在 `item.grade`。
         - `defaults`：`{ look?, strength? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
         - `complete`：`{}` —— 按「任务默认 + 逐张覆盖」逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
           （原片不动），每项 `done`（`to` = 文件名）或 `failed`（`note` = 原因），加一个 `dir` artifact，任务 `done`；
