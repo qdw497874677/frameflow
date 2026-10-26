@@ -97,7 +97,9 @@ export function registerJobRoutes(app: FastifyInstance, { jobs, lib }: JobRouteD
     if (infoOf(req).via === 'annotate') return reply.code(403).send({ error: '批注链接不能操作任务' });
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : {};
     try {
-      return await jobs.action(id, name, body);
+      const { job, accepted } = await jobs.action(id, name, body);
+      // 只受理、活在后台跑（如滤镜导出）：202 + 当前任务（phase 非空），进度靠轮询 GET /jobs/{id}
+      return reply.code(accepted ? 202 : 200).send(job);
     } catch (err) {
       return jobError(reply, err);
     }

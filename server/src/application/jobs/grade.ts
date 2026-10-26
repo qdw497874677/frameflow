@@ -6,7 +6,9 @@
  *  3. 操作（`POST /jobs/{id}/actions/{name}`）：
  *     - `set`：改一张的风格 / 强度 / 不套用、标过目、或恢复任务默认（写在 item.grade）；
  *     - `defaults`：改任务默认风格与强度（写在 params）；
- *     - `complete`：按「任务默认 + 逐张覆盖」逐张渲染、写成品目录，item 记 done / failed，任务收尾。
+ *     - `complete`：只受理 —— 锁定配方（`phase: exporting`）立刻返回（HTTP 202）；
+ *  4. `background`（任务层后台队列跑，重启续跑）：按「任务默认 + 逐张覆盖」限并发逐张渲染、写成品目录，
+ *     单张失败重试一次，item 记 done / failed，任务收尾。
  *
  * 原片永远不动；单张失败不拖累其他，全部失败才算任务失败。
  */
@@ -15,7 +17,7 @@ import { JobError, type GradeItemState, type Job, type JobItem, type JobProblem 
 import { lutEffect, type Effect } from '../../domain/grading/effects.ts';
 import { DEFAULT_STRENGTH, exportName, isValidStrength, resolveRecipe, type Recipe } from '../../domain/grading/recipe.ts';
 import type { GradingPorts } from '../grading/ports.ts';
-import type { JobContext, JobDraft, JobHandler, JobOutcome, JobSink } from './registry.ts';
+import type { BackgroundSignal, JobContext, JobDraft, JobHandler, JobOutcome, JobSink } from './registry.ts';
 
 function defaultsOf(params: Record<string, unknown>): Recipe {
   const look = typeof params['look'] === 'string' ? params['look'] : null;
@@ -77,6 +79,7 @@ function editable(job: Job, photoId: unknown): JobItem {
 
 /** set：{ photoId, look?: string|null, strength?: number, reviewed?: boolean, reset?: boolean } */
 function set(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: JobSink): JobOutcome {
+  notExporting(job);
   const item = editable(job, body['photoId']);
   if (body['look'] !== undefined) {
     const p = lookProblems(ctx, 'look', body['look'], true);
@@ -95,6 +98,7 @@ function set(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: Job
 
 /** defaults：{ look?: string, strength?: number } —— 改任务默认，没覆盖的照片都跟着变 */
 function defaults(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: JobSink): JobOutcome {
+  notExporting(job);
   const next = { ...job.params };
   if (body['look'] !== undefined) {
     const p = lookProblems(ctx, 'look', body['look'], false);
@@ -109,36 +113,83 @@ function defaults(job: Job, body: Record<string, unknown>, ctx: JobContext, sink
   return {};
 }
 
-async function complete(job: Job, _body: Record<string, unknown>, ctx: JobContext, sink: JobSink): Promise<JobOutcome> {
-  const { looks, renderer, exports } = ports(ctx);
+/** 改动类操作在后台导出期间一律拒收：成品按受理那一刻的配方出，不能边导边改 */
+function notExporting(job: Job): void {
+  if (job.phase === 'exporting') throw new JobError('conflict', '正在后台导出，配方已锁定');
+}
+
+/**
+ * complete：只受理 —— 锁定配方（phase=exporting）后立刻返回，渲染交给 `background`（HTTP 202）。
+ * 照片多、单张几秒，同步跑会把请求拖到超时。
+ */
+function complete(job: Job, _body: Record<string, unknown>, ctx: JobContext, sink: JobSink): JobOutcome {
+  ports(ctx);
+  notExporting(job);
+  const todo = job.items.filter((i) => i.status === 'planned').length;
+  sink.patch({ phase: 'exporting' });
+  sink.event({ type: 'note', note: `完成阶段：受理，后台导出 ${todo} 张` });
+  return { background: true };
+}
+
+/** 单张失败先重试几次（网络盘偶发读失败、内存抖动）；还不行才记 failed */
+const ATTEMPTS = 2;
+
+/** 最多 limit 个并发跑完 list（不引第三方：一个游标 + limit 个 worker） */
+async function eachLimited<T>(list: readonly T[], limit: number, fn: (x: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < list.length; i = next++) await fn(list[i]!);
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, list.length)) }, worker));
+}
+
+/**
+ * 后台导出：按「任务默认 + 逐张覆盖」逐张全尺寸渲染、写成品目录，item 记 done / failed。
+ * 可重入（重启续跑）：只做还 planned 的；成品按文件名覆盖写，半截的那张重做即可。
+ */
+async function exportAll(job: Job, ctx: JobContext, sink: JobSink, signal: BackgroundSignal): Promise<JobOutcome> {
+  const { looks, renderer, exports, concurrency } = ports(ctx);
   const base = defaultsOf(job.params ?? {});
   const todo = job.items.filter((i) => i.status === 'planned');
-  sink.event({ type: 'note', note: `完成阶段：开始导出 ${todo.length} 张` });
-  let ok = 0;
-  for (const item of todo) {
-    const recipe = resolveRecipe(base, item.grade);
-    try {
-      const effects: Effect[] = [];
-      if (recipe.look) {
-        const lut = await looks.load(recipe.look);
-        if (!lut) throw new Error(`风格文件不见了：${recipe.look}`);
-        effects.push(lutEffect(lut, recipe.strength));
-      }
-      const data = await renderer.render(item.id, effects);
-      const name = exportName(item.displayName ?? item.id, recipe.look);
-      const out = await exports.write(job.id, name, data);
-      sink.item(item.id, { status: 'done', to: name, note: recipe.look ? `${recipe.look} · ${Math.round(recipe.strength * 100)}%` : '不套用', at: new Date().toISOString() });
-      sink.event({ type: 'applied', photoId: item.id, to: name, note: `${out.bytes} 字节` });
-      ok++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      sink.item(item.id, { status: 'failed', note: msg, at: new Date().toISOString() });
-      sink.event({ type: 'failed', photoId: item.id, note: msg });
+  const renderOne = async (item: JobItem, recipe: Recipe): Promise<{ name: string; bytes: number }> => {
+    const effects: Effect[] = [];
+    if (recipe.look) {
+      const lut = await looks.load(recipe.look);
+      if (!lut) throw new Error(`风格文件不见了：${recipe.look}`);
+      effects.push(lutEffect(lut, recipe.strength));
     }
-  }
-  if (todo.length && ok === 0) return { state: 'failed', error: '全部导出失败' };
+    const data = await renderer.render(item.id, effects);
+    const name = exportName(item.displayName ?? item.id, recipe.look);
+    const out = await exports.write(job.id, name, data);
+    return { name, bytes: out.bytes };
+  };
+  let done = 0;
+  await eachLimited(todo, concurrency ?? 2, async (item) => {
+    if (signal.cancelled()) return;
+    const recipe = resolveRecipe(base, item.grade);
+    let lastError = '';
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      try {
+        const out = await renderOne(item, recipe);
+        sink.item(item.id, { status: 'done', to: out.name, note: recipe.look ? `${recipe.look} · ${Math.round(recipe.strength * 100)}%` : '不套用', at: new Date().toISOString() });
+        sink.event({ type: 'applied', photoId: item.id, to: out.name, note: `${out.bytes} 字节${attempt > 1 ? `（第 ${attempt} 次成功）` : ''}` });
+        done++;
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        if (signal.cancelled()) return;
+      }
+    }
+    sink.item(item.id, { status: 'failed', note: lastError, at: new Date().toISOString() });
+    sink.event({ type: 'failed', photoId: item.id, note: `${lastError}（重试 ${ATTEMPTS - 1} 次仍失败）` });
+  });
+  if (signal.cancelled()) return {};
+  // 续跑时上一轮已有终态的也算进来
+  const ok = job.items.filter((i) => i.status === 'done').length + done;
+  const failed = job.items.filter((i) => i.status === 'failed').length + todo.length - done;
+  if (ok + failed > 0 && ok === 0) return { state: 'failed', error: '全部导出失败' };
   sink.artifact({ kind: 'dir', path: exports.locate(job.id) });
-  return { state: 'done', note: `导出完成：成功 ${ok}，失败 ${todo.length - ok}` };
+  return { state: 'done', note: `导出完成：成功 ${ok}，失败 ${failed}` };
 }
 
 export const grade: JobHandler = {
@@ -155,4 +206,5 @@ export const grade: JobHandler = {
   plan,
   apply,
   actions: { set, defaults, complete },
+  background: exportAll,
 };

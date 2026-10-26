@@ -6,6 +6,8 @@
  *    apply 模式落库入队；
  *  - 队列：**进程内**一个简单 runner（不持久化、不做 worker 池、不做调度器）——
  *    重启后 queued/running 由 core/jobs.ts 收敛成 interrupted，要接着跑就重新发起；
+ *  - 后台阶段：阶段操作回 `background: true`（如 grade 的 complete）就只受理，handler.background 在
+ *    第二条进程内队列里跑；任务带 `phase`，重启后 `resumeBackground` 续跑；
  *  - `cancel` / `undo` / `inbound`：状态机合法性在这里判，业务细节在 handler；
  *  - 收尾规则：任务 `running` 且所有 items 都有终态 → `done`（回流型任务靠这条收掉）。
  *
@@ -18,7 +20,13 @@ import type { JobsRepository } from './ports.ts';
 import { JobError, itemsSettled, type ConfirmationProjection, type Job, type JobEvent, type JobItem, type JobProblem } from '../../domain/jobs/job.ts';
 import type { MarkResultDto } from '../../domain/marks.ts';
 import type { Selection } from '../../domain/selection.ts';
-import type { InboundInput, JobContext, JobHandler, JobSink } from './registry.ts';
+import type { InboundInput, JobContext, JobHandler, JobOutcome, JobSink } from './registry.ts';
+
+/** 阶段操作的结果：accepted = 只是受理，活在后台跑（HTTP 202） */
+export interface ActionResult {
+  job: Job;
+  accepted: boolean;
+}
 
 /** 能被取消的状态（已经收尾的任务不能「取消」，要退就用 undo） */
 const CANCELLABLE = ['planned', 'queued', 'running', 'interrupted'];
@@ -70,6 +78,8 @@ export class JobsService {
   private readonly ctx: JobContext;
   private readonly queue: string[] = [];
   private pumping = false;
+  private readonly backgroundQueue: string[] = [];
+  private backgroundRunning = false;
   /** jobId → 签发它范围 token 的 API token id（只活在内存：apply 只在创建后跑一次） */
   private readonly issuedBy = new Map<string, string | null>();
   /** jobId → 回流串行链：clientRef 幂等靠「先查再写」，并发重发必须在写盘前就排上队 */
@@ -343,8 +353,8 @@ export class JobsService {
    * 阶段操作：在 job gate 里跑 handler.actions[name]。只有进行中的任务收操作（interrupted 接着跑）；
    * 收尾话术与 pump 一致：done → 收尾，failed → 失败，其余看 items 是否全有终态。
    */
-  async action(id: string, name: string, body: Record<string, unknown>): Promise<Job> {
-    return this.withJob(id, async () => {
+  async action(id: string, name: string, body: Record<string, unknown>): Promise<ActionResult> {
+    const result = await this.withJob(id, async () => {
       const job = this.get(id);
       const run = this.registry[job.kind]?.actions?.[name];
       if (!run) throw new JobError('invalid', `任务类型 ${job.kind} 没有操作 ${name}`);
@@ -352,11 +362,74 @@ export class JobsService {
       const current = job.state === 'interrupted' ? this.store.setState(id, 'running') : job;
       const outcome = await run(current, body, this.ctxFor(id), this.sinkFor(id));
       if (outcome.note) this.store.addEvent(id, { type: 'note', note: outcome.note });
+      if (outcome.background) return { job: this.get(id), accepted: true };
       if (outcome.state === 'failed') this.fail(id, outcome.error ?? '任务失败');
       else if (outcome.state === 'done') this.finish(id);
       else this.settle(id);
-      return this.get(id);
+      return { job: this.get(id), accepted: false };
     });
+    if (result.accepted) this.startBackground(id);
+    return result;
+  }
+
+  // ── 后台阶段 ────────────────────────────────────────────────────────────
+
+  /**
+   * 重启续跑：存储把没有执行者的任务收敛成 interrupted；其中 phase 非空、handler 有 background 的
+   * （主人已经按了「完成」、导出跑到一半）拉回 running 接着跑。组装根启动时调一次。
+   */
+  resumeBackground(): string[] {
+    const resumed: string[] = [];
+    for (const job of this.store.list({ state: 'interrupted', limit: 10_000 })) {
+      if (!job.phase || !this.registry[job.kind]?.background) continue;
+      this.store.setState(job.id, 'running');
+      this.store.addEvent(job.id, { type: 'note', note: `服务重启：接着跑后台阶段 ${job.phase}（已完成的不重做）` });
+      this.startBackground(job.id);
+      resumed.push(job.id);
+    }
+    return resumed;
+  }
+
+  /** 后台队列：任务之间一次一个（单个任务内部的并发由 handler 自己限） */
+  private startBackground(id: string): void {
+    this.backgroundQueue.push(id);
+    setTimeout(() => void this.pumpBackground(), 0);
+  }
+
+  /** 等后台队列空（测试与优雅退出用） */
+  async idle(): Promise<void> {
+    while (this.backgroundQueue.length || this.backgroundRunning) await new Promise((r) => setTimeout(r, 10));
+  }
+
+  private async pumpBackground(): Promise<void> {
+    if (this.backgroundRunning) return;
+    this.backgroundRunning = true;
+    try {
+      for (let id = this.backgroundQueue.shift(); id !== undefined; id = this.backgroundQueue.shift()) {
+        const job = this.store.get(id);
+        const run = job ? this.registry[job.kind]?.background : undefined;
+        if (!job || !run || job.state !== 'running' || !job.phase) continue;
+        const signal = { cancelled: () => this.store.get(id)?.state !== 'running' };
+        let outcome: JobOutcome;
+        try {
+          outcome = await run(job, this.ctxFor(id), this.sinkFor(id), signal);
+        } catch (err) {
+          outcome = { state: 'failed', error: err instanceof Error ? err.message : String(err) };
+        }
+        await this.withJob(id, () => {
+          const now = this.store.get(id);
+          if (!now) return;
+          this.store.patch(id, { phase: null });
+          if (now.state !== 'running') return; // 跑的时候被取消了：留着已经写出的成品，不再收尾
+          if (outcome.note) this.store.addEvent(id, { type: 'note', note: outcome.note });
+          if (outcome.state === 'failed') this.fail(id, outcome.error ?? '任务失败');
+          else if (outcome.state === 'done') this.finish(id);
+          else this.settle(id);
+        });
+      }
+    } finally {
+      this.backgroundRunning = false;
+    }
   }
 
   async cancel(id: string): Promise<Job> {

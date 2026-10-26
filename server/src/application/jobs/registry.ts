@@ -63,6 +63,13 @@ export interface JobOutcome {
   note?: string | null;
   /** `inbound` 用来把逐项结果交给 HTTP 层 */
   results?: MarkResultDto[];
+  /** 阶段操作只是「受理」：真正的活交给 handler.background 在后台跑（HTTP 回 202） */
+  background?: boolean;
+}
+
+/** 后台执行时给 handler 的探针：任务被取消了就别再往下做 */
+export interface BackgroundSignal {
+  cancelled: () => boolean;
 }
 
 /** 任务执行者往任务里写东西的入口（都由 jobs/service.ts 接在 core/jobs.ts 上）*/
@@ -94,6 +101,11 @@ export interface JobHandler {
   undo?: (job: Job, ctx: JobContext, sink: JobSink) => JobOutcome | Promise<JobOutcome>;
   /** 阶段操作表；缺省 = 这个 kind 没有阶段操作 */
   actions?: Record<string, JobAction>;
+  /**
+   * 后台阶段：某个操作回 `{ background: true }` 之后由任务层在进程内队列里跑（重启后对 phase 非空的任务续跑）。
+   * 必须可重入：已有终态的 items 跳过，只做还 planned 的。
+   */
+  background?: (job: Job, ctx: JobContext, sink: JobSink, signal: BackgroundSignal) => Promise<JobOutcome>;
 }
 
 /** 注册表：加一个阶段 = 加一个文件 + 这里一行 */

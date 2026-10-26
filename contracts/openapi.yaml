@@ -493,9 +493,11 @@ paths:
         - `set`：`{ photoId, look?: string|null, strength?: 0–1, reviewed?: boolean, reset?: boolean }` ——
           改一张的风格（`null` = 不套用）/ 强度；「已过目」只由显式 `reviewed: true`（通过）/ `false`（撤回）改变，只改风格不算；`reset: true` 清掉覆盖与过目、恢复任务默认。写在 `item.grade`。
         - `defaults`：`{ look?, strength? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
-        - `complete`：`{}` —— 按「任务默认 + 逐张覆盖」逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
-          （原片不动），每项 `done`（`to` = 文件名）或 `failed`（`note` = 原因），加一个 `dir` artifact，任务 `done`；
-          全部失败则任务 `failed`。
+        - `complete`：`{}` —— **只受理，回 202**：锁定配方（任务 `phase: exporting`，之后 set/defaults/complete 都 409），
+          后台队列按「任务默认 + 逐张覆盖」限并发（缺省 2 张）逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
+          （原片不动）。每张完成即更新 `done`（`to` = 文件名）或 `failed`（`note` = 原因，已自动重试 1 次），
+          客户端轮询 `GET /jobs/{id}` 看逐张进度。全部做完清 `phase`、加一个 `dir` artifact，任务 `done`；全部失败则 `failed`。
+          导出途中服务重启：任务启动时被续跑（已完成的不重做）。导出途中取消：停下，已写出的成品保留。
       x-implemented: true
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -505,8 +507,9 @@ paths:
         content: { application/json: { schema: { type: object, additionalProperties: true } } }
       responses:
         "200": { description: 操作后的任务, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "202": { description: 已受理、在后台跑（如 grade 的 complete）；任务 `phase` 非空，轮询 GET /jobs/{id}, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
         "400": { description: 没这个操作或参数不对 }
-        "409": { description: 任务不在进行中 }
+        "409": { description: 任务不在进行中，或正在后台阶段（phase 非空） }
 
   /looks:
     get:
@@ -1188,6 +1191,7 @@ components:
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
         confirmationMode: { type: string, enum: [explicit], description: "可选（F27）：经外部目标显式确认的批注任务；旧任务不带" }
+        phase: { type: string, enum: [exporting], nullable: true, description: "可选：后台阶段（grade 的 complete 受理后 = exporting）；非空时不收改动类操作，重启后续跑" }
         confirmation:
           type: object
           description: 可选（F27）：显式确认进度。跳过不算完成；重标不重复计数；blocked = 照片已不可达
