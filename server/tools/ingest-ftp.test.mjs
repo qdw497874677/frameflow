@@ -98,6 +98,8 @@ test('明文 FTP：上传 JPEG → 入库 + 库事件（source=ftp），不留�
     const c = await connect(s.port);
     assert.equal(await c.pwd(), '/');
     await c.uploadFrom(Readable.from(await jpeg(30)), 'DSC0001.JPG');
+    const listed = await c.list();
+    assert.deepEqual(listed.map((f) => [f.name, f.isFile]), [['DSC0001.JPG', true]]);
     c.close();
     const ev = await s.waitEvent((e) => e.type === 'photos.added');
     assert.equal(ev.source, 'ftp');

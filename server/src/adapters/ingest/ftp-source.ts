@@ -402,10 +402,16 @@ class FtpSession {
       }
       case 'LIST':
       case 'NLST': {
-        const names = await readdir(this.abs(this.cwd)).catch(() => [] as string[]);
+        const dir = this.abs(this.cwd);
+        const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => !n.startsWith('.'));
+        const lines: string[] = [];
+        for (const n of names) {
+          if (cmd === 'NLST') { lines.push(n); continue; }
+          const st = await stat(join(dir, n)).catch(() => null);
+          if (st) lines.push(unixListLine(n, st.isDirectory(), st.size, st.mtime));
+        }
         await this.withData(async (data) => {
-          const visible = names.filter((n) => !n.startsWith('.'));
-          data.end(visible.map((n) => `${n}\r\n`).join(''));
+          data.end(lines.map((l) => `${l}\r\n`).join(''));
           await new Promise((r) => data.once('close', r));
         });
         return false;
@@ -562,4 +568,12 @@ async function uniqueName(dir: string, name: string): Promise<string> {
     if (!existsSync(join(dir, n))) return n;
   }
   throw new Error('同名文件太多');
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** Unix `ls -l` 风格一行（大多数 FTP 客户端只认这种） */
+export function unixListLine(name: string, isDir: boolean, size: number, mtime: Date): string {
+  const d = `${MONTHS[mtime.getUTCMonth()]} ${String(mtime.getUTCDate()).padStart(2, ' ')}`;
+  const t = `${String(mtime.getUTCHours()).padStart(2, '0')}:${String(mtime.getUTCMinutes()).padStart(2, '0')}`;
+  return `${isDir ? 'd' : '-'}rw-r--r-- 1 ftp ftp ${String(size).padStart(12, ' ')} ${d} ${t} ${name}`;
 }
