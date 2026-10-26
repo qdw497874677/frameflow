@@ -22,9 +22,11 @@ export interface SystemRouteDeps {
   readonly connectorStore: ConnectorConfigStore;
   readonly connectorRuntime: ConnectorRuntime;
   readonly loginLimiter: LoginLimiter;
+  /** 实时入库状态（不含密码） */
+  readonly ingestStatus?: () => Record<string, unknown>;
 }
 
-export function registerSystemRoutes(app: FastifyInstance, { cfg, auth, lib, connectorRegistry, connectorStore, connectorRuntime, loginLimiter }: SystemRouteDeps): void {
+export function registerSystemRoutes(app: FastifyInstance, { cfg, auth, lib, connectorRegistry, connectorStore, connectorRuntime, loginLimiter, ingestStatus }: SystemRouteDeps): void {
   app.get('/api/v1/health', async (req) => ({
     ok: true,
     version: VERSION,
@@ -50,6 +52,8 @@ export function registerSystemRoutes(app: FastifyInstance, { cfg, auth, lib, con
       { kind: 'anthropic', model: '', local: false, status: 'planned' },
     ],
     library: lib.status,
+    // 实时入库（FTP / 目录监听）：来源、收件目录、计数；新照片经 GET /library/events 推送
+    ingest: ingestStatus?.() ?? { enabled: false },
     // 连接器能力摘要：只反映真实注册/启用/运行状态，不含配置细节与凭据
     connectors: {
       adapters: (['feishu'] as const).filter((k) => connectorRegistry.factory(k) !== undefined),

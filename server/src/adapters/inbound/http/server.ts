@@ -42,6 +42,9 @@ import { registerMarksRoutes } from './routes/marks.ts';
 import { registerSystemRoutes } from './routes/system.ts';
 import { registerTokenRoutes } from './routes/tokens.ts';
 import { LoginLimiter } from './login-limiter.ts';
+import { registerEventRoutes } from './routes/events.ts';
+import { LibraryEventLog } from '../../../application/library/events.ts';
+import { openIngest, type IngestModule } from '../../ingest/index.ts';
 
 export interface ConnectorFactoryContext {
   readonly resolve: (content: SemanticContent, sessionId?: string) => Promise<CardModel | null>;
@@ -51,6 +54,8 @@ export interface ServerDeps {
   readonly connectorFactories?: Partial<Record<ConnectorKind, (lib: Library, ctx: ConnectorFactoryContext) => ConnectorFactory>>;
   /** 测试注入：登录限流器（可控时钟） */
   readonly loginLimiter?: LoginLimiter;
+  /** 测试注入：库事件日志 */
+  readonly events?: LibraryEventLog;
 }
 
 export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = {}): Promise<FastifyInstance> {
@@ -173,8 +178,19 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
     selectPhotos: (projectId, selection) => lib.select({ ...selection, project: projectId }).filter((r) => r.rootId === projectId).map((r) => r.id),
   });
 
+  // ── 实时入库（ingest）：来源报到 → 稳定 → 配对 → 目录增量入库 → 库事件（SSE）
+  const events = deps.events ?? new LibraryEventLog();
+  let ingest: IngestModule | null = null;
+  if (cfg.ingest) {
+    ingest = openIngest(cfg.ingest, lib, events, { onError: (text) => app.log.warn({ ingest: true }, text) });
+    const mod = ingest;
+    app.addHook('onReady', async () => { await mod.start(); });
+    app.addHook('onClose', async () => { await mod.stop(); });
+  }
+
   registerAuthGate(app, auth, jobs);
-  registerSystemRoutes(app, { cfg, auth, lib, connectorRegistry, connectorStore, connectorRuntime, loginLimiter: deps.loginLimiter ?? new LoginLimiter() });
+  registerSystemRoutes(app, { cfg, auth, lib, connectorRegistry, connectorStore, connectorRuntime, loginLimiter: deps.loginLimiter ?? new LoginLimiter(), ingestStatus: () => ingest?.status() ?? { enabled: false } });
+  registerEventRoutes(app, { events });
   registerLibraryRoutes(app, { lib });
   registerMarksRoutes(app, { lib });
   registerTokenRoutes(app, { auth, via: (req) => infoOf(req).via });

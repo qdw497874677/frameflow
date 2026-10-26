@@ -37,8 +37,77 @@ export interface Config {
   trustProxy?: boolean;
   /** 会话 cookie 的 Secure：auto = 请求为 HTTPS（含受信代理转发的 https）时加；always / never 强制。默认 auto */
   cookieSecure?: 'auto' | 'always' | 'never';
+  /** 实时入库（FTP / 目录监听）；null = 关 */
+  ingest?: IngestCfg | null;
   /** 配置是从哪个文件读的（运行时添加根目录要写回这里）；null = 没有配置文件（全默认/环境变量） */
   sourceFile: string | null;
+}
+
+export interface IngestFtpCfg {
+  host: string;
+  port: number;
+  /** 被动模式数据端口范围（防火墙要放行） */
+  pasvMin: number;
+  pasvMax: number;
+  /** PASV 回给客户端的地址（Tailscale 100.x / 局域网 IP）；空 = 用控制连接的本地地址 */
+  pasvUrl: string;
+  user: string;
+  /** 密码文件（只读第一行）；不在配置里写明文 */
+  passwordFile: string;
+  /** FTPS（显式 AUTH TLS，索尼相机要求）；不配 = 只允许明文（仅限可信网络） */
+  tls: { cert: string; key: string } | null;
+  /** 有 tls 时是否强制加密（拒绝明文登录）。默认 true */
+  requireTls: boolean;
+}
+
+export interface IngestCfg {
+  /** 落到哪个项目（根目录 id） */
+  rootId: string;
+  /** 根目录下的收件目录，支持 `{date}`（YYYY-MM-DD）；默认 `inbox/{date}` */
+  subdir: string;
+  /** 写入稳定判定的静默时长（毫秒） */
+  stableMs: number;
+  /** RAW+JPEG 配对窗口（毫秒） */
+  pairWindowMs: number;
+  /** 监听收件目录（任何方式拷进来的都入库，例如 SMB / rsync / 相机 App） */
+  watch: boolean;
+  ftp: IngestFtpCfg | null;
+}
+
+function parseIngest(raw: unknown): IngestCfg | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (r['enabled'] === false) return null;
+  const rootId = String(r['rootId'] ?? '');
+  if (!rootId) throw new Error('ingest.rootId 必填：照片落到哪个项目');
+  const num = (v: unknown, d: number) => (Number.isFinite(Number(v)) && v !== undefined && v !== null ? Number(v) : d);
+  let ftp: IngestFtpCfg | null = null;
+  const f = r['ftp'];
+  if (f && typeof f === 'object' && (f as Record<string, unknown>)['enabled'] !== false) {
+    const fr = f as Record<string, unknown>;
+    const tlsRaw = fr['tls'] as Record<string, unknown> | undefined;
+    ftp = {
+      host: String(fr['host'] ?? '0.0.0.0'),
+      port: num(fr['port'], 2121),
+      pasvMin: num(fr['pasvMin'], 30000),
+      pasvMax: num(fr['pasvMax'], 30009),
+      pasvUrl: String(fr['pasvUrl'] ?? ''),
+      user: String(fr['user'] ?? 'camera'),
+      passwordFile: expandHome(String(fr['passwordFile'] ?? '')),
+      tls: tlsRaw && tlsRaw['cert'] && tlsRaw['key'] ? { cert: expandHome(String(tlsRaw['cert'])), key: expandHome(String(tlsRaw['key'])) } : null,
+      requireTls: fr['requireTls'] !== false,
+    };
+    if (!ftp.passwordFile) throw new Error('ingest.ftp.passwordFile 必填（密码不写在配置里）');
+    if (ftp.pasvMin > ftp.pasvMax) throw new Error('ingest.ftp.pasvMin 不能大于 pasvMax');
+  }
+  return {
+    rootId,
+    subdir: String(r['subdir'] ?? 'inbox/{date}'),
+    stableMs: num(r['stableMs'], 2000),
+    pairWindowMs: num(r['pairWindowMs'], 3000),
+    watch: r['watch'] !== false,
+    ftp,
+  };
 }
 
 export function loadConfig(argv = process.argv.slice(2)): Config {
@@ -86,6 +155,7 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
     logLevel: String(raw['logLevel'] ?? process.env['ARTWORKS_LOG_LEVEL'] ?? 'info'),
     trustProxy: ['1', 'true', 'yes'].includes(String(raw['trustProxy'] ?? process.env['ARTWORKS_TRUST_PROXY'] ?? 'false').toLowerCase()),
     cookieSecure: ((v) => (v === 'always' || v === 'never' ? v : 'auto'))(String(raw['cookieSecure'] ?? process.env['ARTWORKS_COOKIE_SECURE'] ?? 'auto')),
+    ingest: parseIngest(raw['ingest']),
     sourceFile: file ?? null,
   };
 }

@@ -46,3 +46,13 @@
 ## 契约守卫
 
 `tools/openapi-routes.test.mjs` 在临时目录起真实 `buildServer`，把 `printRoutes` 的 /api/v1 路由与 `contracts/openapi.yaml` 的 (方法, 路径) 双向比对（参数名与 HEAD 不计）。新增或删除路由必须同步契约。
+
+## 实时入库（ingest）模块
+
+有边界的子模块：照片「刚落盘」→ 库里出现，不必全量重扫。
+
+- `domain/ingest/arrival.ts`：到达（IngestedFile）、半成品名过滤、写入稳定判定（StabilityPolicy）、RAW+JPEG 配对窗口（PairingWindow）、收件目录模板。
+- `application/ingest/`：`IngestService` 编排「报到 → 稳定 → 配对 → 目录增量入库 → 库事件」；端口 `IngestSource` / `IngestCatalog` / `FileProbe` / `IngestClock`。
+- `application/library/events.ts`：库事件环形日志（seq），`GET /library/events`（SSE）对外。
+- `adapters/ingest/`：来源适配器（目录监听；FTP 见后续），**只经 `adapters/ingest/index.ts` 对外**；模块只依赖共享内核（`domain/exts.ts`、库事件、配置类型）—— `tools/architecture.test.mjs` 守着。
+- 照片库实现 `Library.ingestDir()` 是 `IngestCatalog` 的实现：只重扫一个目录（配对只看同目录，结果与全量一致），期间占住扫描闸。

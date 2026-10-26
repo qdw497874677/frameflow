@@ -66,3 +66,27 @@ test('飞书模块只经 adapters/feishu/index.ts 对外', () => {
       .map((target) => `${rel(f)} → ${target}`));
   assert.deepEqual(leaks, []);
 });
+
+// 实时入库（ingest）是一个有边界的模块：外面只经 adapters/ingest/index.ts 用它，
+// 它自己也只碰少数共享内核（扩展名分类、库事件、配置类型），不把手伸进照片库实现。
+const inIngest = (r) => /^(domain|application|adapters)\/ingest\//.test(r);
+const targetsOf = (f) => importsOf(f).filter((spec) => spec.startsWith('.')).map((spec) => rel(path.resolve(path.dirname(f), spec)));
+
+test('入库模块只经 adapters/ingest/index.ts 对外', () => {
+  const leaks = walk(SRC)
+    .filter((f) => !inIngest(rel(f)))
+    .flatMap((f) => targetsOf(f)
+      .filter((t) => inIngest(t) && t !== 'adapters/ingest/index.ts')
+      .map((t) => `${rel(f)} → ${t}`));
+  assert.deepEqual(leaks, []);
+});
+
+test('入库模块只依赖共享内核', () => {
+  const allowed = new Set(['domain/exts.ts', 'application/library/events.ts', 'adapters/outbound/config-file.ts']);
+  const leaks = walk(SRC)
+    .filter((f) => inIngest(rel(f)))
+    .flatMap((f) => targetsOf(f)
+      .filter((t) => !inIngest(t) && !allowed.has(t))
+      .map((t) => `${rel(f)} → ${t}`));
+  assert.deepEqual(leaks, []);
+});

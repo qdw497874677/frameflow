@@ -40,7 +40,7 @@ import { type MarkChange, type MarkInput, type MarkResultDto } from '../../../do
 import type { MarkTransactionRequest, MarkTransactionResult } from '../../../domain/marks.ts';
 import type { PhotoRecord } from '../../../domain/photo.ts';
 import { matchesSelection, selectionIsEmpty, type Selection } from '../../../domain/selection.ts';
-import { scanLibrary, type CachedMeta } from './scan.ts';
+import { scanDirectory, scanLibrary, type CachedMeta } from './scan.ts';
 import { Thumbs } from '../thumbs.ts';
 import { moveFile, removeTrashDir, TrashStore, TRASH_DIR, uniqueDirName, uniqueFilePath, type TrashFileMove, type TrashRecord } from './trash-store.ts';
 
@@ -209,6 +209,69 @@ export class Library implements PhotoCatalog {
         void this.refresh().catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * 实时入库：只重扫一个目录（配对只看同目录，所以结果与全量扫描一致），整体替换索引里这个目录的记录。
+   * 全量扫描进行中时先等它结束 —— 不然它扫完会用旧快照把刚入的照片覆盖掉。
+   * 返回新出现的与内容变了的照片 id（给库事件用）。
+   */
+  async ingestDir(rootId: string, relDir: string): Promise<{ added: string[]; updated: string[] }> {
+    const root = this.cfg.roots.find((r) => r.id === rootId);
+    if (!root) throw new Error(`没有这个项目：${rootId}`);
+    while (this.scanning) await new Promise((r) => setTimeout(r, 50));
+    this.scanning = true; // 占住扫描闸：期间来的全量扫描排队
+    try {
+      return await this.ingestDirLocked(root, relDir);
+    } finally {
+      this.scanning = false;
+      if (this.rescanQueued) {
+        this.rescanQueued = false;
+        void this.refresh().catch(() => undefined);
+      }
+    }
+  }
+
+  private async ingestDirLocked(root: Config['roots'][number], relDir: string): Promise<{ added: string[]; updated: string[] }> {
+    const rootId = root.id;
+    const res = await scanDirectory(root, relDir, {
+      metaCache: this.metaCache,
+      hasExtractedPreview: ({ absStem, sig }) => existsSync(this.thumbs.previewCachePath(absStem, sig)),
+      onError: (text) => {
+        if (!this.lastErrors.includes(text)) this.lastErrors.push(text);
+      },
+    });
+    const before = new Map<string, PhotoRecord>();
+    let oldFiles = 0;
+    for (const rec of this.records.values()) {
+      if (rec.rootId !== rootId || rec.relDir !== relDir) continue;
+      before.set(rec.id, rec);
+      oldFiles += (rec.raw ? 1 : 0) + (rec.jpeg ? 1 : 0) + (rec.video ? 1 : 0);
+    }
+    const added: string[] = [];
+    const updated: string[] = [];
+    for (const rec of res.records) {
+      const old = before.get(rec.id);
+      before.delete(rec.id);
+      if (!old) added.push(rec.id);
+      else if (sourceGeneration(old) !== sourceGeneration(rec)) updated.push(rec.id);
+      this.marks.bindGeneration(rec.id, sourceGeneration(rec));
+      if (rec.stars > 0 || rec.del) this.marks.seedFromXmp(rec.id, { stars: rec.stars, del: rec.del });
+      rec.stars = this.marks.starsOf(rec.id);
+      rec.del = this.marks.delOf(rec.id);
+      this.records.set(rec.id, rec);
+    }
+    for (const gone of before.keys()) this.records.delete(gone);
+    this.fileCount = Math.max(0, this.fileCount + res.fileCount - oldFiles);
+    this.online.set(rootId, true);
+    this.reindex();
+    this.saveIndex();
+    return { added, updated };
+  }
+
+  /** 实时入库的落盘位置：项目根目录的真实路径（没有这个项目 = null） */
+  rootPath(rootId: string): string | null {
+    return this.cfg.roots.find((r) => r.id === rootId)?.path ?? null;
   }
 
   /**
