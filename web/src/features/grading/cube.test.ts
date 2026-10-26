@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { JobItem } from '../../core/types.ts';
-import { clampStrength, cycleLook, isOverridden, parseCube, recipeOf, reviewProgress } from './cube.ts';
+import { exportSummary, isStageEditable, clampStrength, cycleLook, isOverridden, parseCube, recipeOf, reviewProgress } from './cube.ts';
 
 test('cube：解析 2³ 并拒绝坏文件', () => {
   const rows = [];
@@ -33,4 +33,12 @@ test('快捷键辅助：强度夹到 0–1、风格循环含原图', () => {
   assert.equal(cycleLook(['a', 'b'], 'b', 1), null);
   assert.equal(cycleLook(['a', 'b'], null, -1), 'b');
   assert.equal(cycleLook(['a', 'b'], 'a', 1), 'b');
+});
+
+test('收场后只读：done / failed / cancelled 不能再改', () => {
+  assert.equal(isStageEditable({ state: 'running' }), true);
+  assert.equal(isStageEditable({ state: 'interrupted' }), true);
+  for (const state of ['done', 'failed', 'cancelled'] as const) assert.equal(isStageEditable({ state }), false);
+  const items = [{ status: 'done' }, { status: 'failed' }, { status: 'skipped' }] as JobItem[];
+  assert.deepEqual(exportSummary({ items }), { done: 1, failed: 1 });
 });

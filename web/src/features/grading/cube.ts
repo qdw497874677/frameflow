@@ -51,6 +51,16 @@ export function reviewProgress(job: Pick<Job, 'items'>): { reviewed: number; tot
   return { reviewed: relevant.filter((i) => i.status !== 'planned' || Boolean(i.grade?.reviewedAt)).length, total: relevant.length };
 }
 
+/** 阶段只在任务 running / interrupted 时可改；收场后（done/failed/cancelled）只读看结果 */
+export function isStageEditable(job: Pick<Job, 'state'>): boolean {
+  return job.state === 'running' || job.state === 'interrupted';
+}
+
+/** 收场后的结果计数：导出成功 / 失败（skipped 不计） */
+export function exportSummary(job: Pick<Job, 'items'>): { done: number; failed: number } {
+  return { done: job.items.filter((i) => i.status === 'done').length, failed: job.items.filter((i) => i.status === 'failed').length };
+}
+
 export const clampStrength = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 10) / 10;
 
 /** 风格条循环：[ / ]；null（原图）排在最前 */

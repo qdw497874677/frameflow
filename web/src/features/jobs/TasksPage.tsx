@@ -12,6 +12,7 @@ import { DeliveryStatus } from './DeliveryStatus';
 import { jobActions } from './jobActions';
 import { RedispatchDialog } from '@/features/connectors/RedispatchDialog';
 import { describeEvent, eventTone, fmtTime, isActive, itemMark, kindLabel, STATE_LABEL, STATE_TONE } from './jobText';
+import { artifactText } from './artifacts';
 
 type Filter = 'all' | 'active' | 'done' | 'ended';
 
@@ -328,7 +329,7 @@ export function TasksPage() {
                       const href = a.kind === 'url' ? (a.path.startsWith('http') ? a.path : `${window.location.origin}${a.path}`) : null;
                       return (
                         <li key={`${a.kind}-${i}`} className="flex items-center gap-2 text-xs">
-                          <span className="shrink-0 text-muted-foreground">{a.kind === 'url' ? '批注链接' : a.kind}</span>
+                          <span className="shrink-0 text-muted-foreground">{artifactText(a.kind, Boolean(actions?.linkUsable)).label}</span>
                           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/70" title={a.path}>
                             {href ?? a.path}
                           </span>
@@ -355,9 +356,11 @@ export function TasksPage() {
                       );
                     })}
                   </ul>
-                  <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                    {actions?.linkUsable ? '这条链接自带凭据（范围 token）：批注人不用登录，只能看这个任务里的照片、只能写回这个任务。' : '任务已取消或失败，这条链接已失效。'}
-                  </p>
+                  {[...new Set(detail.artifacts.map((a) => artifactText(a.kind, Boolean(actions?.linkUsable)).hint).filter(Boolean))].map((hint) => (
+                    <p key={hint} className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                      {hint}
+                    </p>
+                  ))}
                 </div>
               )}
 

@@ -56,18 +56,10 @@ class Renderer {
 
   private lutTex(lut: Lut): WebGLTexture {
     let t = this.luts.get(lut);
-    if (t) return t;
-    const gl = this.gl;
-    t = gl.createTexture()!;
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_3D, t);
-    // 16F 可线性过滤（32F 需扩展）
-    const half = new Uint16Array(lut.table.length);
-    for (let i = 0; i < half.length; i++) half[i] = toHalf(lut.table[i]!);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, lut.size, lut.size, lut.size, 0, gl.RGB, gl.HALF_FLOAT, half);
-    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
-    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
-    this.luts.set(lut, t);
+    if (!t) {
+      t = uploadLut(this.gl, lut);
+      this.luts.set(lut, t);
+    }
     return t;
   }
 
@@ -101,6 +93,25 @@ class Renderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     ctx.drawImage(this.canvas, 0, 0);
   }
+}
+
+/**
+ * 把 LUT 传成 3D 纹理（RGB16F，可线性过滤）。
+ * 必须把 UNPACK_ALIGNMENT 设成 1：一行 size×3×2 字节（33 → 198）不是 4 的倍数，
+ * 默认 4 字节对齐会让驱动按 200 字节/行去读 → texImage3D 报「ArrayBufferView not big enough」，纹理为空、画面全黑。
+ */
+export function uploadLut(gl: WebGL2RenderingContext, lut: Lut): WebGLTexture {
+  const t = gl.createTexture()!;
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_3D, t);
+  const half = new Uint16Array(lut.table.length);
+  for (let i = 0; i < half.length; i++) half[i] = toHalf(lut.table[i]!);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, lut.size, lut.size, lut.size, 0, gl.RGB, gl.HALF_FLOAT, half);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+  return t;
 }
 
 function toHalf(v: number): number {

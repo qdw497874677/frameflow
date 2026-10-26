@@ -8,6 +8,7 @@ import type {
 } from './source';
 import type { FsBrowseDto } from './contract';
 import { matchesSelection } from '../core/selection';
+import { itemsProgress } from '../core/progress';
 import { PALETTES, mulberry, renderMockPhoto, type FocusKind, type MockSpec } from './mock/render';
 import type {
   Channel,
@@ -399,7 +400,7 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
         params: input.params ?? {},
         channel,
         dispatchedAt: mode === 'apply' ? now : null,
-        progress: { done: 0, total: items.length },
+        progress: itemsProgress(items),
         items,
         // annotate 的产物就是那张「打开就能批注」的卡片链接（真后端签范围 token）
         artifacts: mode === 'apply' ? [{ kind: 'url', path: `/j?t=mock-${id}` }] : [],
@@ -458,12 +459,15 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
         const prev = body.reset === true ? {} : { ...(item.grade ?? {}) };
         if (body.look !== undefined) prev.look = body.look as string | null;
         if (typeof body.strength === 'number') prev.strength = body.strength;
-        item.grade = { ...prev, reviewedAt: body.reviewed === false ? null : new Date().toISOString() };
+        // 与服务端一致：只有显式 reviewed 改过目
+        if (body.reviewed === true) prev.reviewedAt = new Date().toISOString();
+        else if (body.reviewed === false) prev.reviewedAt = null;
+        item.grade = prev;
       } else if (name === 'defaults') {
         job.params = { ...job.params, ...body };
       } else if (name === 'complete') {
         job.items.forEach((i) => { if (i.status === 'planned') i.status = 'done'; });
-        job.progress = { done: job.items.length, total: job.items.length };
+        job.progress = itemsProgress(job.items);
         job.state = 'done';
         job.finishedAt = new Date().toISOString();
         job.artifacts = [{ kind: 'dir', path: `exports/${id}` }];
@@ -549,7 +553,7 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
         item.status = 'done';
         item.clientRef = entry.clientRef ?? null;
         item.at = entry.at ?? now;
-        job.progress = { done: job.items.filter((i) => i.status !== 'planned').length, total: job.items.length };
+        job.progress = itemsProgress(job.items);
         pushEvent(id, {
           type: 'applied',
           photoId: entry.photoId,
