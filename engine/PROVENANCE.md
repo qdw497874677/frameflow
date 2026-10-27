@@ -1,0 +1,87 @@
+# 来源记录（PROVENANCE）
+
+FrameFlow 胶片引擎（`engine/`）是**净室实现**：只依据公开文献和厂商公开数据从头编写。
+**没有**打开、阅读、复制或移植任何 GPL 项目的源码或数据，包括 SpektraLab、spektrafilm、
+spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引擎可以做成独立进程”的
+产品思路参考，引擎的代码、数据和参数都不来自它。
+
+数据下载日期：2026-10-27。以下按组件列出全部来源。
+
+## 1. 厂商数据（不入库，构建时下载）
+
+| 文件 | 文档 | URL | sha256 |
+|---|---|---|---|
+| `e4050_portra_400.pdf` | Kodak Professional Portra 400 Film, Technical Data E-4050（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/products/e4050_portra_400.pdf | `e83ac6775d37832a4cb466892a3e1cf4c88917a6ee93384e59d6924b1cd97e3a` |
+| `e4070_endura_premier.pdf` | Kodak Professional Endura Premier Paper, Technical Data E-4070（PDF 修改日期 2017-12） | https://business.kodakmoments.com/sites/default/files/files/products/e4070.pdf | `94ead00f26a4bbf8ce1a991ff73add049514e38f32d6e88aa7a8a1e3e2d7982e` |
+
+**使用条款。** 我们于 2026-10-27 查阅了 Kodak Alaris 的网站条款
+（https://www.kodakalaris.com/legal/website-terms-and-conditions 及其 FAQ）。条款允许出于非商业、
+个人目的或为了解其产品而使用网站内容，但**禁止**复制、再发布或以电子形式分发网站内容；FAQ 允许
+“非商业的研究、教育”用途。所以本仓库（公开仓库）采取的做法是：
+
+- **不提交** PDF，也**不提交**从 PDF 数字化出来的曲线和生成的胶片数据文件（`engine/data/` 已在 `.gitignore` 中）。
+- 只提交工具和元数据：下载地址、sha256、坐标轴标定点、路径编号和拟合方法。
+- 构建时由 `engine/tools/fetch_stocks.sh` 从原地址下载，先校验 sha256，再在本地生成数据。
+- 胶片 ID 使用中性名称（`portrait400`、`premierpaper`），不使用 Kodak 商标作为产品名；`inspiredBy` 字段只用于说明数据来源。
+- **待确认：** 在商业产品或分发的镜像（含 Docker 镜像中打包生成的数据）里使用这些衍生数据之前，需要法务确认，或取得 Kodak Alaris 的书面许可。测量数值本身是否受版权保护因司法辖区而异，网站条款属于合同约束。
+
+**数字化方法**（`tools/datasheets/digitize.py`、`spec.json`）：
+
+1. 用 poppler 的 `pdftocairo -svg` 把指定页转成 SVG。
+2. 按 `spec.json` 中的路径编号取出矢量曲线。
+3. 用“两点轴标定”（读图上的刻度线，PDF pt → 图表单位）做线性映射。
+4. 不做平滑。
+
+数字化结果已与 PDF 渲染图叠加核对过。
+
+- Portra 400 第 4 页：
+  - 特性曲线（Status M，日光，Log H Ref −1.44）
+  - 光谱感光度（密度 0.2 above D-min）
+  - 光谱染料密度：只有“中灰”和“D-min”两条曲线
+- Endura Premier：
+  - 第 4 页：特性曲线（Status A，0.5 s）和光谱感光度
+  - 第 5 页：三种归一化染料的光谱密度
+
+**生成胶片数据**（`tools/stocks/build_stocks.py`，只依赖 numpy）：
+
+- 重采样到 380–780 nm、5 nm 的网格（81 点），以及 Δlog H = 0.05 的网格。
+- 感光度在图表范围外按每 nm 下降 0.1 log 外推，等效为 0。
+- **模型假设（不是厂商数据）：** Portra 只公开了中灰和 D-min 的光谱密度，所以三种染料光谱是用 3 个双侧高斯
+  拟合（中灰 − D-min）得到的，方法为 Levenberg–Marquardt。拟合结果：
+  - Y = [1.061, 449.2 nm, σL 46.3, σR 38.2]
+  - M = [0.817, 543.1, 33.3, 25.4]
+  - C = [1.071, 708.5, 80.4, 20.0]（σR 落在下界）
+  - rms 0.0067
+- 图表范围外，Portra 的 D-min 取常数；Endura 的染料用各自的双侧高斯拟合外延，rms 分别为 Y 0.008 / M 0.022 / C 0.034。
+
+## 2. 标准和公开文献
+
+| 组件 | 来源 | 用法 |
+|---|---|---|
+| CIE 1931 2° 配色函数 | Wyman, Sloan, Shirley, “Simple Analytic Approximations to the CIE XYZ Color Matching Functions”, JCGT 2(2), 2013 | 使用论文公开的多叶高斯解析式（`spectral.cpp`），没有使用 CIE 表格文件 |
+| 普朗克辐射体 | Planck 定律（物理常数 c2 = 1.4388e-2 m·K） | 场景、印放灯和观看光源；D65/D50 用相近色温的普朗克光源近似（见第 4 节） |
+| sRGB | IEC 61966-2-1:1999；原色与 D65 白点色度（x,y） | 矩阵在代码里由色度坐标推导；传递函数为分段 2.4 |
+| Bradford 色适应 | Lam, K.M. (1985) 博士论文；Hunt, *The Reproduction of Colour*, 6th ed.（色适应相关章节） | 3×3 锥响应矩阵，用于把相纸白适应到 D65 |
+| Status M / Status A 密度计响应 | ANSI/ISO 5-3-1995（*Photography — Density measurements — Part 3: Spectral conditions*），来自 law.resource.org 公开的“引用入法”副本 | 只取各通道峰值和按十倍衰减的点位，手工拟合双侧高斯参数（见下）；没有提交表格。**建议购买 ISO 5-3:2009 正式版本复核** |
+| 光谱上采样（RGB → 反射率） | Mallett & Yuksel, “Spectral Primary Decomposition for Rendering with sRGB Reflectance”, EGSR 2019 | 思路：三条光滑、和为 1、在 [0,1] 内的基光谱，在给定光源下复现 sRGB 原色。实现是我们自己的 ADMM 二次规划（`solve_upsampling_basis`），参数由代码在运行时求解，不使用论文附带的数据 |
+| 染料量解析 | 积分密度 ↔ 解析密度的一般关系（Hunt, *The Reproduction of Colour*；James (ed.), *The Theory of the Photographic Process*, 4th ed.） | 每个 log H 采样点上用牛顿法求三种染料量，使 Status 积分密度等于特性曲线 |
+| DIR 耦合 / 层间效应 | Hunt, *The Reproduction of Colour*（interimage effects 一节）；DIR coupler 的一般文献描述 | 一阶抑制模型：层 k 的有效 log H 按其他层相对“中性”多出来的染料量线性抑制；数据表曲线按中性曝光测得，所以中性灰阶保持不变。6 个非对角系数在运行时由牛顿法求出，目标是消除中灰附近的层间串扰。**这是校准目标，不是 Kodak 数据** |
+| 印放 / 扫描 | 一般的负片—相纸系统原理（Hunt） | 印放灯 3200 K × 相纸感光度；用每层印放光量把 18% 灰平衡到中性；扫描把相纸白映射为白、D-max 映射为黑（每通道黑点） |
+
+Status 密度计双侧高斯参数（峰值 nm、左 σ、右 σ），由 ISO 5-3 的十倍衰减点手工拟合：
+
+- Status M：B (450, 10.9, 15.8)，G (540, 16.6, 16.5)，R (640, 5.5, 20.0)
+- Status A：B (440, 7.9, 12.6)，G (530, 7.6, 15.1)，R (620, 6.0, 25.0)
+
+## 3. 代码
+
+`engine/` 下的全部 C++ 和 Python 代码都是 FrameFlow 项目从头编写的。第三方依赖只有 C++20 标准库；
+工具脚本使用 numpy 和 poppler（`pdftocairo`，命令行调用，不链接）。
+
+## 4. 已知偏差（验证记录）
+
+- Portra 中灰负片的 Status M 密度为 B 1.763 / G 1.363 / R 0.888；数据表灰卡的 R 约为 0.77–0.87，**略偏高**。
+- 数据表 D-min 为 0.80 / 0.63 / 0.20；模型由 D-min 光谱计算得到 0.803 / 0.632 / 0.197，吻合。
+- 灰阶中性度：显示值（sRGB 编码）偏差 < 0.02（约 5/255）。高光略偏蓝，+1 EV 时约 +3%。
+- 观看和扫描光源用普朗克 6504 K 近似 D65，没有使用 CIE D 系列的 SPD 表。
+- 输入的 sRGB JPEG 是“显示参考”的（相机已经套过一次色调曲线），被当作场景线性处理，所以整体反差偏高。M2 计划加入 RAW 场景线性输入和显示参考输入的模式。

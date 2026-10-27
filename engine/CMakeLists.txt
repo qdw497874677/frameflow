@@ -14,7 +14,9 @@ find_package(Threads REQUIRED)
 
 add_library(ffe_core STATIC
   src/json.cpp
-  src/protocol.cpp)
+  src/protocol.cpp
+  src/spectral.cpp
+  src/stock.cpp)
 target_include_directories(ffe_core PUBLIC src)
 target_link_libraries(ffe_core PUBLIC Threads::Threads)
 if(MSVC)
@@ -27,8 +29,9 @@ else()
 endif()
 
 enable_testing()
-foreach(t json protocol)
+foreach(t json protocol spectral stock)
   add_executable(test_${t} tests/test_${t}.cpp)
   target_link_libraries(test_${t} PRIVATE ffe_core)
+  target_compile_definitions(test_${t} PRIVATE FFE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/stocks")
   add_test(NAME ${t} COMMAND test_${t})
 endforeach()

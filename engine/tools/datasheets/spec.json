@@ -1,0 +1,198 @@
+{
+  "kodak-portra-400": {
+    "pdf": "e4050_portra_400.pdf",
+    "url": "https://imaging.kodakalaris.com/sites/default/files/files/products/e4050_portra_400.pdf",
+    "document": "Kodak Professional Portra 400 Film, Technical Data E-4050 (February 2016)",
+    "page": 4,
+    "charts": {
+      "characteristic": {
+        "x": {
+          "pt": [
+            81.16,
+            265.61
+          ],
+          "value": [
+            -4.0,
+            1.0
+          ],
+          "quantity": "log10 exposure (lux-seconds)"
+        },
+        "y": {
+          "pt": [
+            287.37,
+            102.85
+          ],
+          "value": [
+            0.0,
+            4.0
+          ],
+          "quantity": "Status M density"
+        },
+        "notes": "Exposure: daylight. Densitometry: Status M. Log H Ref -1.44.",
+        "curves": {
+          "blue": 36,
+          "green": 37,
+          "red": 38
+        }
+      },
+      "sensitivity": {
+        "x": {
+          "pt": [
+            76.21,
+            276.73
+          ],
+          "value": [
+            250,
+            750
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            494.55,
+            343.06
+          ],
+          "value": [
+            0.0,
+            4.0
+          ],
+          "quantity": "log10 sensitivity, 1/(erg/cm^2) for density 0.2 above D-min"
+        },
+        "curves": {
+          "yellow": 53,
+          "magenta": 55,
+          "cyan": 54
+        }
+      },
+      "dye_density": {
+        "x": {
+          "pt": [
+            357.14,
+            541.74
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            288.06,
+            103.71
+          ],
+          "value": [
+            0.0,
+            2.5
+          ],
+          "quantity": "diffuse spectral density"
+        },
+        "notes": "Typical densities for a midscale neutral subject and D-min.",
+        "curves": {
+          "midscale_neutral": 68,
+          "dmin": 69
+        }
+      }
+    },
+    "sha256": "e83ac6775d37832a4cb466892a3e1cf4c88917a6ee93384e59d6924b1cd97e3a"
+  },
+  "kodak-endura-premier": {
+    "pdf": "e4070_endura_premier.pdf",
+    "url": "https://business.kodakmoments.com/sites/default/files/files/products/e4070.pdf",
+    "document": "Kodak Professional Endura Premier Paper, Technical Data E-4070 (PDF ModDate 2017-12)",
+    "charts": {
+      "characteristic": {
+        "page": 4,
+        "x": {
+          "pt": [
+            364.68,
+            549.2
+          ],
+          "value": [
+            -3.0,
+            0.0
+          ],
+          "quantity": "relative log10 exposure"
+        },
+        "y": {
+          "pt": [
+            257.17,
+            72.55
+          ],
+          "value": [
+            0.0,
+            3.0
+          ],
+          "quantity": "Status A reflection density"
+        },
+        "notes": "Exposure 0.5 s. Densitometry: Status A.",
+        "curves": {
+          "red": 9,
+          "green": 10,
+          "blue": 11
+        }
+      },
+      "sensitivity": {
+        "page": 4,
+        "x": {
+          "pt": [
+            350.59,
+            551.09
+          ],
+          "value": [
+            250,
+            750
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            467.33,
+            315.74
+          ],
+          "value": [
+            -2.0,
+            2.0
+          ],
+          "quantity": "log10 relative sensitivity"
+        },
+        "curves": {
+          "yellow": 18,
+          "magenta": 19,
+          "cyan": 20
+        }
+      },
+      "dye_density": {
+        "page": 5,
+        "x": {
+          "pt": [
+            88.83,
+            273.26
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            234.91,
+            50.57
+          ],
+          "value": [
+            0.0,
+            2.5
+          ],
+          "quantity": "spectral density, normalized dyes"
+        },
+        "curves": {
+          "cyan": 16,
+          "magenta": 17,
+          "yellow": 18
+        }
+      }
+    },
+    "sha256": "94ead00f26a4bbf8ce1a991ff73add049514e38f32d6e88aa7a8a1e3e2d7982e"
+  }
+}
