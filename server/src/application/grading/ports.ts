@@ -5,11 +5,38 @@
 import type { Effect } from '../../domain/grading/effects.ts';
 import type { Lut3D } from '../../domain/grading/lut.ts';
 import type { Look } from '../../domain/grading/recipe.ts';
+import type { FilmParams, FilmStock } from '../../domain/grading/film.ts';
 
 /** 风格从哪来（内置 .cube、以后用户导入…） */
 export interface LookSource {
   list(): Look[];
   load(id: string): Promise<Lut3D | null>;
+}
+
+/** 光谱胶片引擎（独立进程，见 engine/）。适配器负责进程池、超时、重启与健康状态 */
+export interface FilmEngine {
+  stocks(): Promise<FilmStock[]>;
+  /** 烘焙 size³ 的 3D LUT（sRGB 进、sRGB 出） */
+  bakeLut(req: { stock: string; paper?: string; size: number; params?: FilmParams }): Promise<Lut3D>;
+  /** 引擎版本（进 LUT 缓存键；未连上时为 null） */
+  version(): string | null;
+  health(): FilmEngineHealth;
+}
+
+export interface FilmEngineHealth {
+  readonly state: 'idle' | 'starting' | 'up' | 'down';
+  readonly version: string | null;
+  readonly restarts: number;
+  readonly lastError: string | null;
+}
+
+/** 烘焙好的 LUT 存哪（数据目录缓存）：引擎挂了时的降级来源 */
+export interface FilmLutStore {
+  read(key: string): Promise<Lut3D | null>;
+  write(key: string, lut: Lut3D): Promise<void>;
+  /** 上次见到的胶片目录（引擎没起来时也能列出风格） */
+  readCatalog(): Promise<FilmStock[] | null>;
+  writeCatalog(stocks: readonly FilmStock[]): Promise<void>;
 }
 
 /** 把一张照片按效果管线渲染成成品（全尺寸 JPEG） */

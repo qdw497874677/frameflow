@@ -61,3 +61,16 @@ jobs:
       - run: cmake -S . -B build -G Ninja -DCMAKE_CXX_FLAGS=-Werror
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
+      # 服务端 ↔ 真引擎联调：跑 film-engine.test.mjs 里的真引擎用例
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - run: node --test tools/film-engine.test.mjs
+        working-directory: server
+        env:
+          FFE_ENGINE_BINARY: ${{ github.workspace }}/engine/build/frameflow-film
+          FFE_ENGINE_STOCKS: ${{ github.workspace }}/engine/data/stocks

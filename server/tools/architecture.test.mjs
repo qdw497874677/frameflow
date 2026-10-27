@@ -90,3 +90,13 @@ test('入库模块只依赖共享内核', () => {
       .map((t) => `${rel(f)} → ${t}`));
   assert.deepEqual(leaks, []);
 });
+
+// 光谱胶片引擎适配器（子进程 + 帧协议 + LUT 缓存）是一个有边界的模块：外面只经 adapters/film/index.ts 用它
+test('胶片引擎模块只经 adapters/film/index.ts 对外', () => {
+  const leaks = walk(SRC)
+    .filter((f) => !rel(f).startsWith('adapters/film/'))
+    .flatMap((f) => targetsOf(f)
+      .filter((t) => t.startsWith('adapters/film/') && t !== 'adapters/film/index.ts')
+      .map((t) => `${rel(f)} → ${t}`));
+  assert.deepEqual(leaks, []);
+});

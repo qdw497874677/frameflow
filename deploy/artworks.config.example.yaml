@@ -42,3 +42,10 @@ cache:
   maxBytes: 8589934592
 
 logLevel: info
+
+# 胶片模拟（实验性，缺省关）：需先在部署机上构建 engine/ 并运行 engine/tools/fetch_stocks.sh
+# film:
+#   enabled: true
+#   binary: ../engine/build/frameflow-film
+#   stocksDir: ../engine/data/stocks
+#   lutSize: 33
