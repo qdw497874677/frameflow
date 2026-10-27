@@ -16,7 +16,9 @@ add_library(ffe_core STATIC
   src/json.cpp
   src/protocol.cpp
   src/spectral.cpp
-  src/stock.cpp)
+  src/stock.cpp
+  src/film_model.cpp
+  src/engine.cpp)
 target_include_directories(ffe_core PUBLIC src)
 target_link_libraries(ffe_core PUBLIC Threads::Threads)
 if(MSVC)
@@ -28,8 +30,11 @@ else()
   endif()
 endif()
 
+add_executable(frameflow-film src/main.cpp)
+target_link_libraries(frameflow-film PRIVATE ffe_core)
+
 enable_testing()
-foreach(t json protocol spectral stock)
+foreach(t json protocol spectral stock model engine)
   add_executable(test_${t} tests/test_${t}.cpp)
   target_link_libraries(test_${t} PRIVATE ffe_core)
   target_compile_definitions(test_${t} PRIVATE FFE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/stocks")
