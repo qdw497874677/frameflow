@@ -43,3 +43,15 @@ jobs:
       - run: npm run build
         env:
           VITE_API_BASE: /api/v1
+
+  engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - run: cmake -S . -B build -G Ninja -DCMAKE_CXX_FLAGS=-Werror
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
