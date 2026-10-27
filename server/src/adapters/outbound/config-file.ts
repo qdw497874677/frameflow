@@ -39,6 +39,8 @@ export interface Config {
   cookieSecure?: 'auto' | 'always' | 'never';
   /** 实时入库（FTP / 目录监听）；null = 关 */
   ingest?: IngestCfg | null;
+  /** 光谱胶片引擎（engine/，独立 C++ 进程）；null = 关（缺省） */
+  film?: FilmCfg | null;
   /** 配置是从哪个文件读的（运行时添加根目录要写回这里）；null = 没有配置文件（全默认/环境变量） */
   sourceFile: string | null;
 }
@@ -72,6 +74,41 @@ export interface IngestCfg {
   /** 监听收件目录（任何方式拷进来的都入库，例如 SMB / rsync / 相机 App） */
   watch: boolean;
   ftp: IngestFtpCfg | null;
+}
+
+export interface FilmCfg {
+  /** frameflow-film 可执行文件 */
+  binary: string;
+  /** 胶片数据目录（engine/tools/fetch_stocks.sh 生成） */
+  stocksDir: string;
+  /** 单个请求超时（毫秒） */
+  timeoutMs: number;
+  /** 预览 / 导出用的 LUT 边长 */
+  lutSize: number;
+  /** 引擎线程数；0 = 引擎自己按 CPU 定 */
+  threads: number;
+  /** 相纸 id；空 = 引擎目录里第一张相纸 */
+  paper: string;
+}
+
+const ENGINE_DIR = resolve(import.meta.dirname, '..', '..', '..', '..', 'engine');
+
+/** 功能开关：`film.enabled: true` 或 ARTWORKS_FILM_ENABLED=1 才开，缺省关 */
+export function parseFilm(raw: unknown, env: NodeJS.ProcessEnv = process.env): FilmCfg | null {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const flag = r['enabled'] ?? env['ARTWORKS_FILM_ENABLED'];
+  if (!['1', 'true', 'yes'].includes(String(flag ?? 'false').toLowerCase())) return null;
+  const num = (v: unknown, d: number) => (v !== undefined && v !== null && Number.isFinite(Number(v)) ? Number(v) : d);
+  const lutSize = num(r['lutSize'], 33);
+  if (!Number.isInteger(lutSize) || lutSize < 2 || lutSize > 65) throw new Error('film.lutSize 要是 2–65 的整数');
+  return {
+    binary: resolve(expandHome(String(r['binary'] ?? env['ARTWORKS_FILM_BINARY'] ?? join(ENGINE_DIR, 'build', 'frameflow-film')))),
+    stocksDir: resolve(expandHome(String(r['stocksDir'] ?? env['ARTWORKS_FILM_STOCKS'] ?? join(ENGINE_DIR, 'data', 'stocks')))),
+    timeoutMs: num(r['timeoutMs'], 30_000),
+    lutSize,
+    threads: num(r['threads'], 0),
+    paper: String(r['paper'] ?? ''),
+  };
 }
 
 function parseIngest(raw: unknown): IngestCfg | null {
@@ -156,6 +193,7 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
     trustProxy: ['1', 'true', 'yes'].includes(String(raw['trustProxy'] ?? process.env['ARTWORKS_TRUST_PROXY'] ?? 'false').toLowerCase()),
     cookieSecure: ((v) => (v === 'always' || v === 'never' ? v : 'auto'))(String(raw['cookieSecure'] ?? process.env['ARTWORKS_COOKIE_SECURE'] ?? 'auto')),
     ingest: parseIngest(raw['ingest']),
+    film: parseFilm(raw['film']),
     sourceFile: file ?? null,
   };
 }

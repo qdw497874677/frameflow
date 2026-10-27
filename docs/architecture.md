@@ -56,3 +56,16 @@
 - `application/library/events.ts`：库事件环形日志（seq），`GET /library/events`（SSE）对外。
 - `adapters/ingest/`：来源适配器（目录监听；FTP 见后续），**只经 `adapters/ingest/index.ts` 对外**；模块只依赖共享内核（`domain/exts.ts`、库事件、配置类型）—— `tools/architecture.test.mjs` 守着。
 - 照片库实现 `Library.ingestDir()` 是 `IngestCatalog` 的实现：只重扫一个目录（配对只看同目录，结果与全量一致），期间占住扫描闸。
+
+## 胶片模拟（film）模块
+
+有边界的子模块：自研光谱胶片引擎（`engine/`，C++20，独立进程）把「负片 + 相纸 + 参数」烘焙成 3D LUT，服务端把它当作普通风格（look）用，导出仍走既有 Effect 管线。**功能开关缺省关**（`film.enabled: true` 或 `ARTWORKS_FILM_ENABLED=1` 才开）；关着时行为与以前完全一致。
+
+- `domain/grading/film.ts`：胶片/参数类型、参数范围校验（与引擎同一套）、风格 id（`film` 前缀，避免与 .cube 风格撞名）、缓存键（引擎版本 + 胶片 + 相纸 + 尺寸 + 排序后的参数）、f32 载荷 → LUT。
+- `application/grading/ports.ts`：端口 `FilmEngine`（stocks / bakeLut / version / health）、`FilmLutStore`（LUT 与胶片目录的持久缓存）。
+- `application/grading/film-looks.ts`：`FilmLookSource` —— 内存 → 磁盘缓存（按版本键）→ 引擎烘焙 → 引擎挂了退回 `latest` 旧缓存；同一风格并发只烘焙一次。`composite-looks.ts` 把 cube 与 film 两个来源合成一个风格目录。
+- `adapters/film/`：`ProcessFilmEngine`（懒启动 + hello 握手校验协议版本、串行队列、请求超时 SIGKILL 后下次自动重启、连续崩溃熔断冷却）、`FFE1` 帧编解码、`DirFilmLutStore`（`<dataDir>/cache/film-luts/`，tmp + rename 原子写）。**只经 `adapters/film/index.ts` 对外**，`tools/architecture.test.mjs` 守着。
+- 路由：`GET /looks` 条目带 `kind`（cube / film）；film 风格的 `.cube` 引擎不可用且无缓存时回 503；`GET /film/status` 报引擎状态。
+- 为什么独立进程：引擎崩溃/卡死不拖垮 Node；协议简单（长度前缀 JSON + 二进制载荷），可替换实现。
+- 镜像：Dockerfile **暂不打包引擎与胶片数据** —— Kodak 数据表条款禁止再分发（见 `engine/PROVENANCE.md`），需要用户在部署机上自行运行 `engine/tools/fetch_stocks.sh` 生成数据并以 `ARTWORKS_FILM_BINARY` / `ARTWORKS_FILM_STOCKS` 指过去。
+- 测试：`tools/film-engine.test.mjs` 用 `tools/fake-film-engine.mjs` 覆盖握手、超时、崩溃熔断、缓存降级、开关；设置 `FFE_ENGINE_BINARY` / `FFE_ENGINE_STOCKS` 时另跑真引擎用例（CI engine 作业里跑）。

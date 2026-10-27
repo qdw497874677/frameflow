@@ -32,8 +32,11 @@ import { Auth } from './auth.ts';
 import { registerAuthGate } from './auth-gate.ts';
 import { infoOf } from './request.ts';
 import { registerJobRoutes } from './routes/jobs.ts';
-import { registerLookRoutes } from './routes/looks.ts';
+import { registerLookRoutes, type LookCatalog } from './routes/looks.ts';
 import { CubeLookSource } from '../../outbound/grading/cube-looks.ts';
+import { CompositeLookSource } from '../../../application/grading/composite-looks.ts';
+import { formatCube } from '../../../domain/grading/lut.ts';
+import { createFilmModule, type FilmModule } from '../../film/index.ts';
 import { SharpRenderer } from '../../outbound/grading/sharp-renderer.ts';
 import { ExiftoolMetadata } from '../../outbound/grading/exif-metadata.ts';
 import { DirExportTarget } from '../../outbound/grading/dir-export.ts';
@@ -65,7 +68,21 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const auth = new Auth(cfg.dataDir, cfg.password);
   // 任务层：磁盘上两份追加日志（core/jobs.ts），执行由进程内一个队列兜（jobs/service.ts）。
   // 签发批注链接的能力在这里注入，handler 自己不碰 auth。
-  const looks = new CubeLookSource();
+  // 风格来源：内置 .cube + （开关打开时）光谱胶片引擎
+  const cubeLooks = new CubeLookSource();
+  const film: FilmModule | null = cfg.film ? createFilmModule(cfg.film, cfg.dataDir, (m) => app.log.warn(m)) : null;
+  const looks = new CompositeLookSource([{ kind: 'cube', source: cubeLooks }, ...(film ? [{ kind: 'film', source: film.looks }] : [])]);
+  const lookCatalog: LookCatalog = {
+    entries: () => looks.entries(),
+    cubeText: async (id) => {
+      const owner = looks.ownerOf(id);
+      if (!owner) return null;
+      if (owner.kind === 'cube') return cubeLooks.cubeText(id);
+      const lut = await owner.source.load(id);
+      return lut ? formatCube(lut, id) : 'unavailable';
+    },
+    filmStatus: () => film?.status() ?? { enabled: false },
+  };
   const jobs = new JobsService(new JobsStore(cfg.dataDir), registry, {
     lib,
     // 滤镜阶段：内置 .cube 风格、sharp 渲染全尺寸、成品写数据目录 exports/<jobId>/
@@ -76,6 +93,11 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   });
   let onJobDone: (jobId: string, generation: number) => void = () => undefined;
   // 重启续跑：上次导出到一半的滤镜任务接着跑（等通知等接线都好了再开跑）
+  if (film) {
+    // 引擎目录在开跑前拿到（续跑的滤镜任务要认得 film 风格）；引擎不在也不挡启动
+    app.addHook('onReady', async () => { await film.start(); });
+    app.addHook('onClose', async () => { await film.stop(); });
+  }
   app.addHook('onReady', async () => { jobs.resumeBackground(); });
   await app.register(cookie);
 
@@ -198,7 +220,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   registerMarksRoutes(app, { lib });
   registerTokenRoutes(app, { auth, via: (req) => infoOf(req).via });
   registerJobRoutes(app, { jobs, lib });
-  registerLookRoutes(app, { looks });
+  registerLookRoutes(app, { looks: lookCatalog });
   // ── 生产形态：顺手把 web/dist 端上来（一个进程、一个端口）─────────────
   const dist = join(process.cwd(), '..', 'web', 'dist');
   if (existsSync(join(dist, 'index.html'))) {

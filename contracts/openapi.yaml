@@ -557,6 +557,7 @@ paths:
                         name: { type: string, example: Portrait 400 }
                         inspiredBy: { type: string, description: 近似的胶卷（只作说明） }
                         cube: { type: string, example: /api/v1/looks/portrait400.cube }
+                        kind: { type: string, enum: [cube, film], description: "cube = 内置 .cube；film = 光谱胶片引擎烘焙（开关打开时才有）" }
                   license: { type: string }
 
   /looks/{file}:
@@ -568,6 +569,36 @@ paths:
       responses:
         "200": { description: Adobe .cube 文本, content: { text/plain: { schema: { type: string } } } }
         "404": { description: 没这个风格 }
+        "503": { description: film 风格，但胶片引擎不可用且没有缓存 }
+
+  /film/status:
+    get:
+      summary: 光谱胶片引擎状态（功能开关 `film.enabled`，缺省关）
+      description: |
+        开关关着时只返回 `{ enabled: false }`。打开时引擎（engine/ 的 frameflow-film 子进程）懒启动，
+        `engine.state` 为 idle / starting / up / down；`catalog` 说明风格目录来自引擎、缓存还是没有。
+        film 类风格在 `/looks` 里以 `kind: film` 出现，`.cube` 由引擎烘焙并缓存在数据目录
+        `cache/film-luts/`，引擎挂了时用缓存降级，连缓存都没有时 `/looks/{file}` 回 503。
+      x-implemented: true
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled: { type: boolean }
+                  looks: { type: integer }
+                  catalog: { type: string, enum: [engine, cache, none, pending] }
+                  engine:
+                    type: object
+                    properties:
+                      state: { type: string, enum: [idle, starting, up, down] }
+                      version: { type: string, nullable: true }
+                      restarts: { type: integer }
+                      lastError: { type: string, nullable: true }
 
   /jobs/{id}/cancel:
     post:
