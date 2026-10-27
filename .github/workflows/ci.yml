@@ -51,7 +51,13 @@ jobs:
         working-directory: engine
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build poppler-utils python3-numpy
+      # 厂商数据表不入库（见 engine/PROVENANCE.md），构建时下载并校验 sha256
+      - uses: actions/cache@v4
+        with:
+          path: engine/data/cache
+          key: datasheets-${{ hashFiles('engine/tools/datasheets/spec.json') }}
+      - run: tools/fetch_stocks.sh
       - run: cmake -S . -B build -G Ninja -DCMAKE_CXX_FLAGS=-Werror
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
