@@ -82,7 +82,11 @@ TEST(interlayer_effects_cancel_grey_crosstalk) {
         CHECK(r.interlayer[k][c] > -0.1);  // inhibition, not (much) facilitation
       }
   CHECK(before > 0.05);  // the datasheet sensitivities overlap
-  CHECK(after < 1e-3);
+  CHECK(after < 0.02);  // M2: least squares over -2..+2 EV, grey no longer exactly zero
+  // ...in exchange the worst crosstalk across the ramp beats a grey-only fit (0.070)
+  double ramp = 0;
+  for (double v : r.crosstalk_ramp) ramp = std::max(ramp, v);
+  CHECK(ramp < 0.06);
   for (int k = 0; k < 3; ++k) CHECK(r.crosstalk_after[k][k] < -0.2);  // layers still respond to their own light
 
   RenderParams off;

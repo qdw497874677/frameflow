@@ -67,6 +67,17 @@ TEST(bakes_lut_with_neutral_axis) {
   CHECK(pure_red[0] > pure_red[1] && pure_red[0] > pure_red[2]);
 }
 
+TEST(spatial_render_params) {
+  std::vector<std::uint8_t> px(3 * 8 * 8, 120);
+  CHECK(error_code(call({{"op", "render"}, {"stock", "portrait400"}, {"width", 8}, {"height", 8},
+                         {"params", Json(JsonObject{{"dirDiffusionUm", 500}})}}, px)) == "bad_request");
+  Frame flat = call({{"op", "render"}, {"stock", "portrait400"}, {"width", 8}, {"height", 8}}, px);
+  Frame dir = call({{"op", "render"}, {"stock", "portrait400"}, {"width", 8}, {"height", 8},
+                    {"params", Json(JsonObject{{"dirDiffusionUm", 20}, {"filmFormatMm", 8}})}}, px);
+  CHECK(dir.header["ok"].as_bool());
+  CHECK(dir.payload == flat.payload);  // uniform frame: diffusion changes nothing
+}
+
 TEST(renders_rgb8_and_rgb16) {
   std::vector<std::uint8_t> px8 = {118, 118, 118, 255, 0, 0, 0, 0, 0};
   Frame a = call({{"op", "render"}, {"stock", "portrait400"}, {"width", 3}, {"height", 1}, {"format", "rgb8"}}, px8);

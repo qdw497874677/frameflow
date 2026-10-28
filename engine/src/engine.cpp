@@ -1,5 +1,8 @@
 #include "engine.hpp"
 
+#include "spatial.hpp"
+
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -56,6 +59,13 @@ RenderParams parse_params(const Json& p) {
   return r;
 }
 
+SpatialParams parse_spatial(const Json& p) {
+  SpatialParams s;
+  s.film_format_mm = param(p, "filmFormatMm", s.film_format_mm, 8, 300);
+  s.dir_diffusion_um = param(p, "dirDiffusionUm", s.dir_diffusion_um, 0, 100);
+  return s;
+}
+
 std::vector<float> decode_table(int levels) {
   std::vector<float> t(levels);
   for (int i = 0; i < levels; ++i) t[i] = static_cast<float>(srgb_decode(static_cast<double>(i) / (levels - 1)));
@@ -63,18 +73,6 @@ std::vector<float> decode_table(int levels) {
 }
 
 }  // namespace
-
-void run_parallel(std::size_t n, unsigned threads, const std::function<void(std::size_t, std::size_t)>& fn) {
-  threads = std::max(1u, std::min<unsigned>(threads, static_cast<unsigned>((n + 4095) / 4096)));
-  if (threads == 1) { fn(0, n); return; }
-  std::vector<std::thread> pool;
-  std::size_t chunk = (n + threads - 1) / threads;
-  for (unsigned t = 0; t < threads; ++t) {
-    std::size_t a = t * chunk, b = std::min(n, a + chunk);
-    if (a < b) pool.emplace_back(fn, a, b);
-  }
-  for (auto& th : pool) th.join();
-}
 
 Engine::Engine(std::shared_ptr<const StockLibrary> stocks, unsigned threads)
     : stocks_(std::move(stocks)), threads_(threads ? threads : std::max(1u, std::thread::hardware_concurrency())) {}
@@ -168,35 +166,50 @@ Frame Engine::render(const Frame& request) {
   if (!wide && format != "rgb8") throw RequestError("bad_request", "format must be rgb8 or rgb16");
   if (request.payload.size() != px * 3 * (wide ? 2 : 1)) throw RequestError("bad_request", "payload size mismatch");
   auto pipe = pipeline(req);
+  const SpatialParams spatial = parse_spatial(req["params"]);
 
   static const std::vector<float> lut8 = decode_table(256);
   static const std::vector<float> lut16 = decode_table(65536);
   std::vector<std::uint8_t> payload(request.payload.size());
   const std::uint8_t* src = request.payload.data();
   std::uint8_t* dst = payload.data();
-  run_parallel(px, threads_, [&](std::size_t a, std::size_t e) {
-    constexpr std::size_t kBlock = 1024;
-    std::vector<float> in(kBlock * 3), out(kBlock * 3);
-    for (std::size_t s = a; s < e; s += kBlock) {
-      std::size_t m = std::min(kBlock, e - s);
-      for (std::size_t i = 0; i < m * 3; ++i) {
-        std::size_t c = s * 3 + i;
-        in[i] = wide ? lut16[src[2 * c] | (src[2 * c + 1] << 8)] : lut8[src[c]];
-      }
-      pipe->process(in.data(), out.data(), m);
-      for (std::size_t i = 0; i < m * 3; ++i) {
-        std::size_t c = s * 3 + i;
-        double v = srgb_encode(out[i]);
-        if (wide) {
-          auto q = static_cast<std::uint16_t>(std::lround(v * 65535.0));
-          dst[2 * c] = static_cast<std::uint8_t>(q & 0xFF);
-          dst[2 * c + 1] = static_cast<std::uint8_t>(q >> 8);
-        } else {
-          dst[c] = static_cast<std::uint8_t>(std::lround(v * 255.0));
-        }
+  auto encode = [&](const float* v, std::size_t c0, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
+      std::size_t c = c0 + i;
+      double e = srgb_encode(v[i]);
+      if (wide) {
+        auto q = static_cast<std::uint16_t>(std::lround(std::clamp(e, 0.0, 1.0) * 65535.0));
+        dst[2 * c] = static_cast<std::uint8_t>(q & 0xFF);
+        dst[2 * c + 1] = static_cast<std::uint8_t>(q >> 8);
+      } else {
+        dst[c] = static_cast<std::uint8_t>(std::lround(std::clamp(e, 0.0, 1.0) * 255.0));
       }
     }
-  });
+  };
+  auto decode = [&](float* v, std::size_t c0, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
+      std::size_t c = c0 + i;
+      v[i] = wide ? lut16[src[2 * c] | (src[2 * c + 1] << 8)] : lut8[src[c]];
+    }
+  };
+  if (spatial_active(spatial)) {
+    // whole-frame path (neighbourhood effects): ~50 bytes per pixel of working memory
+    std::vector<float> in(px * 3), out(px * 3);
+    run_parallel(px * 3, threads_, [&](std::size_t a, std::size_t e) { decode(&in[a], a, e - a); });
+    render_spatial(*pipe, in.data(), out.data(), static_cast<int>(w), static_cast<int>(h), spatial, threads_);
+    run_parallel(px * 3, threads_, [&](std::size_t a, std::size_t e) { encode(&out[a], a, e - a); });
+  } else {
+    run_parallel(px, threads_, [&](std::size_t a, std::size_t e) {
+      constexpr std::size_t kBlock = 1024;
+      std::vector<float> in(kBlock * 3), out(kBlock * 3);
+      for (std::size_t s = a; s < e; s += kBlock) {
+        std::size_t m = std::min(kBlock, e - s);
+        decode(in.data(), s * 3, m * 3);
+        pipe->process(in.data(), out.data(), m);
+        encode(out.data(), s * 3, m * 3);
+      }
+    });
+  }
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return ok(req, {{"width", static_cast<std::size_t>(w)}, {"height", static_cast<std::size_t>(h)}, {"format", format}, {"ms", ms}},
             std::move(payload));

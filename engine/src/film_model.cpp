@@ -126,6 +126,8 @@ FilmPipeline::FilmPipeline(const Stock& neg, const Stock& paper, const RenderPar
   const double dx = neg.log_h[1] - neg.log_h[0];
   for (int k = 0; k < 3; ++k)
     neg_dye_[k] = Curve(neg.log_h.front(), dx, std::vector<float>(neg_curves[k].begin(), neg_curves[k].end()), true);
+  for (int k = 0; k < 3; ++k)
+    neg_dye_max_[k] = static_cast<float>(*std::max_element(neg_curves[k].begin(), neg_curves[k].end()));
   neg_dmin_.assign(neg.dmin.begin(), neg.dmin.end());
   neg_dye_density_.resize(3 * L_);
   for (int k = 0; k < 3; ++k)
@@ -207,15 +209,15 @@ FilmPipeline::FilmPipeline(const Stock& neg, const Stock& paper, const RenderPar
   }
 }
 
-Mat3 FilmPipeline::grey_response() const {
+Mat3 FilmPipeline::grey_response(double ev) const {
   // columns: input channel aligned to layer (layer 0 = blue-sensitive <- input blue, ...)
-  const float h = 0.05f;
+  const float h = 0.05f, g0 = static_cast<float>(0.18 * std::pow(2.0, ev));
   std::vector<float> scratch(L_);
-  float g[3] = {0.18f, 0.18f, 0.18f}, base[3];
+  float g[3] = {g0, g0, g0}, base[3];
   print_log_exposure(g, base, scratch.data());
   Mat3 J{};
   for (int c = 0; c < 3; ++c) {
-    float in[3] = {0.18f, 0.18f, 0.18f}, lp[3];
+    float in[3] = {g0, g0, g0}, lp[3];
     in[2 - c] *= std::pow(10.0f, h);
     print_log_exposure(in, lp, scratch.data());
     for (int k = 0; k < 3; ++k) J[k][c] = (lp[k] - base[k]) / h;
@@ -223,57 +225,99 @@ Mat3 FilmPipeline::grey_response() const {
   return J;
 }
 
+namespace {
+// Solve the n x n system A x = b in place (partial pivoting); returns false when singular.
+bool solve_dense(std::vector<double>& A, std::vector<double>& b, int n) {
+  for (int col = 0; col < n; ++col) {
+    int piv = col;
+    for (int i = col + 1; i < n; ++i)
+      if (std::abs(A[i * n + col]) > std::abs(A[piv * n + col])) piv = i;
+    if (std::abs(A[piv * n + col]) < 1e-12) return false;
+    for (int j = 0; j < n; ++j) std::swap(A[piv * n + j], A[col * n + j]);
+    std::swap(b[piv], b[col]);
+    for (int i = col + 1; i < n; ++i) {
+      double f = A[i * n + col] / A[col * n + col];
+      for (int j = col; j < n; ++j) A[i * n + j] -= f * A[col * n + j];
+      b[i] -= f * b[col];
+    }
+  }
+  for (int i = n - 1; i >= 0; --i) {
+    double v = b[i];
+    for (int j = i + 1; j < n; ++j) v -= A[i * n + j] * b[j];
+    b[i] = v / A[i * n + i];
+  }
+  return true;
+}
+}  // namespace
+
 void FilmPipeline::fit_interlayer(double strength) {
   const float offset = log_h_grey_offset_;
   log_h_grey_offset_ = static_cast<float>(offset - exposure_ev_ * std::log10(2.0));  // fit at normal exposure
   report_.crosstalk_before = grey_response();
-  // solve the 6 off-diagonal inhibitions so a channel change at grey moves only its own printing layer
+  // M2: least squares over a grey ramp (-2..+2 EV) instead of zeroing crosstalk at grey only, so the
+  // inhibition that cleans up mid-grey does not over-correct in shadows and highlights.
   constexpr int kOff[6][2] = {{0, 1}, {0, 2}, {1, 0}, {1, 2}, {2, 0}, {2, 1}};
-  auto residual = [&](std::array<double, 6>& r) {
-    Mat3 J = grey_response();
-    for (int i = 0; i < 6; ++i) r[i] = J[kOff[i][0]][kOff[i][1]];
+  constexpr double kEv[5] = {-2, -1, 0, 1, 2};
+  constexpr double kWeight[5] = {0.5, 1, 2, 1, 0.5};  // grey matters most
+  constexpr int R = 30;
+  auto residual = [&](std::array<double, R>& r) {
+    for (int e = 0; e < 5; ++e) {
+      Mat3 J = grey_response(kEv[e]);
+      for (int i = 0; i < 6; ++i) r[e * 6 + i] = kWeight[e] * J[kOff[i][0]][kOff[i][1]];
+    }
   };
-  std::array<double, 6> r{};
-  for (int it = 0; it < 20 && strength > 0; ++it) {
-    residual(r);
-    double worst = 0;
-    for (double v : r) worst = std::max(worst, std::abs(v));
-    if (worst < 1e-4) break;
-    double A[6][7];
+  auto cost = [](const std::array<double, R>& r) { double c = 0; for (double v : r) c += v * v; return c; };
+  std::array<double, R> r{};
+  residual(r);
+  for (int it = 0; it < 25 && strength > 0; ++it) {
+    double c0 = cost(r);
+    if (c0 < 1e-10) break;
+    std::vector<double> Jm(R * 6);
     for (int j = 0; j < 6; ++j) {
       auto saved = dir_;
       dir_[kOff[j][0]][kOff[j][1]] += 1e-3f;
-      std::array<double, 6> rj{};
+      std::array<double, R> rj{};
       residual(rj);
       dir_ = saved;
-      for (int i = 0; i < 6; ++i) A[i][j] = (rj[i] - r[i]) / 1e-3;
+      for (int i = 0; i < R; ++i) Jm[i * 6 + j] = (rj[i] - r[i]) / 1e-3;
     }
-    for (int i = 0; i < 6; ++i) A[i][6] = -r[i];
-    // Gaussian elimination with partial pivoting
-    for (int col = 0; col < 6; ++col) {
-      int piv = col;
-      for (int i = col + 1; i < 6; ++i)
-        if (std::abs(A[i][col]) > std::abs(A[piv][col])) piv = i;
-      if (std::abs(A[piv][col]) < 1e-12) throw std::runtime_error("interlayer fit is singular");
-      std::swap(A[piv], A[col]);
-      for (int i = col + 1; i < 6; ++i) {
-        double f = A[i][col] / A[col][col];
-        for (int j = col; j < 7; ++j) A[i][j] -= f * A[col][j];
-      }
+    std::vector<double> A(36, 0.0), g(6, 0.0);
+    for (int a = 0; a < 6; ++a) {
+      for (int b2 = 0; b2 < 6; ++b2)
+        for (int i = 0; i < R; ++i) A[a * 6 + b2] += Jm[i * 6 + a] * Jm[i * 6 + b2];
+      for (int i = 0; i < R; ++i) g[a] -= Jm[i * 6 + a] * r[i];
+      A[a * 6 + a] *= 1.0 + 1e-6;
     }
-    double x[6];
-    for (int i = 5; i >= 0; --i) {
-      double v = A[i][6];
-      for (int j = i + 1; j < 6; ++j) v -= A[i][j] * x[j];
-      x[i] = v / A[i][i];
+    if (!solve_dense(A, g, 6)) throw std::runtime_error("interlayer fit is singular");
+    // damped step: halve until the cost drops
+    auto saved = dir_;
+    double t = 1;
+    std::array<double, R> rn{};
+    for (int ls = 0; ls < 8; ++ls, t *= 0.5) {
+      dir_ = saved;
+      for (int j = 0; j < 6; ++j) dir_[kOff[j][0]][kOff[j][1]] += static_cast<float>(std::clamp(t * g[j], -0.5, 0.5));
+      residual(rn);
+      if (cost(rn) < c0) break;
     }
-    for (int j = 0; j < 6; ++j) dir_[kOff[j][0]][kOff[j][1]] += static_cast<float>(std::clamp(x[j], -0.5, 0.5));
+    if (!(cost(rn) < c0)) { dir_ = saved; break; }
+    double drop = c0 - cost(rn);
+    r = rn;
+    if (drop < 1e-9 * c0) break;
   }
   for (auto& row : dir_)
     for (auto& v : row) v = static_cast<float>(v * strength);
+  double off = 0;
+  for (int i = 0; i < 6; ++i) off += std::abs(dir_[kOff[i][0]][kOff[i][1]]);
+  dir_self_ = static_cast<float>(off / 6);  // assumption: self-inhibition ~ mean interlayer inhibition
   for (int k = 0; k < 3; ++k)
     for (int j = 0; j < 3; ++j) report_.interlayer[k][j] = dir_[k][j];
   report_.crosstalk_after = grey_response();
+  for (int e = 0; e < 5; ++e) {
+    Mat3 J = grey_response(kEv[e]);
+    double worst = 0;
+    for (int i = 0; i < 6; ++i) worst = std::max(worst, std::abs(J[kOff[i][0]][kOff[i][1]]));
+    report_.crosstalk_ramp[e] = worst;
+  }
   log_h_grey_offset_ = offset;
 }
 
@@ -325,15 +369,12 @@ void FilmPipeline::balance_printer(const RenderParams& params) {
   log_h_grey_offset_ = offset;
 }
 
-void FilmPipeline::print_log_exposure(const float* in, float* logp, float* trans) const {
-  const int L = L_;
-  // camera
-  float a[3], lh[3];
+void FilmPipeline::layer_exposure(const float* in, float* e) const {
   float rgb[3] = {std::max(in[0], 0.0f), std::max(in[1], 0.0f), std::max(in[2], 0.0f)};
   if (ootf_inv_exp_ != 0.0f) {
-    // display-referred -> scene-referred: Y_scene = 0.18 (Y_display / 0.18)^(1/gamma), chromaticity kept
-    // Below grey the log slope is 1/gamma; above it the slope eases back to 1 over ~1 EV (smoothstep in
-    // log Y) so diffuse white stays near white -- SDR renderings already shoulder their highlights.
+    // display-referred -> scene-referred. Below grey the log slope is 1/gamma; above it the slope eases
+    // back to 1 over ~1 EV (smoothstep in log Y) so diffuse white stays near white -- SDR renderings
+    // already shoulder their highlights.
     float y = 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2];
     if (y > 1e-9f) {
       const float inv = 1.0f + ootf_inv_exp_, knee = 0.3f;
@@ -349,29 +390,39 @@ void FilmPipeline::print_log_exposure(const float* in, float* logp, float* trans
     }
   }
   for (int k = 0; k < 3; ++k) {
-    float e = static_cast<float>(exposure_[k][0]) * rgb[0] + static_cast<float>(exposure_[k][1]) * rgb[1] +
+    float v = static_cast<float>(exposure_[k][0]) * rgb[0] + static_cast<float>(exposure_[k][1]) * rgb[1] +
               static_cast<float>(exposure_[k][2]) * rgb[2];
-    e = (e + flare_) * flare_norm_;
-    lh[k] = std::log10(std::max(e, 1e-7f)) + log_h_grey_offset_;
-    a[k] = neg_dye_[k](lh[k]);
+    e[k] = (v + flare_) * flare_norm_;
   }
+}
+
+void FilmPipeline::log_exposure(const float* e, float* lh) const {
+  for (int k = 0; k < 3; ++k) lh[k] = std::log10(std::max(e[k], 1e-7f)) + log_h_grey_offset_;
+}
+
+void FilmPipeline::undeveloped(const float* lh, float* a, float* inhibit) const {
   // DIR couplers: development in one layer releases inhibitor that holds back its neighbours
   // (Hunt, Reproduction of Colour, interimage effects). The datasheet curves are measured with
   // neutral exposures, so inhibition acts only on the departure from neutral: layer j's dye
   // relative to what it would have formed at layer k's exposure. Neutral scales stay exact.
-  float inhibited[3];
+  for (int k = 0; k < 3; ++k) a[k] = neg_dye_[k](lh[k]);
   for (int k = 0; k < 3; ++k) {
-    float inhibit = 0;
+    float v = 0;
     for (int j = 0; j < 3; ++j)
-      if (j != k && dir_[k][j] != 0.0f) inhibit += dir_[k][j] * (a[j] - neg_dye_[j](lh[k]));
-    inhibited[k] = inhibit != 0.0f ? neg_dye_[k](lh[k] - inhibit) : a[k];
+      if (j != k && dir_[k][j] != 0.0f) v += dir_[k][j] * (a[j] - neg_dye_[j](lh[k]));
+    inhibit[k] = v;
   }
-  for (int k = 0; k < 3; ++k) a[k] = inhibited[k];
-  // negative transmittance
+}
+
+void FilmPipeline::develop(const float* lh, const float* inhibit, float* a) const {
+  for (int k = 0; k < 3; ++k) a[k] = inhibit[k] != 0.0f ? neg_dye_[k](lh[k] - inhibit[k]) : neg_dye_[k](lh[k]);
+}
+
+void FilmPipeline::print_log_from_dye(const float* a, float* logp, float* trans) const {
+  const int L = L_;
   const float* dy = neg_dye_density_.data();
   for (int i = 0; i < L; ++i)
     trans[i] = pow10_neg(neg_dmin_[i] + a[0] * dy[i] + a[1] * dy[L + i] + a[2] * dy[2 * L + i]);
-  // print exposure (before printer light balance)
   for (int k = 0; k < 3; ++k) {
     const float* w = print_weight_.data() + k * L;
     float s = 0;
@@ -380,10 +431,19 @@ void FilmPipeline::print_log_exposure(const float* in, float* logp, float* trans
   }
 }
 
-void FilmPipeline::process_one(const float* in, float* out, float* trans) const {
+void FilmPipeline::print_log_exposure(const float* in, float* logp, float* trans) const {
+  float e[3], lh[3], a[3], inhibit[3];
+  layer_exposure(in, e);
+  log_exposure(e, lh);
+  undeveloped(lh, a, inhibit);
+  develop(lh, inhibit, a);
+  print_log_from_dye(a, logp, trans);
+}
+
+void FilmPipeline::finish(const float* a, float* out, float* trans) const {
   const int L = L_;
   float logp[3], p[3];
-  print_log_exposure(in, logp, trans);
+  print_log_from_dye(a, logp, trans);
   for (int k = 0; k < 3; ++k) p[k] = paper_dye_[k](logp[k] + print_gain_log_[k]);
   // print reflectance -> XYZ
   const float* pd = paper_dye_density_.data();
@@ -399,6 +459,15 @@ void FilmPipeline::process_one(const float* in, float* out, float* trans) const 
     float v = static_cast<float>(output_[k][0] * xyz[0] + output_[k][1] * xyz[1] + output_[k][2] * xyz[2]);
     out[k] = (v - black_[k]) * black_scale_[k];
   }
+}
+
+void FilmPipeline::process_one(const float* in, float* out, float* trans) const {
+  float e[3], lh[3], a[3], inhibit[3];
+  layer_exposure(in, e);
+  log_exposure(e, lh);
+  undeveloped(lh, a, inhibit);
+  develop(lh, inhibit, a);
+  finish(a, out, trans);
 }
 
 void FilmPipeline::process(const float* in, float* out, std::size_t n) const {

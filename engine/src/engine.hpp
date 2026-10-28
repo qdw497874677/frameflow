@@ -7,6 +7,7 @@
 #include <string>
 
 #include "film_model.hpp"
+#include "parallel.hpp"
 #include "protocol.hpp"
 #include "stock.hpp"
 
@@ -35,7 +36,5 @@ class Engine {
   std::map<std::string, std::shared_ptr<const FilmPipeline>> pipelines_;
 };
 
-// Applies the pipeline to sRGB-encoded pixels in parallel (rows split across threads).
-void run_parallel(std::size_t n, unsigned threads, const std::function<void(std::size_t, std::size_t)>& fn);
 
 }  // namespace ffe
