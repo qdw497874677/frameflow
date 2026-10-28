@@ -374,6 +374,16 @@ export function createHttpJobSource(base = '/api/v1'): JobSource {
       return res.text();
     },
 
+    async filmPreview(req) {
+      const res = await fetch(`${base}/film/preview`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+      if (res.status === 401) throw new AuthRequiredError();
+      if (!res.ok) {
+        const msg = await res.json().then((j: { error?: string }) => j.error, () => null);
+        throw new Error(msg ?? `裁切预览失败：HTTP ${res.status}`);
+      }
+      return res.blob();
+    },
+
     async listChannels() {
       const res = await request<{ items: ChannelDto[] }>(base, '/channels');
       return res.items.map((c) => ({

@@ -79,7 +79,7 @@ export async function makeFixture({ photos = 2, sdk = scriptedSdk(), transportTi
     async call(method, url, payload) {
       const r = await app.inject({ method, url, payload, headers: { host: 'ff.local', origin: 'http://ff.local', cookie } });
       let json = null; try { json = r.json(); } catch { /* 空 */ }
-      return { status: r.statusCode, json, text: r.body };
+      return { status: r.statusCode, json, text: r.body, raw: r.rawPayload, headers: r.headers };
     },
     /** 建一个启用的飞书实例（目标 g1/g2 均授权项目 p） */
     async connector({ targets = ['g1', 'g2'] } = {}) {

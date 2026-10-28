@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filmParamProblems, filmLookId, filmLutKey, lutFromEngine, filmEffectProblems, hasFilmEffects } from '../src/domain/grading/film.ts';
+import { filmParamProblems, filmLookId, filmLutKey, lutFromEngine, filmEffectProblems, hasFilmEffects, filmCropPlan } from '../src/domain/grading/film.ts';
 import { sampleLut } from '../src/domain/grading/lut.ts';
 import { FilmLookSource } from '../src/application/grading/film-looks.ts';
 import { CompositeLookSource } from '../src/application/grading/composite-looks.ts';
@@ -286,6 +286,47 @@ test('HTTP：grade 带 film 效果时导出走引擎整帧渲染；参数校验�
       assert.ok(rr - bb > 50, `应已反相：${rr} ${bb}`);
       const st = (await fx.call('GET', '/api/v1/film/status')).json;
       assert.equal(st.engine.renders.done, 1);
+    } finally { await fx.dispose(); }
+  });
+});
+
+test('领域：100% 裁切预览几何（补边、贴边、按比例缩底片长边）', () => {
+  const p = filmCropPlan(6000, 4000, 0.5, 0.5, 512, { halation: 0.5, halationRadiusMm: 0.25 });
+  // 6 µm/px，3σ = 750 µm = 125 px
+  assert.deepEqual(p.visible, { left: 125, top: 125, width: 512, height: 512 });
+  assert.deepEqual(p.region, { left: 2744 - 125, top: 1744 - 125, width: 762, height: 762 });
+  near(p.filmFormatMm, 36 * 762 / 6000);
+  const edge = filmCropPlan(6000, 4000, 0, 1, 512, { grain: 1 });
+  assert.deepEqual(edge.region, { left: 0, top: 3488, width: 512, height: 512 });
+  assert.deepEqual(edge.visible, { left: 0, top: 0, width: 512, height: 512 });
+  const tiny = filmCropPlan(300, 200, 0.5, 0.5, 512, { grain: 1, filmFormatMm: 60 });
+  assert.deepEqual(tiny.region, { left: 0, top: 0, width: 300, height: 200 });
+  near(tiny.filmFormatMm, 60);
+});
+
+test('HTTP：100% 裁切预览（开关关 404、参数 400、film 风格出 JPEG）', async () => {
+  const sharp = (await import('node:module')).createRequire(import.meta.url)('sharp');
+  const off = await makeFixture({ photos: 1 });
+  try { assert.equal((await off.call('POST', '/api/v1/film/preview', {})).status, 404); } finally { await off.dispose(); }
+  const bin = path.join(tmp(), 'ffe');
+  fs.writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" "$@"\n`, { mode: 0o755 });
+  await withEnv({ ARTWORKS_FILM_ENABLED: '1', ARTWORKS_FILM_BINARY: bin, FAKE_FFE_MODE: 'ok' }, async () => {
+    const fx = await makeFixture({ photos: 1 });
+    try {
+      const photoId = (await fx.call('POST', '/api/v1/jobs', { kind: 'grade', selection: {}, params: { look: 'filmportrait400' }, mode: 'plan' })).json.items[0].id;
+      assert.equal((await fx.call('POST', '/api/v1/film/preview', { photoId, look: 'portrait400' })).status, 400, '.cube 风格不做裁切预览');
+      assert.equal((await fx.call('POST', '/api/v1/film/preview', { photoId, look: 'filmportrait400', film: { grain: 9 } })).status, 400);
+      assert.equal((await fx.call('POST', '/api/v1/film/preview', { photoId, look: 'filmportrait400', size: 9 })).status, 400);
+      assert.equal((await fx.call('POST', '/api/v1/film/preview', { photoId: 'nope', look: 'filmportrait400' })).status, 404);
+      const ok = await fx.call('POST', '/api/v1/film/preview', { photoId, look: 'filmportrait400', size: 64, film: { grain: 1 } });
+      assert.equal(ok.status, 200, ok.text);
+      assert.match(ok.headers['x-render-ms'], /^\d+$/);
+      const body = ok.raw;
+      const m = await sharp(body).metadata();
+      assert.equal(m.format, 'jpeg');
+      assert.ok(m.width <= 64 && m.height <= 64);
+      const [rr, , bb] = (await sharp(body).stats()).channels.map((x) => x.mean);
+      assert.ok(rr - bb > 50, `假引擎反相：${rr} ${bb}`);
     } finally { await fx.dispose(); }
   });
 });

@@ -1,5 +1,6 @@
 import type {
   Channel,
+  FilmEffects,
   FolderListing,
   InboundItem,
   Job,
@@ -144,6 +145,19 @@ export interface JobSource {
   listLooks(): Promise<Look[]>;
   /** 风格的 .cube 原文（WebGL2 预览用，与导出同一份） */
   lookCube(id: string): Promise<string>;
+  /** 100% 裁切预览（服务端引擎真渲染颗粒 / 光晕；胶片开关打开才有）→ JPEG Blob */
+  filmPreview(req: FilmPreviewRequest): Promise<Blob>;
+}
+
+export interface FilmPreviewRequest {
+  photoId: string;
+  look: string;
+  strength: number;
+  film: FilmEffects;
+  /** 裁切中心 0–1 */
+  cx?: number;
+  cy?: number;
+  size?: number;
 }
 
 /* ── 批注页端口（外部批注人，手里只有一条 ?t= 范围 token）──────────────── */

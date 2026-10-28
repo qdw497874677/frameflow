@@ -61,7 +61,7 @@ RenderParams parse_params(const Json& p) {
 
 SpatialParams parse_spatial(const Json& p) {
   SpatialParams s;
-  s.film_format_mm = param(p, "filmFormatMm", s.film_format_mm, 8, 300);
+  s.film_format_mm = param(p, "filmFormatMm", s.film_format_mm, 0.5, 300);  // 0.5: crop previews scale the format down to keep the pixel pitch
   s.dir_diffusion_um = param(p, "dirDiffusionUm", s.dir_diffusion_um, 0, 100);
   s.grain = param(p, "grain", s.grain, 0, 4);
   s.halation = param(p, "halation", s.halation, 0, 1);
