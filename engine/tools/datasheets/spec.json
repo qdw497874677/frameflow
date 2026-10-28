@@ -194,5 +194,489 @@
       }
     },
     "sha256": "94ead00f26a4bbf8ce1a991ff73add049514e38f32d6e88aa7a8a1e3e2d7982e"
+  },
+  "kodak-ektar-100": {
+    "pdf": "e4046_ektar_100.pdf",
+    "url": "https://imaging.kodakalaris.com/sites/default/files/files/resources/e4046_ektar_100.pdf",
+    "document": "Kodak Professional Ektar 100 Film, Technical Data E-4046 (February 2016)",
+    "sha256": "e39971d16dc8679fb92742a229c237acde5b0dddb0428a708f8ad68d7a1d5590",
+    "page": 4,
+    "charts": {
+      "characteristic": {
+        "page": 4,
+        "x": {
+          "pt": [
+            81.19,
+            265.7
+          ],
+          "value": [
+            -3,
+            2
+          ],
+          "quantity": "log10 exposure (lux-seconds)"
+        },
+        "y": {
+          "pt": [
+            292.41,
+            107.93
+          ],
+          "value": [
+            0,
+            4
+          ],
+          "quantity": "Status M density"
+        },
+        "notes": "Exposure: daylight. Densitometry: Status M. Log H Ref -0.84.",
+        "curves": {
+          "blue": 33,
+          "green": 34,
+          "red": 35
+        }
+      },
+      "sensitivity": {
+        "page": 4,
+        "x": {
+          "pt": [
+            74.19,
+            274.65
+          ],
+          "value": [
+            250,
+            750
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            508.04,
+            407.04
+          ],
+          "value": [
+            0,
+            2
+          ],
+          "quantity": "log10 sensitivity, 1/(erg/cm^2) for density 0.2 above D-min"
+        },
+        "curves": {
+          "yellow": 49,
+          "magenta": 50,
+          "cyan": 51
+        }
+      },
+      "dye_density": {
+        "page": 4,
+        "x": {
+          "pt": [
+            357.45,
+            541.78
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            290.39,
+            106.02
+          ],
+          "value": [
+            0,
+            2.5
+          ],
+          "quantity": "diffuse spectral density"
+        },
+        "notes": "Typical densities for a midscale neutral subject and D-min.",
+        "curves": {
+          "midscale_neutral": 67,
+          "dmin": 68
+        }
+      }
+    }
+  },
+  "kodak-portra-160": {
+    "pdf": "e4051_Portra_160.pdf",
+    "url": "https://imaging.kodakalaris.com/sites/default/files/files/resources/e4051_Portra_160.pdf",
+    "document": "Kodak Professional Portra 160 Film, Technical Data E-4051 (February 2016)",
+    "sha256": "a635048fc5e578747868684ff5a98fa2a6582a5d4542dd4ba2e132bc06d951c0",
+    "page": 4,
+    "charts": {
+      "characteristic": {
+        "page": 4,
+        "x": {
+          "pt": [
+            81.45,
+            266.01
+          ],
+          "value": [
+            -4,
+            1
+          ],
+          "quantity": "log10 exposure (lux-seconds)"
+        },
+        "y": {
+          "pt": [
+            286.6,
+            102.12
+          ],
+          "value": [
+            0,
+            4
+          ],
+          "quantity": "Status M density"
+        },
+        "notes": "Exposure: daylight. Densitometry: Status M. Log H Ref -1.051.",
+        "curves": {
+          "blue": 34,
+          "green": 35,
+          "red": 36
+        }
+      },
+      "sensitivity": {
+        "page": 4,
+        "x": {
+          "pt": [
+            73.75,
+            274.23
+          ],
+          "value": [
+            250,
+            750
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            461.68,
+            385.86
+          ],
+          "value": [
+            0,
+            2
+          ],
+          "quantity": "log10 sensitivity, 1/(erg/cm^2) for density 0.2 above D-min"
+        },
+        "curves": {
+          "yellow": 51,
+          "magenta": 52,
+          "cyan": 53
+        }
+      },
+      "dye_density": {
+        "page": 4,
+        "x": {
+          "pt": [
+            355.13,
+            539.5
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            285.51,
+            101.16
+          ],
+          "value": [
+            0,
+            2.5
+          ],
+          "quantity": "diffuse spectral density"
+        },
+        "notes": "Typical densities for a midscale neutral subject and D-min.",
+        "curves": {
+          "midscale_neutral": 67,
+          "dmin": 68
+        }
+      }
+    }
+  },
+  "kodak-portra-800": {
+    "pdf": "e4040_portra_800.pdf",
+    "url": "https://www.kodakprofessional.com/sites/default/files/2025-07/e4040.pdf",
+    "document": "Kodak Professional Portra 800 Film, Technical Data E-4040 (January 2025)",
+    "sha256": "13581198dffa01c5a2a38ab87d96a73cf2e2755b6514d55c65206fe621a60b5a",
+    "page": 4,
+    "charts": {
+      "characteristic": {
+        "page": 4,
+        "x": {
+          "pt": [
+            81.64,
+            229.28
+          ],
+          "value": [
+            -4,
+            0
+          ],
+          "quantity": "log10 exposure (lux-seconds)"
+        },
+        "y": {
+          "pt": [
+            212.8,
+            120.56
+          ],
+          "value": [
+            1,
+            3
+          ],
+          "quantity": "Status M density"
+        },
+        "notes": "EI 800 normal-process chart (push-process charts on the same page are not used). Axis labels on this chart contain a typo; calibrated by tick position. Densitometry: Status M. Log H Ref -1.74.",
+        "curves": {
+          "blue": 11,
+          "green": 12,
+          "red": 13
+        }
+      },
+      "sensitivity": {
+        "page": 4,
+        "x": {
+          "pt": [
+            370.24,
+            530.87
+          ],
+          "value": [
+            300,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            427.43,
+            351.61
+          ],
+          "value": [
+            1,
+            3
+          ],
+          "quantity": "log10 sensitivity, 1/(erg/cm^2) for density 0.2 above D-min"
+        },
+        "curves": {
+          "yellow": 64,
+          "magenta": 65,
+          "cyan": 66
+        }
+      },
+      "dye_density": {
+        "page": 5,
+        "x": {
+          "pt": [
+            81.09,
+            265.44
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            286.12,
+            101.77
+          ],
+          "value": [
+            0,
+            2.5
+          ],
+          "quantity": "diffuse spectral density"
+        },
+        "notes": "Typical densities for a midscale neutral subject and D-min.",
+        "curves": {
+          "midscale_neutral": 34,
+          "dmin": 33
+        }
+      }
+    }
+  },
+  "kodak-gold-200": {
+    "pdf": "E7022_Gold_200.pdf",
+    "url": "https://imaging.kodakalaris.com/sites/default/files/files/resources/E7022_Gold_200.pdf",
+    "document": "Kodak Gold 200 Film, Technical Data E-7022 (February 2016)",
+    "sha256": "9f19012f258b5e61be9b043c554483f01d338d0a8aff28163cb4ef6d7ddbe7df",
+    "page": 4,
+    "charts": {
+      "characteristic": {
+        "page": 4,
+        "x": {
+          "pt": [
+            81.68,
+            266.18
+          ],
+          "value": [
+            -3,
+            1
+          ],
+          "quantity": "log10 exposure (lux-seconds)"
+        },
+        "y": {
+          "pt": [
+            285.81,
+            101.3
+          ],
+          "value": [
+            0,
+            4
+          ],
+          "quantity": "Status M density"
+        },
+        "notes": "Exposure: daylight. Densitometry: Status M. Log H Ref -1.14. Spectral-sensitivity curves are stored as many short path segments; listed as index ranges.",
+        "curves": {
+          "blue": 35,
+          "green": 36,
+          "red": 37
+        }
+      },
+      "sensitivity": {
+        "page": 4,
+        "x": {
+          "pt": [
+            74.87,
+            275.4
+          ],
+          "value": [
+            250,
+            750
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            498.77,
+            347.26
+          ],
+          "value": [
+            0,
+            4
+          ],
+          "quantity": "log10 sensitivity, 1/(erg/cm^2) for density 0.2 above D-min"
+        },
+        "curves": {
+          "yellow": [
+            [
+              63,
+              76
+            ]
+          ],
+          "magenta": [
+            [
+              77,
+              98
+            ]
+          ],
+          "cyan": [
+            [
+              99,
+              106
+            ],
+            [
+              107,
+              127
+            ]
+          ]
+        }
+      },
+      "dye_density": {
+        "page": 4,
+        "x": {
+          "pt": [
+            357.09,
+            541.44
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            287.25,
+            102.9
+          ],
+          "value": [
+            0,
+            2.5
+          ],
+          "quantity": "diffuse spectral density"
+        },
+        "notes": "Typical densities for a midscale neutral subject and D-min.",
+        "curves": {
+          "midscale_neutral": 129,
+          "dmin": 130
+        }
+      }
+    }
+  },
+  "kodak-tri-x-400": {
+    "pdf": "f4017_TriX.pdf",
+    "url": "https://imaging.kodakalaris.com/sites/default/files/files/resources/f4017_TriX.pdf",
+    "document": "Kodak Professional Tri-X 320 and 400 Films, Technical Data F-4017 (February 2016)",
+    "sha256": "51d738f4f996c98716d153bab75e41d0359637a18ea49f9be52062652b0b27d2",
+    "page": 7,
+    "charts": {
+      "characteristic": {
+        "x": {
+          "pt": [
+            403.3,
+            513.96
+          ],
+          "value": [
+            -3,
+            0
+          ],
+          "quantity": "log10 exposure (lux-seconds)"
+        },
+        "y": {
+          "pt": [
+            207.86,
+            115.61
+          ],
+          "value": [
+            1,
+            3
+          ],
+          "quantity": "diffuse visual density"
+        },
+        "notes": "Tri-X 400 / 400TX 35 mm, T-MAX Developer, small tank, 20 C, 6 minutes curve. Densitometry: diffuse visual.",
+        "curves": {
+          "neutral": 94
+        }
+      },
+      "sensitivity": {
+        "x": {
+          "pt": [
+            107.03,
+            267.72
+          ],
+          "value": [
+            300,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            442.97,
+            367.32
+          ],
+          "value": [
+            0,
+            2
+          ],
+          "quantity": "log10 sensitivity, 1/(erg/cm^2) for density 1.0 above gross fog"
+        },
+        "notes": "Solid curve, D = 1.0 above gross fog, effective exposure 0.5 s.",
+        "curves": {
+          "panchromatic": 69
+        }
+      }
+    }
   }
 }

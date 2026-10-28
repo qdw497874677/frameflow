@@ -144,4 +144,34 @@ TEST(batch_matches_single) {
   }
 }
 
+TEST(every_negative_balances_and_ramps) {
+  // All datasheet-built negatives (Portra 160/400/800, Ektar 100, Gold 200, Tri-X) print grey to target
+  // and give a monotone grey ramp on the same paper.
+  int n = 0;
+  for (const auto& s : library().all()) {
+    if (s->kind != StockKind::Negative) continue;
+    ++n;
+    FilmPipeline p(*s, *library().find("premierpaper"), RenderParams{});
+    for (int k = 0; k < 3; ++k) CHECK_NEAR(p.report().grey_out[k], 0.18, 1e-3);
+    double prev = -1;
+    for (double ev = -4; ev <= 2.01; ev += 0.5) {
+      Vec3 o = p.process(grey(0.18 * std::pow(2.0, ev)));
+      CHECK(o[1] >= prev - 1e-6);
+      prev = o[1];
+    }
+  }
+  CHECK(n >= 6);
+}
+
+TEST(black_and_white_stock_renders_colour_as_grey) {
+  const Stock* bw = library().find("classicbw400").get();
+  CHECK(bw != nullptr);
+  FilmPipeline p(*bw, *library().find("premierpaper"), RenderParams{});
+  for (Vec3 c : {Vec3{0.5, 0.1, 0.1}, Vec3{0.1, 0.4, 0.1}, Vec3{0.1, 0.1, 0.5}}) {
+    Vec3 o = p.process(c);
+    double m = (o[0] + o[1] + o[2]) / 3;
+    for (int k = 0; k < 3; ++k) CHECK_NEAR(o[k], m, 0.03 + 0.1 * m);
+  }
+}
+
 TEST_MAIN

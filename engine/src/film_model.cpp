@@ -200,7 +200,10 @@ FilmPipeline::FilmPipeline(const Stock& neg, const Stock& paper, const RenderPar
       }
   }
 
-  fit_interlayer(params.dir_strength);
+  // A black-and-white stock uses one emulsion response for all three layers: its cross-channel
+  // response is the intended panchromatic behaviour, not crosstalk for inter-layer inhibition to cancel.
+  const bool mono = neg.log_sensitivity[0] == neg.log_sensitivity[1] && neg.log_sensitivity[1] == neg.log_sensitivity[2];
+  fit_interlayer(mono ? 0.0 : params.dir_strength);
   balance_printer(params);
   {
     const double h = 0.02;

@@ -17,6 +17,16 @@ def axis(cal):
     (p0, p1), (v0, v1) = cal["pt"], cal["value"]
     return lambda p: v0 + (p - p0) * (v1 - v0) / (p1 - p0)
 
+def path_indices(idx):
+    """A curve is one path index, or a list of indices / inclusive [first, last] ranges
+    (some datasheets draw a curve as many short segments)."""
+    if isinstance(idx, int):
+        return [idx]
+    out = []
+    for item in idx:
+        out.extend(range(item[0], item[1] + 1) if isinstance(item, list) else [item])
+    return out
+
 def page_svg(pdf, page, tmp):
     out = os.path.join(tmp, f"p{page}.svg")
     if not os.path.exists(out):
@@ -32,7 +42,7 @@ def digitize(doc, pdf_dir, tmp):
         fx, fy = axis(ch["x"]), axis(ch["y"])
         curves = {}
         for cname, idx in ch["curves"].items():
-            pts = [(round(fx(x), 3), round(fy(y), 4)) for sub in svg[idx]["subs"] for x, y in sub]
+            pts = [(round(fx(x), 3), round(fy(y), 4)) for i in path_indices(idx) for sub in svg[i]["subs"] for x, y in sub]
             pts.sort()
             curves[cname] = pts
         charts[name] = {"x": ch["x"]["quantity"], "y": ch["y"]["quantity"], "notes": ch.get("notes", ""), "curves": curves}
