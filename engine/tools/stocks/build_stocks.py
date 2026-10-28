@@ -9,6 +9,10 @@ Steps (documented in engine/PROVENANCE.md):
   * Portra 400 publishes only the midscale-neutral and D-min spectral density.
     The three dye spectra are recovered by fitting three two-sided Gaussians to
     (neutral - D-min); this is an assumption of the model, not datasheet data.
+  * Ektar 100, Portra 160/800 and Gold 200 use the same procedure as Portra 400.
+  * Tri-X (black and white): one panchromatic sensitivity and one visual density
+    curve for all three layers; the "dyes" are three complementary bands summing
+    to a flat neutral (model assumption).
   * Endura dyes are charted 400-700 nm; outside that range each dye is
     extended with a two-sided Gaussian fitted to its charted part.
 Only numpy is required.
@@ -112,27 +116,76 @@ def arr(v, nd=4):
     return [round(float(t), nd) for t in v]
 
 
-def build_portra(src):
+def density_grid(cc):
+    lo = max(curve(cc[c])[0, 0] for c in cc); hi = min(curve(cc[c])[-1, 0] for c in cc)
+    return np.ceil(lo / LOGH_STEP) * LOGH_STEP, np.floor(hi / LOGH_STEP) * LOGH_STEP
+
+
+def build_negative(src, meta):
+    """Colour negative with a midscale-neutral + D-min spectral density chart (Portra / Ektar / Gold)."""
     ch = src["charts"]
     sens = {k: arr(resample_sensitivity(ch["sensitivity"]["curves"][n]), 3) for k, n in (("b", "yellow"), ("g", "magenta"), ("r", "cyan"))}
     dyes, dmin, fitinfo = portra_dyes(ch["dye_density"]["curves"])
     cc = ch["characteristic"]["curves"]
-    lo = max(curve(cc[c])[0, 0] for c in cc); hi = min(curve(cc[c])[-1, 0] for c in cc)
-    lo, hi = np.ceil(lo / LOGH_STEP) * LOGH_STEP, np.floor(hi / LOGH_STEP) * LOGH_STEP
+    lo, hi = density_grid(cc)
     grid, _ = resample_density_curve(cc["red"], lo, hi)
     return {
-        "id": "portrait400", "name": "Portrait 400", "inspiredBy": "Kodak Portra 400 (datasheet E-4050)",
+        "id": meta["id"], "name": meta["name"], "inspiredBy": meta["inspiredBy"],
         "kind": "negative",
-        "source": {"datasheet": "kodak-portra-400.json", "sha256": src["sha256"], "url": src["url"]},
+        "source": {"datasheet": meta["datasheet"], "sha256": src["sha256"], "url": src["url"]},
         "wavelengths": {"start": 380, "step": 5, "count": int(WL.size)},
         "logSensitivity": sens,
         "dyeDensity": {k: arr(v) for k, v in dyes.items()},
         "dmin": arr(dmin),
         "densitometry": "status-m",
         "densityCurves": {"logH": arr(grid, 3), **{k: arr(resample_density_curve(cc[n], lo, hi)[1]) for k, n in (("b", "blue"), ("g", "green"), ("r", "red"))}},
-        "logHRef": -1.44,
+        "logHRef": meta["logHRef"],
         "fit": {"dyeDecomposition": fitinfo},
     }
+
+
+def bw_partition():
+    """Neutral silver modelled as three complementary bands that sum to a flat density of 1.0
+    (smooth logistic band edges at 490 / 580 nm). Model assumption, not datasheet data."""
+    s1 = 1.0 / (1.0 + np.exp((WL - 490.0) / 8.0))
+    s2 = 1.0 / (1.0 + np.exp((WL - 580.0) / 8.0))
+    return {"y": s1, "m": s2 - s1, "c": 1.0 - s2}
+
+
+def build_bw(src, meta):
+    """Black-and-white negative: one panchromatic sensitivity and one (visual) density curve shared by
+    all three engine layers; the dye spectra partition a flat neutral (see bw_partition)."""
+    ch = src["charts"]
+    s = arr(resample_sensitivity(ch["sensitivity"]["curves"]["panchromatic"]), 3)
+    cc = ch["characteristic"]["curves"]
+    lo, hi = density_grid(cc)
+    grid, d = resample_density_curve(cc["neutral"], lo, hi)
+    base = float(d[0])  # base + fog, carried as a flat D-min
+    dens = arr(d)  # like the colour stocks, the curve includes base + fog
+    return {
+        "id": meta["id"], "name": meta["name"], "inspiredBy": meta["inspiredBy"],
+        "kind": "negative",
+        "source": {"datasheet": meta["datasheet"], "sha256": src["sha256"], "url": src["url"]},
+        "wavelengths": {"start": 380, "step": 5, "count": int(WL.size)},
+        "logSensitivity": {"b": s, "g": s, "r": s},
+        "dyeDensity": {k: arr(v) for k, v in bw_partition().items()},
+        "dmin": arr(np.full_like(WL, base)),
+        "densitometry": "status-m",
+        "densityCurves": {"logH": arr(grid, 3), "b": dens, "g": dens, "r": dens},
+        "logHRef": meta["logHRef"],
+        "fit": {"blackAndWhite": {"baseFog": round(base, 4), "note": "diffuse visual density used for all three layers"}},
+    }
+
+
+NEGATIVES = [
+    ("kodak-portra-400.json", build_negative, {"id": "portrait400", "name": "Portrait 400", "inspiredBy": "Kodak Portra 400 (datasheet E-4050)", "logHRef": -1.44}),
+    ("kodak-portra-160.json", build_negative, {"id": "portrait160", "name": "Portrait 160", "inspiredBy": "Kodak Portra 160 (datasheet E-4051)", "logHRef": -1.051}),
+    ("kodak-portra-800.json", build_negative, {"id": "portrait800", "name": "Portrait 800", "inspiredBy": "Kodak Portra 800 (datasheet E-4040)", "logHRef": -1.74}),
+    ("kodak-ektar-100.json", build_negative, {"id": "vivid100", "name": "Vivid 100", "inspiredBy": "Kodak Ektar 100 (datasheet E-4046)", "logHRef": -0.84}),
+    ("kodak-gold-200.json", build_negative, {"id": "golden200", "name": "Golden 200", "inspiredBy": "Kodak Gold 200 (datasheet E-7022)", "logHRef": -1.14}),
+    # Tri-X datasheet gives no Log H Ref; ISO 400 like Portra 400 -> same reference exposure (assumption).
+    ("kodak-tri-x-400.json", build_bw, {"id": "classicbw400", "name": "Classic B&W 400", "inspiredBy": "Kodak Tri-X 400 (datasheet F-4017)", "logHRef": -1.44}),
+]
 
 
 def build_endura(src):
@@ -161,7 +214,9 @@ def main():
     ds = sys.argv[1] if len(sys.argv) > 1 else os.path.join(DATA, "datasheets")
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(DATA, "stocks")
     os.makedirs(out, exist_ok=True)
-    for build, name in ((build_portra, "kodak-portra-400.json"), (build_endura, "kodak-endura-premier.json")):
+    jobs = [(name, lambda src, b=b, m=m, name=name: b(src, {**m, "datasheet": name})) for name, b, m in NEGATIVES]
+    jobs.append(("kodak-endura-premier.json", build_endura))
+    for name, build in jobs:
         stock = build(json.load(open(os.path.join(ds, name))))
         with open(os.path.join(out, stock["id"] + ".json"), "w") as f:
             json.dump(stock, f, separators=(",", ":"))

@@ -13,6 +13,11 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
 |---|---|---|---|
 | `e4050_portra_400.pdf` | Kodak Professional Portra 400 Film, Technical Data E-4050（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/products/e4050_portra_400.pdf | `e83ac6775d37832a4cb466892a3e1cf4c88917a6ee93384e59d6924b1cd97e3a` |
 | `e4070_endura_premier.pdf` | Kodak Professional Endura Premier Paper, Technical Data E-4070（PDF 修改日期 2017-12） | https://business.kodakmoments.com/sites/default/files/files/products/e4070.pdf | `94ead00f26a4bbf8ce1a991ff73add049514e38f32d6e88aa7a8a1e3e2d7982e` |
+| `e4046_ektar_100.pdf` | Kodak Professional Ektar 100 Film, Technical Data E-4046（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/resources/e4046_ektar_100.pdf | `e39971d16dc8679fb92742a229c237acde5b0dddb0428a708f8ad68d7a1d5590` |
+| `e4051_Portra_160.pdf` | Kodak Professional Portra 160 Film, Technical Data E-4051（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/resources/e4051_Portra_160.pdf | `a635048fc5e578747868684ff5a98fa2a6582a5d4542dd4ba2e132bc06d951c0` |
+| `e4040_portra_800.pdf` | Kodak Professional Portra 800 Film, Technical Data E-4040（2025 年 1 月） | https://www.kodakprofessional.com/sites/default/files/2025-07/e4040.pdf | `13581198dffa01c5a2a38ab87d96a73cf2e2755b6514d55c65206fe621a60b5a` |
+| `E7022_Gold_200.pdf` | Kodak Gold 200 Film, Technical Data E-7022（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/resources/E7022_Gold_200.pdf | `9f19012f258b5e61be9b043c554483f01d338d0a8aff28163cb4ef6d7ddbe7df` |
+| `f4017_TriX.pdf` | Kodak Professional Tri-X 320 and 400 Films, Technical Data F-4017（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/resources/f4017_TriX.pdf | `51d738f4f996c98716d153bab75e41d0359637a18ea49f9be52062652b0b27d2` |
 
 **使用条款。** 我们于 2026-10-27 查阅了 Kodak Alaris 的网站条款
 （https://www.kodakalaris.com/legal/website-terms-and-conditions 及其 FAQ）。条款允许出于非商业、
@@ -22,7 +27,7 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
 - **不提交** PDF，也**不提交**从 PDF 数字化出来的曲线和生成的胶片数据文件（`engine/data/` 已在 `.gitignore` 中）。
 - 只提交工具和元数据：下载地址、sha256、坐标轴标定点、路径编号和拟合方法。
 - 构建时由 `engine/tools/fetch_stocks.sh` 从原地址下载，先校验 sha256，再在本地生成数据。
-- 胶片 ID 使用中性名称（`portrait400`、`premierpaper`），不使用 Kodak 商标作为产品名；`inspiredBy` 字段只用于说明数据来源。
+- 胶片 ID 使用中性名称（`portrait400`、`portrait160`、`portrait800`、`vivid100`、`golden200`、`classicbw400`、`premierpaper`），不使用 Kodak 商标作为产品名；`inspiredBy` 字段只用于说明数据来源。
 - **待确认：** 在商业产品或分发的镜像（含 Docker 镜像中打包生成的数据）里使用这些衍生数据之前，需要法务确认，或取得 Kodak Alaris 的书面许可。测量数值本身是否受版权保护因司法辖区而异，网站条款属于合同约束。
 
 **数字化方法**（`tools/datasheets/digitize.py`、`spec.json`）：
@@ -38,6 +43,12 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
   - 特性曲线（Status M，日光，Log H Ref −1.44）
   - 光谱感光度（密度 0.2 above D-min）
   - 光谱染料密度：只有“中灰”和“D-min”两条曲线
+- Ektar 100、Portra 160、Gold 200 第 4 页，Portra 800 第 4 页（特性曲线、感光度）和第 5 页（染料密度）：
+  同样三张图（Status M，日光；Log H Ref 依次为 −0.84、−1.051、−1.14、−1.74）。
+  - Portra 800 只用 EI 800 正常冲洗的特性曲线，同页的增感冲洗曲线不用；该图横轴标签有印刷错误（−2.0/−3.0 对调），按刻度位置标定。
+  - Gold 200 的感光度曲线在 PDF 里是许多 4 pt 长的短路径，`spec.json` 用路径编号区间表示，按端点首尾相接核对过。
+- Tri-X 400（F-4017 第 7 页）：35 mm、T-MAX 显影液、20 °C、6 分钟那条特性曲线（漫射视觉密度），
+  以及 “D = 1.0 above gross fog” 的光谱感光度（实线）。
 - Endura Premier：
   - 第 4 页：特性曲线（Status A，0.5 s）和光谱感光度
   - 第 5 页：三种归一化染料的光谱密度
@@ -52,6 +63,10 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
   - M = [0.817, 543.1, 33.3, 25.4]
   - C = [1.071, 708.5, 80.4, 20.0]（σR 落在下界）
   - rms 0.0067
+- Ektar 100 / Portra 160 / Portra 800 / Gold 200 用同样的方法拟合，参数和 rms（0.005–0.007）写在生成文件的 `fit` 字段里。
+- **模型假设（黑白）：** Tri-X 只有一条感光度和一条视觉密度曲线。三层用同一条感光度和同一条特性曲线（含片基+灰雾 0.31，作为平坦的 D-min）；
+  “染料”是三段互补的平滑频带（490 / 580 nm 处的 logistic 边界），加起来是平坦的中性银密度。用 Status M 读视觉密度是近似。
+  三层响应相同，引擎对这种胶片跳过层间抑制拟合；Log H Ref 数据表没给，按 ISO 400 取与 Portra 400 相同的 −1.44（假设）。
 - 图表范围外，Portra 的 D-min 取常数；Endura 的染料用各自的双侧高斯拟合外延，rms 分别为 Y 0.008 / M 0.022 / C 0.034。
 
 ## 2. 标准和公开文献

@@ -69,4 +69,4 @@ python3 tools/ffe_client.py --engine build/frameflow-film --data data/stocks ren
 5. **相纸：** 由 Status A 曲线得到相纸染料量，再算出反射光谱。
 6. **观看/扫描：** 反射光谱 × 观看光源，经 CMF 得到 XYZ；把相纸白 Bradford 适应到 D65 白、相纸 D-max 映射为黑，最后输出线性 sRGB。
 
-当前胶片数据：`portrait400`（负片）和 `premierpaper`（相纸）。
+当前胶片数据：负片 `portrait160`、`portrait400`、`portrait800`、`vivid100`、`golden200`、`classicbw400`（黑白），相纸 `premierpaper`。来源和模型假设见 PROVENANCE.md。
