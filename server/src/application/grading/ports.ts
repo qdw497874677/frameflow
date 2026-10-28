@@ -5,7 +5,7 @@
 import type { Effect } from '../../domain/grading/effects.ts';
 import type { Lut3D } from '../../domain/grading/lut.ts';
 import type { Look } from '../../domain/grading/recipe.ts';
-import type { FilmParams, FilmStock } from '../../domain/grading/film.ts';
+import type { FilmEffects, FilmParams, FilmStock } from '../../domain/grading/film.ts';
 
 /** 风格从哪来（内置 .cube、以后用户导入…） */
 export interface LookSource {
@@ -18,9 +18,24 @@ export interface FilmEngine {
   stocks(): Promise<FilmStock[]>;
   /** 烘焙 size³ 的 3D LUT（sRGB 进、sRGB 出） */
   bakeLut(req: { stock: string; paper?: string; size: number; params?: FilmParams }): Promise<Lut3D>;
+  /**
+   * 整帧渲染（颗粒 / 光晕 / 边缘效应只在这里有）：交错 sRGB 8 位 RGB 进、同尺寸出。
+   * 适配器负责进程池、按像素数定超时和内存闸门；超限抛错而不是拖垮进程。
+   */
+  render(req: FilmRenderRequest): Promise<Uint8Array>;
   /** 引擎版本（进 LUT 缓存键；未连上时为 null） */
   version(): string | null;
   health(): FilmEngineHealth;
+}
+
+export interface FilmRenderRequest {
+  readonly stock: string;
+  readonly paper?: string;
+  readonly width: number;
+  readonly height: number;
+  /** width × height × 3，sRGB 8 位 */
+  readonly pixels: Uint8Array;
+  readonly params?: FilmParams & FilmEffects;
 }
 
 export interface FilmEngineHealth {
@@ -28,6 +43,8 @@ export interface FilmEngineHealth {
   readonly version: string | null;
   readonly restarts: number;
   readonly lastError: string | null;
+  /** 整帧渲染统计（池化适配器才有） */
+  readonly renders?: { readonly workers: number; readonly active: number; readonly queued: number; readonly done: number; readonly failed: number; readonly lastMs: number | null };
 }
 
 /** 烘焙好的 LUT 存哪（数据目录缓存）：引擎挂了时的降级来源 */
