@@ -102,7 +102,7 @@ void gaussian_blur(float* plane, int w, int h, double sigma_px, unsigned threads
   blur_lines(plane, W, H, W, [](std::size_t l) { return l; }, sigma_px, threads);
 }
 
-bool spatial_active(const SpatialParams& p) { return p.dir_diffusion_um > 0 || p.grain > 0; }
+bool spatial_active(const SpatialParams& p) { return p.dir_diffusion_um > 0 || p.grain > 0 || p.halation > 0; }
 
 void render_spatial(const FilmPipeline& pipe, const float* in, float* out, int w, int h, const SpatialParams& p,
                     unsigned threads) {
@@ -111,10 +111,41 @@ void render_spatial(const FilmPipeline& pipe, const float* in, float* out, int w
   const int L = pipe.wavelengths();
   // planar buffers: log H, undeveloped dye, local interlayer inhibition
   std::vector<float> lh(3 * n), a0(3 * n), inhib(3 * n);
+  // Halation (James, Theory of the Photographic Process, halation/irradiation): light crossing the
+  // emulsion reflects off the base and re-exposes it in a wide halo, mostly in the red-sensitive layer
+  // nearest the base (Kodak's datasheets: no rem-jet on Portra, so some halation remains).
+  // E'_k = (E_k + s w_k blur(E_k)) / (1 + s w_k): energy-conserving, so mid-grey sensitometry holds on
+  // uniform areas and only strong local highlights glow.
+  std::vector<float> exp_planes;
+  if (p.halation > 0) {
+    exp_planes.resize(3 * n);
+    run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
+      for (std::size_t i = s; i < e; ++i) {
+        float ex[3];
+        pipe.layer_exposure(in + 3 * i, ex);
+        for (int k = 0; k < 3; ++k) exp_planes[k * n + i] = ex[k];
+      }
+    });
+    const double sigma_h = p.halation_radius_mm * 1000.0 / pitch_um;
+    for (int k = 0; k < 3; ++k) {
+      const float wk = static_cast<float>(p.halation * kHalationWeight[k]);
+      if (!(wk > 0)) continue;
+      float* plane = exp_planes.data() + k * n;
+      std::vector<float> halo(plane, plane + n);
+      gaussian_blur(halo.data(), w, h, sigma_h, threads);
+      run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
+        for (std::size_t i = s; i < e; ++i) plane[i] = (plane[i] + wk * halo[i]) / (1 + wk);
+      });
+    }
+  }
   run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
     for (std::size_t i = s; i < e; ++i) {
       float ex[3], l[3], a[3], q[3];
-      pipe.layer_exposure(in + 3 * i, ex);
+      if (p.halation > 0) {
+        for (int k = 0; k < 3; ++k) ex[k] = exp_planes[k * n + i];
+      } else {
+        pipe.layer_exposure(in + 3 * i, ex);
+      }
       pipe.log_exposure(ex, l);
       pipe.undeveloped(l, a, q);
       for (int k = 0; k < 3; ++k) { lh[k * n + i] = l[k]; a0[k * n + i] = a[k]; inhib[k * n + i] = q[k]; }
