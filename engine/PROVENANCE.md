@@ -66,6 +66,9 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
 | 光谱上采样（RGB → 反射率） | Mallett & Yuksel, “Spectral Primary Decomposition for Rendering with sRGB Reflectance”, EGSR 2019 | 思路：三条光滑、和为 1、在 [0,1] 内的基光谱，在给定光源下复现 sRGB 原色。实现是我们自己的 ADMM 二次规划（`solve_upsampling_basis`），参数由代码在运行时求解，不使用论文附带的数据 |
 | 染料量解析 | 积分密度 ↔ 解析密度的一般关系（Hunt, *The Reproduction of Colour*；James (ed.), *The Theory of the Photographic Process*, 4th ed.） | 每个 log H 采样点上用牛顿法求三种染料量，使 Status 积分密度等于特性曲线 |
 | DIR 耦合 / 层间效应 | Hunt, *The Reproduction of Colour*（interimage effects 一节）；DIR coupler 的一般文献描述 | 一阶抑制模型：层 k 的有效 log H 按其他层相对“中性”多出来的染料量线性抑制；数据表曲线按中性曝光测得，所以中性灰阶保持不变。6 个非对角系数在运行时由牛顿法求出，目标是消除中灰附近的层间串扰。**这是校准目标，不是 Kodak 数据** |
+| 反差校准：显示参考输入 | ITU-R BT.2390（SDR 参考 OOTF，端到端 γ≈1.2）、ITU-R BT.709 / BT.1886；Hunt, *The Reproduction of Colour*（系统 γ 与环境） | `inputGamma`：灰以下按亮度做 1/γ 幂次，灰以上 1 EV 内平滑过渡回 1（膝点是我们的假设，不出自标准） |
+| 反差校准：镜头杂散光 | ISO 18844:2017（veiling glare 测量）；Hunt（杂散光对阴影反差的影响） | `cameraFlare` 缺省 1%，取典型镜头的量级，是假设值 |
+| 反差校准：曲线核对 | Kodak E-4070 Characteristic Curves（第 4 页）、E-4050 Characteristic Curves | 把数字化结果和 PDF 渲染图逐点比对：Endura 在 D 0.5→2.0 的斜率约 3.7，Portra Status M γ 0.55–0.63；数字化无误，见第 4 节 |
 | 印放 / 扫描 | 一般的负片—相纸系统原理（Hunt） | 印放灯 3200 K × 相纸感光度；用每层印放光量把 18% 灰平衡到中性；扫描把相纸白映射为白、D-max 映射为黑（每通道黑点） |
 
 Status 密度计双侧高斯参数（峰值 nm、左 σ、右 σ），由 ISO 5-3 的十倍衰减点手工拟合：
@@ -84,4 +87,4 @@ Status 密度计双侧高斯参数（峰值 nm、左 σ、右 σ），由 ISO 5-
 - 数据表 D-min 为 0.80 / 0.63 / 0.20；模型由 D-min 光谱计算得到 0.803 / 0.632 / 0.197，吻合。
 - 灰阶中性度：显示值（sRGB 编码）偏差 < 0.02（约 5/255）。高光略偏蓝，+1 EV 时约 +3%。
 - 观看和扫描光源用普朗克 6504 K 近似 D65，没有使用 CIE D 系列的 SPD 表。
-- 输入的 sRGB JPEG 是“显示参考”的（相机已经套过一次色调曲线），被当作场景线性处理，所以整体反差偏高。M2 计划加入 RAW 场景线性输入和显示参考输入的模式。
+- 反差（M2 校准）：数据表曲线本身没错——Endura 中段斜率约 3.5–3.7、Portra 印放密度 γ≈0.58，场景→相纸的中灰系统 γ（d log 输出 / d log 输入）≈1.95，−1 EV 处 2.6，这和真实相纸一致。偏高的原因是 M1 把相机 JPEG（已套过色调曲线）当成场景线性。M2 缺省 `inputGamma`=1.2 + `cameraFlare`=0.01 后，中灰系统 γ 为 1.54，−1 EV 为 1.94，−3 EV 为 1.33，白点仍 > 0.85。RAW 场景线性输入请设 `inputGamma`=1。

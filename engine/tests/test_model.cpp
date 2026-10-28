@@ -95,6 +95,19 @@ TEST(interlayer_effects_cancel_grey_crosstalk) {
   CHECK(g1[1] / g1[0] > g0[1] / g0[0]);
 }
 
+TEST(system_contrast_calibrated_for_display_referred_input) {
+  // Scene -> print through the datasheet curves: neg gamma ~0.55-0.63 x Endura gamma ~3.5 => ~1.9 log/log.
+  RenderParams scene;
+  scene.input_gamma = 1;
+  scene.camera_flare = 0;
+  double raw = make(scene).report().system_gamma;
+  CHECK(raw > 1.7 && raw < 2.2);
+  // Defaults: inverse SDR OOTF + 1% veiling glare bring the mid-tone gamma against the JPEG down.
+  double cal = make().report().system_gamma;
+  CHECK(cal > 1.35 && cal < 1.7);
+  CHECK_NEAR(make().process(grey(0.18))[1], 0.18, 1e-3);
+}
+
 TEST(black_point_can_be_disabled) {
   RenderParams params;
   params.scan_black_point = false;

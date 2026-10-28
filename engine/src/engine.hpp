@@ -12,7 +12,7 @@
 
 namespace ffe {
 
-inline constexpr const char* kEngineVersion = "0.1.0";
+inline constexpr const char* kEngineVersion = "0.2.0";
 
 class Engine {
  public:

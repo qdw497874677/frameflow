@@ -21,6 +21,10 @@ export interface FilmParams {
   readonly printGrey?: number;
   readonly dirStrength?: number;
   readonly scanBlackPoint?: boolean;
+  /** 显示参考输入的反 OOTF γ（1 = 场景线性） */
+  readonly inputGamma?: number;
+  /** 镜头杂散光，场景白的比例 */
+  readonly cameraFlare?: number;
 }
 
 const RANGES: Record<Exclude<keyof FilmParams, 'scanBlackPoint'>, readonly [number, number]> = {
@@ -30,6 +34,8 @@ const RANGES: Record<Exclude<keyof FilmParams, 'scanBlackPoint'>, readonly [numb
   viewingKelvin: [2000, 12000],
   printGrey: [0.05, 0.5],
   dirStrength: [0, 2],
+  inputGamma: [1, 2],
+  cameraFlare: [0, 0.1],
 };
 
 /** 参数问题列表（空 = 合法）；与引擎端校验一致，越界在进程外就挡掉 */

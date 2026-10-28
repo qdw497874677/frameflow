@@ -114,6 +114,9 @@ FilmPipeline::FilmPipeline(const Stock& neg, const Stock& paper, const RenderPar
     for (int j = 0; j < 3; ++j) exposure_[k][j] = col[j] / white;
   }
   // a normally exposed 18% grey lands on the datasheet's reference log H
+  ootf_inv_exp_ = static_cast<float>(1.0 / params.input_gamma - 1.0);
+  flare_ = static_cast<float>(params.camera_flare);
+  flare_norm_ = static_cast<float>(0.18 / (0.18 + params.camera_flare));  // metering keeps grey on log H ref
   exposure_ev_ = params.exposure_ev;
   log_h_grey_offset_ = static_cast<float>(neg.log_h_ref - std::log10(0.18) + params.exposure_ev * std::log10(2.0));
 
@@ -197,6 +200,11 @@ FilmPipeline::FilmPipeline(const Stock& neg, const Stock& paper, const RenderPar
 
   fit_interlayer(params.dir_strength);
   balance_printer(params);
+  {
+    const double h = 0.02;
+    Vec3 lo = process(Vec3{0.18, 0.18, 0.18}), hi = process(Vec3{0.18 * std::pow(10.0, h), 0.18 * std::pow(10.0, h), 0.18 * std::pow(10.0, h)});
+    report_.system_gamma = (std::log10(hi[1]) - std::log10(lo[1])) / h;
+  }
 }
 
 Mat3 FilmPipeline::grey_response() const {
@@ -321,10 +329,29 @@ void FilmPipeline::print_log_exposure(const float* in, float* logp, float* trans
   const int L = L_;
   // camera
   float a[3], lh[3];
+  float rgb[3] = {std::max(in[0], 0.0f), std::max(in[1], 0.0f), std::max(in[2], 0.0f)};
+  if (ootf_inv_exp_ != 0.0f) {
+    // display-referred -> scene-referred: Y_scene = 0.18 (Y_display / 0.18)^(1/gamma), chromaticity kept
+    // Below grey the log slope is 1/gamma; above it the slope eases back to 1 over ~1 EV (smoothstep in
+    // log Y) so diffuse white stays near white -- SDR renderings already shoulder their highlights.
+    float y = 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2];
+    if (y > 1e-9f) {
+      const float inv = 1.0f + ootf_inv_exp_, knee = 0.3f;
+      float x = std::log10(y / 0.18f), fx;
+      if (x <= 0.0f) {
+        fx = x * inv;
+      } else {
+        float t = x / knee, ramp = t < 1.0f ? t * t * t - 0.5f * t * t * t * t : t - 0.5f;
+        fx = x * inv + (1.0f - inv) * knee * ramp;
+      }
+      float s = std::pow(10.0f, fx - x);
+      for (float& c : rgb) c *= s;
+    }
+  }
   for (int k = 0; k < 3; ++k) {
-    float e = static_cast<float>(exposure_[k][0]) * std::max(in[0], 0.0f) +
-              static_cast<float>(exposure_[k][1]) * std::max(in[1], 0.0f) +
-              static_cast<float>(exposure_[k][2]) * std::max(in[2], 0.0f);
+    float e = static_cast<float>(exposure_[k][0]) * rgb[0] + static_cast<float>(exposure_[k][1]) * rgb[1] +
+              static_cast<float>(exposure_[k][2]) * rgb[2];
+    e = (e + flare_) * flare_norm_;
     lh[k] = std::log10(std::max(e, 1e-7f)) + log_h_grey_offset_;
     a[k] = neg_dye_[k](lh[k]);
   }

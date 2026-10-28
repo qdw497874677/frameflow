@@ -25,6 +25,12 @@ struct RenderParams {
   double print_grey = 0.18;      // linear output a normally exposed 18% grey prints to
   double dir_strength = 1.0;     // interlayer (DIR coupler) inhibition, 1 = cancels layer crosstalk at grey
   bool scan_black_point = true;  // scanner sets per-channel black at paper D-max (white is paper base)
+  // Input is display-referred (camera JPEG / sRGB): undo the SDR reference OOTF (luminance power,
+  // ITU-R BT.2390 / BT.709+BT.1886 end-to-end gamma ~1.2) below grey to estimate scene-referred light,
+  // easing to slope 1 within ~1 EV above grey so diffuse white stays put. 1 = input is scene-linear.
+  double input_gamma = 1.2;
+  // Camera veiling glare (ISO 18844): uniform light added at the film plane, fraction of scene white.
+  double camera_flare = 0.01;
 };
 
 // A characteristic curve sampled on a uniform log-exposure grid.
@@ -50,7 +56,8 @@ struct PipelineReport {
   Vec3 paper_black{};
   Mat3 interlayer{};            // fitted DIR inhibition matrix (log H per unit dye amount)
   Mat3 crosstalk_before{};      // grey response without / with interlayer effects (layer-aligned)
-  Mat3 crosstalk_after{};           // linear RGB of paper D-max before black-point scan
+  Mat3 crosstalk_after{};
+  double system_gamma = 0;      // d log10 output / d log10 input (neutral, at normal grey)
   int balance_iterations = 0;
 };
 
@@ -73,6 +80,8 @@ class FilmPipeline {
   Mat3 grey_response() const;  // d logP_layer / d log10 input channel (layer-aligned), at normal grey
 
   int L_ = 0;
+  float ootf_inv_exp_ = 0;   // 1/input_gamma - 1
+  float flare_ = 0, flare_norm_ = 1;
   Mat3 exposure_{};          // linear sRGB -> relative layer exposure (1 = scene white)
   float log_h_grey_offset_ = 0;
   double exposure_ev_ = 0;  // log H of the layer exposure of white
