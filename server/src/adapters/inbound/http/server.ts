@@ -32,6 +32,7 @@ import { Auth } from './auth.ts';
 import { registerAuthGate } from './auth-gate.ts';
 import { infoOf } from './request.ts';
 import { registerJobRoutes } from './routes/jobs.ts';
+import { FilmCropPreview, type FilmPreviewRequest } from '../../outbound/grading/film-preview.ts';
 import { registerLookRoutes, type LookCatalog } from './routes/looks.ts';
 import { CubeLookSource } from '../../outbound/grading/cube-looks.ts';
 import { CompositeLookSource } from '../../../application/grading/composite-looks.ts';
@@ -72,6 +73,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   const cubeLooks = new CubeLookSource();
   const film: FilmModule | null = cfg.film ? createFilmModule(cfg.film, cfg.dataDir, (m) => app.log.warn(m)) : null;
   const looks = new CompositeLookSource([{ kind: 'cube', source: cubeLooks }, ...(film ? [{ kind: 'film', source: film.looks }] : [])]);
+  const filmPreview = new FilmCropPreview(lib, looks);
   const lookCatalog: LookCatalog = {
     entries: () => looks.entries(),
     cubeText: async (id) => {
@@ -82,6 +84,7 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
       return lut ? formatCube(lut, id) : 'unavailable';
     },
     filmStatus: () => film?.status() ?? { enabled: false },
+    ...(film ? { filmPreview: (req: FilmPreviewRequest) => filmPreview.render(req) } : {}),
   };
   const jobs = new JobsService(new JobsStore(cfg.dataDir), registry, {
     lib,

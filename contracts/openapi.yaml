@@ -613,6 +613,35 @@ paths:
                           failed: { type: integer }
                           lastMs: { type: integer, nullable: true }
 
+  /film/preview:
+    post:
+      summary: 100% 裁切预览（引擎真渲染颗粒 / 光晕 / DIR 边缘，只对 film 风格）
+      description: |
+        从全尺寸源（与导出同源、已摆正）以 `(cx, cy)` 为中心裁 `size×size`，四周补 ≈3σ（光晕 / DIR 扩散）后交给引擎渲染，
+        再裁回可见块。底片长边按裁切比例缩小，像素间距与整帧导出一致（颗粒、光晕尺度相同；颗粒具体图样不逐像素一致）。
+        2048 级别约 1 s、512 约 0.2–0.5 s。胶片开关关着时 404。
+      x-implemented: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [photoId, look]
+              properties:
+                photoId: { type: string }
+                look: { type: string, description: "`kind: film` 的风格 id" }
+                strength: { type: number, minimum: 0, maximum: 1, default: 1 }
+                film: { $ref: "#/components/schemas/FilmEffects" }
+                cx: { type: number, minimum: 0, maximum: 1, default: 0.5 }
+                cy: { type: number, minimum: 0, maximum: 1, default: 0.5 }
+                size: { type: integer, minimum: 64, maximum: 1024, default: 512 }
+      responses:
+        "200": { description: "JPEG（响应头 `x-render-ms` = 渲染耗时）", content: { image/jpeg: { schema: { type: string, format: binary } } } }
+        "400": { description: 参数不对，或 look 不是 film 风格 }
+        "404": { description: 胶片开关没打开，或没这张照片 / 风格 }
+        "503": { description: 引擎渲染失败 }
+
   /jobs/{id}/cancel:
     post:
       summary: 取消任务（已完成的部分回滚或保留，由 handler 的 undo 决定）

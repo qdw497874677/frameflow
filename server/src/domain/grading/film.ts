@@ -127,3 +127,37 @@ export function lutFromEngine(size: number, data: Float32Array): Lut3D {
   }
   return { size, table };
 }
+
+/**
+ * 100% 裁切预览的几何：在 fullW×fullH 的整帧里，以 (cx, cy)（0–1）为中心取 size×size，
+ * 四周补 ≈3σ（光晕 / DIR 扩散，按整帧像素间距折算）免得边缘效果被裁掉；
+ * 裁出来的区域长边变短，所以底片长边要按比例缩，才能保持与整帧导出相同的像素间距（颗粒与光晕尺度一致）。
+ */
+export interface CropPlan {
+  /** 交给引擎渲染的区域（含补边） */
+  readonly region: { left: number; top: number; width: number; height: number };
+  /** 渲染后再从 region 里裁回的可见块 */
+  readonly visible: { left: number; top: number; width: number; height: number };
+  /** 渲染 region 时用的 filmFormatMm */
+  readonly filmFormatMm: number;
+}
+
+export function filmCropPlan(fullW: number, fullH: number, cx: number, cy: number, size: number, fx: FilmEffects): CropPlan {
+  const long = Math.max(fullW, fullH);
+  const format = fx.filmFormatMm ?? 36;
+  const pitchUm = (format * 1000) / long;
+  const reachUm = Math.max((fx.halation ?? 0) > 0 ? (fx.halationRadiusMm ?? 0.25) * 1000 : 0, fx.dirDiffusionUm ?? 0);
+  const pad = Math.min(Math.ceil((3 * reachUm) / pitchUm), 2 * size);
+  const w = Math.min(size, fullW), h = Math.min(size, fullH);
+  const clampTo = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const vl = clampTo(Math.round(cx * fullW - w / 2), 0, fullW - w);
+  const vt = clampTo(Math.round(cy * fullH - h / 2), 0, fullH - h);
+  const left = Math.max(0, vl - pad), top = Math.max(0, vt - pad);
+  const right = Math.min(fullW, vl + w + pad), bottom = Math.min(fullH, vt + h + pad);
+  const region = { left, top, width: right - left, height: bottom - top };
+  return {
+    region,
+    visible: { left: vl - left, top: vt - top, width: w, height: h },
+    filmFormatMm: Math.max(0.001, (format * Math.max(region.width, region.height)) / long),
+  };
+}

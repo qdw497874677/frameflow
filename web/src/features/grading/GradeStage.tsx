@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { LutCanvas } from './LutCanvas';
 import { FilmEffectsPanel } from './FilmEffectsPanel';
+import { FilmCropPreview } from './FilmCropPreview';
 import { clampStrength, cycleLook, exportSummary, isExporting, isRawEmbedded, isStageEditable, isOverridden, itemExportLabel, jobDefaults, jobFilm, filmEffectsOn, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
 import { jobProgressView } from '@/features/jobs/jobActions';
 
@@ -21,6 +22,7 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [original, setOriginal] = useState(false);
+  const [center, setCenter] = useState({ cx: 0.5, cy: 0.5 });
 
   useEffect(() => {
     let alive = true;
@@ -178,6 +180,12 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
 
       {editable && focused && (
         <div className="mt-3 rounded-md border border-border/60 p-2">
+          <div
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setCenter({ cx: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), cy: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) });
+            }}
+          >
           <LutCanvas
             src={source.thumbUrl(focused.id, 2048)}
             lut={lutOf(recipeOf(job, focused).look)}
@@ -186,6 +194,7 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
             alt={focused.displayName ?? focused.id}
             className="max-h-[60vh] w-full object-contain"
           />
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className="truncate text-xs">{focused.displayName ?? focused.id}</span>
             {original && <Badge variant="outline">原图</Badge>}
@@ -194,6 +203,9 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
             )}
             <span className="ml-auto text-[11px] text-muted-foreground">按住 \ 对比原图 · Enter 通过 · N 跳过 · Esc 关闭</span>
           </div>
+          {isFilm(recipeOf(job, focused).look) && filmEffectsOn(film) && (
+            <FilmCropPreview photoId={focused.id} look={recipeOf(job, focused).look!} strength={recipeOf(job, focused).strength} film={film} center={center} />
+          )}
           {strip(recipeOf(job, focused).look, (id) => void act('set', { photoId: focused.id, look: id }))}
           <div className="flex flex-wrap items-center gap-2">
             {strength(recipeOf(job, focused).strength, (v) => void act('set', { photoId: focused.id, strength: v }))}

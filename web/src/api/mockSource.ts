@@ -494,6 +494,10 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
       return [];
     },
 
+    async filmPreview() {
+      throw new Error('mock 没有胶片引擎');
+    },
+
     async lookCube(id: string): Promise<string> {
       throw new Error(`mock 没有风格文件：${id}`);
     },
