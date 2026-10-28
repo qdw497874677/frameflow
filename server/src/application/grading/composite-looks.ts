@@ -1,5 +1,7 @@
 /** 多个风格来源合成一个（内置 .cube + 光谱胶片 + 以后的用户导入）；id 先到先得 */
 import type { Lut3D } from '../../domain/grading/lut.ts';
+import type { Effect } from '../../domain/grading/effects.ts';
+import type { FilmEffects } from '../../domain/grading/film.ts';
 import type { Look } from '../../domain/grading/recipe.ts';
 import type { LookSource } from './ports.ts';
 
@@ -34,6 +36,10 @@ export class CompositeLookSource implements LookSource {
   ownerOf(id: string): NamedLookSource | null {
     for (const s of this.sources) if (s.source.list().some((l) => l.id === id)) return s;
     return null;
+  }
+
+  frameEffect(id: string, strength: number, film: FilmEffects): Effect | null {
+    return this.ownerOf(id)?.source.frameEffect?.(id, strength, film) ?? null;
   }
 
   async load(id: string): Promise<Lut3D | null> {

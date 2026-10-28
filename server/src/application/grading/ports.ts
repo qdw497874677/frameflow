@@ -11,6 +11,11 @@ import type { FilmEffects, FilmParams, FilmStock } from '../../domain/grading/fi
 export interface LookSource {
   list(): Look[];
   load(id: string): Promise<Lut3D | null>;
+  /**
+   * 可选：整帧效果（只有光谱胶片有）。返回 null = 这个风格不支持 / 没开效果，调用方退回 LUT。
+   * 预览永远走 LUT；这个只在导出（和 100% 裁切预览）里用。
+   */
+  frameEffect?(id: string, strength: number, film: FilmEffects): Effect | null;
 }
 
 /** 光谱胶片引擎（独立进程，见 engine/）。适配器负责进程池、超时、重启与健康状态 */

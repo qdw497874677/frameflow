@@ -33,13 +33,13 @@ test('三线性插值：单位 LUT 原样返回，格点之间线性', () => {
   near(half[0], 0.5);
 });
 
-test('LUT 效果：强度 0 不变、1 完全套用、0.5 居中；alpha 不动', () => {
+test('LUT 效果：强度 0 不变、1 完全套用、0.5 居中；alpha 不动', async () => {
   const invert = identityLut(2);
   const t = invert.table.map((v) => 1 - v);
   const lut = { size: 2, table: t };
   const px = () => Uint8Array.from([200, 100, 0, 77]);
   const a = px(); lutEffect(lut, 0).apply(a, 4); assert.deepEqual([...a], [200, 100, 0, 77]);
-  const b = px(); runEffects(b, 4, [lutEffect(lut, 1)]); assert.deepEqual([...b], [55, 155, 255, 77]);
+  const b = px(); await runEffects(b, 4, [lutEffect(lut, 1)]); assert.deepEqual([...b], [55, 155, 255, 77]);
   const c = px(); lutEffect(lut, 0.5).apply(c, 4); assert.deepEqual([...c], [128, 128, 128, 77]);
 });
 
@@ -71,4 +71,14 @@ test('进度不把 skipped 算进去（滤镜任务里的视频不是活）', ()
   const items = [{ id: 'a', status: 'planned' }, { id: 'b', status: 'done' }, { id: 'v', status: 'skipped' }];
   assert.deepEqual(jobProgress(items), { done: 1, total: 2 });
   assert.deepEqual(jobProgress([{ id: 'v', status: 'skipped' }]), { done: 0, total: 0 });
+});
+
+test('整帧效果：拿到整帧尺寸、可异步；blendRgb 按强度混回、alpha 不动', async () => {
+  const { blendRgb, toRgb } = await import('../src/domain/grading/effects.ts');
+  const px = Uint8Array.from([100, 100, 100, 9, 0, 0, 0, 9]);
+  let seen;
+  await runEffects(px, 4, [{ id: 'x', async apply(p, ch, frame) { seen = frame; blendRgb(p, ch, Uint8Array.from([200, 200, 200, 50, 50, 50]), 0.5); } }], { width: 2, height: 1 });
+  assert.deepEqual(seen, { width: 2, height: 1 });
+  assert.deepEqual([...px], [150, 150, 150, 9, 25, 25, 25, 9]);
+  assert.deepEqual([...toRgb(px, 4)], [150, 150, 150, 25, 25, 25]);
 });

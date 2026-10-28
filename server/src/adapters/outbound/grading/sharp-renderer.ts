@@ -27,7 +27,7 @@ export class SharpRenderer implements Renderer {
     const { path } = await this.lib.thumbs.master(rec);
     const { data, info } = await sharp(path).rotate().removeAlpha().toColourspace('srgb').raw().toBuffer({ resolveWithObject: true });
     const pixels = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    runEffects(pixels, info.channels, effects);
+    await runEffects(pixels, info.channels, effects, { width: info.width, height: info.height });
     const out = await sharp(pixels, { raw: { width: info.width, height: info.height, channels: info.channels as 3 } })
       .withIccProfile('srgb')
       .jpeg({ quality: this.quality, mozjpeg: true })
