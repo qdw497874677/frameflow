@@ -1,5 +1,5 @@
 /** .cube 解析（与服务端 domain/grading/lut.ts 同一约定：红最快、蓝最慢）+ 阶段里的纯计算 */
-import type { Job, JobItem } from '../../core/types.ts';
+import type { FilmEffects, Job, JobItem } from '../../core/types.ts';
 
 export interface Lut {
   size: number;
@@ -84,4 +84,23 @@ export function cycleLook(ids: string[], current: string | null, step: 1 | -1): 
   const ring: (string | null)[] = [null, ...ids];
   const i = Math.max(0, ring.indexOf(current));
   return ring[(i + step + ring.length) % ring.length] ?? null;
+}
+
+/** 任务的胶片整帧效果（params.film）；不是对象就当没开 */
+export function jobFilm(job: Pick<Job, 'params'>): FilmEffects {
+  const f = job.params?.film;
+  return f && typeof f === 'object' && !Array.isArray(f) ? (f as FilmEffects) : {};
+}
+
+/** 与服务端 hasFilmEffects 一致：颗粒 / 光晕 / DIR 任一 > 0 才走整帧渲染 */
+export function filmEffectsOn(f: FilmEffects): boolean {
+  return (f.grain ?? 0) > 0 || (f.halation ?? 0) > 0 || (f.dirDiffusionUm ?? 0) > 0;
+}
+
+/** 改一项：0 / 空值就删掉这项，全删光发 null（清掉 params.film） */
+export function patchFilm(f: FilmEffects, key: keyof FilmEffects, value: number | null): FilmEffects | null {
+  const next: FilmEffects = { ...f };
+  if (value === null || Number.isNaN(value)) delete next[key];
+  else next[key] = value;
+  return Object.keys(next).length ? next : null;
 }
