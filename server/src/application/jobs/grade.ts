@@ -16,6 +16,8 @@
 import { JobError, type GradeItemState, type Job, type JobItem, type JobProblem } from '../../domain/jobs/job.ts';
 import { lutEffect, type Effect } from '../../domain/grading/effects.ts';
 import { DEFAULT_STRENGTH, exportName, isValidStrength, resolveRecipe, type Recipe } from '../../domain/grading/recipe.ts';
+import { createHash } from 'node:crypto';
+import { filmEffectProblems, hasFilmEffects, type FilmEffects } from '../../domain/grading/film.ts';
 import type { GradingPorts } from '../grading/ports.ts';
 import type { BackgroundSignal, JobContext, JobDraft, JobHandler, JobOutcome, JobSink } from './registry.ts';
 
@@ -23,6 +25,23 @@ function defaultsOf(params: Record<string, unknown>): Recipe {
   const look = typeof params['look'] === 'string' ? params['look'] : null;
   const strength = isValidStrength(params['strength']) ? params['strength'] : DEFAULT_STRENGTH;
   return { look, strength };
+}
+
+/** 任务级胶片整帧效果（颗粒 / 光晕 / DIR 边缘）；只对光谱胶片风格生效，缺省全关 */
+function filmOf(params: Record<string, unknown>): FilmEffects {
+  const f = params['film'];
+  return f && typeof f === 'object' && !Array.isArray(f) && filmEffectProblems(f as Record<string, unknown>).length === 0 ? (f as FilmEffects) : {};
+}
+
+/** 没指定种子时按照片 id 派生：同一张重导结果一致，不同照片颗粒不同 */
+function seedFor(photoId: string): number {
+  return createHash('sha256').update(photoId).digest().readUInt32LE(0);
+}
+
+function filmProblems(v: unknown, field: string): JobProblem[] {
+  if (v === null) return [];
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return [{ field, message: 'film 是 { grain, grainSeed, halation, halationRadiusMm, dirDiffusionUm, filmFormatMm } 对象' }];
+  return filmEffectProblems(v as Record<string, unknown>).map((message) => ({ field, message }));
 }
 
 function ports(ctx: JobContext): GradingPorts {
@@ -45,6 +64,7 @@ function validate(draft: JobDraft, ctx: JobContext): JobProblem[] {
   if (draft.params['strength'] !== undefined && !isValidStrength(draft.params['strength'])) {
     problems.push({ field: 'params.strength', message: '强度是 0–1 的数' });
   }
+  if (draft.params['film'] !== undefined) problems.push(...filmProblems(draft.params['film'], 'params.film'));
   if (draft.params['keepGps'] !== undefined && typeof draft.params['keepGps'] !== 'boolean') {
     problems.push({ field: 'params.keepGps', message: 'keepGps 是布尔值' });
   }
@@ -99,7 +119,7 @@ function set(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: Job
   return {};
 }
 
-/** defaults：{ look?: string, strength?: number, keepGps?: boolean } —— 改任务默认，没覆盖的照片都跟着变 */
+/** defaults：{ look?: string, strength?: number, keepGps?: boolean, film?: FilmEffects | null } —— 改任务默认，没覆盖的照片都跟着变 */
 function defaults(job: Job, body: Record<string, unknown>, ctx: JobContext, sink: JobSink): JobOutcome {
   notExporting(job);
   const next = { ...job.params };
@@ -111,6 +131,12 @@ function defaults(job: Job, body: Record<string, unknown>, ctx: JobContext, sink
   if (body['strength'] !== undefined) {
     if (!isValidStrength(body['strength'])) invalid('强度是 0–1 的数', 'strength');
     next['strength'] = body['strength'];
+  }
+  if (body['film'] !== undefined) {
+    const p = filmProblems(body['film'], 'film');
+    if (p.length) invalid(p.map((x) => x.message).join('；'), 'film');
+    if (body['film'] === null) delete next['film'];
+    else next['film'] = body['film'];
   }
   if (body['keepGps'] !== undefined) {
     if (typeof body['keepGps'] !== 'boolean') invalid('keepGps 是布尔值', 'keepGps');
@@ -158,10 +184,15 @@ async function exportAll(job: Job, ctx: JobContext, sink: JobSink, signal: Backg
   const { looks, renderer, exports, concurrency, metadata } = ports(ctx);
   const keepGps = job.params?.['keepGps'] === true;
   const base = defaultsOf(job.params ?? {});
+  const film = filmOf(job.params ?? {});
   const todo = job.items.filter((i) => i.status === 'planned');
   const renderOne = async (item: JobItem, recipe: Recipe): Promise<{ name: string; bytes: number }> => {
     const effects: Effect[] = [];
-    if (recipe.look) {
+    const frame = recipe.look && hasFilmEffects(film)
+      ? looks.frameEffect?.(recipe.look, recipe.strength, { ...film, grainSeed: film.grainSeed ?? seedFor(item.id) }) ?? null
+      : null;
+    if (frame) effects.push(frame);
+    else if (recipe.look) {
       const lut = await looks.load(recipe.look);
       if (!lut) throw new Error(`风格文件不见了：${recipe.look}`);
       effects.push(lutEffect(lut, recipe.strength));
@@ -207,6 +238,7 @@ export const grade: JobHandler = {
   params: {
     look: { type: 'string', required: true, description: '默认风格 id（见 GET /looks）' },
     strength: { type: 'number', minimum: 0, maximum: 1, default: DEFAULT_STRENGTH, description: '默认强度' },
+    film: { type: 'object', description: '胶片整帧效果（只对光谱胶片风格、只在导出生效；预览仍是 LUT）：grain 0–4、grainSeed、halation 0–1、halationRadiusMm、dirDiffusionUm、filmFormatMm' },
     keepGps: { type: 'boolean', default: false, description: '成品保留 GPS（缺省剥掉；拍摄时间/相机/镜头/作者版权总是保留）' },
   },
   sideEffect: 'file',

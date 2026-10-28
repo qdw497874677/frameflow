@@ -259,6 +259,37 @@ test('配置：整帧渲染进程池缺省与校验', () => {
   assert.throws(() => parseFilm({ enabled: true, render: { memoryMb: -1 } }, {}));
 });
 
+test('HTTP：grade 带 film 效果时导出走引擎整帧渲染；参数校验；预览 LUT 不变', async () => {
+  const sharp = (await import('node:module')).createRequire(import.meta.url)('sharp');
+  const bin = path.join(tmp(), 'ffe');
+  fs.writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" "$@"\n`, { mode: 0o755 });
+  await withEnv({ ARTWORKS_FILM_ENABLED: '1', ARTWORKS_FILM_BINARY: bin, FAKE_FFE_MODE: 'ok' }, async () => {
+    const fx = await makeFixture({ photos: 1 });
+    try {
+      const bad = await fx.call('POST', '/api/v1/jobs', { kind: 'grade', selection: {}, params: { look: 'filmportrait400', film: { grain: 9 } }, mode: 'plan' });
+      assert.equal(bad.status, 400);
+      const r = await fx.call('POST', '/api/v1/jobs', { kind: 'grade', selection: {}, params: { look: 'filmportrait400' }, mode: 'apply' });
+      assert.equal(r.status, 201);
+      let j;
+      for (let i = 0; i < 100 && j?.state !== 'running'; i++) { j = (await fx.call('GET', `/api/v1/jobs/${r.json.id}`)).json; await new Promise((x) => setTimeout(x, 10)); }
+      const badDef = await fx.call('POST', `/api/v1/jobs/${j.id}/actions/defaults`, { film: { halation: 3 } });
+      assert.equal(badDef.status, 400);
+      const ok = await fx.call('POST', `/api/v1/jobs/${j.id}/actions/defaults`, { film: { grain: 1, halation: 0.2 } });
+      assert.equal(ok.status, 200);
+      assert.deepEqual(ok.json.params.film, { grain: 1, halation: 0.2 });
+      const c = await fx.call('POST', `/api/v1/jobs/${j.id}/actions/complete`, {});
+      assert.equal(c.status, 202);
+      for (let i = 0; i < 500 && j.state === 'running'; i++) { await new Promise((x) => setTimeout(x, 10)); j = (await fx.call('GET', `/api/v1/jobs/${j.id}`)).json; }
+      assert.equal(j.state, 'done', JSON.stringify(j.items));
+      // 夹具原图偏蓝；假引擎整帧渲染 = 反相，所以成品偏红黄（走 LUT 的话假 LUT 不会反相）
+      const [rr, , bb] = (await sharp(path.join(fx.dataDir, 'exports', j.id, j.items[0].to)).stats()).channels.map((x) => x.mean);
+      assert.ok(rr - bb > 50, `应已反相：${rr} ${bb}`);
+      const st = (await fx.call('GET', '/api/v1/film/status')).json;
+      assert.equal(st.engine.renders.done, 1);
+    } finally { await fx.dispose(); }
+  });
+});
+
 const REAL = process.env.FFE_ENGINE_BINARY;
 test('真引擎：整帧渲染带颗粒，同种子一致、不同种子不同', { skip: !REAL && '没设 FFE_ENGINE_BINARY' }, async () => {
   const pool = new FilmEnginePool([new ProcessFilmEngine({ binary: REAL, args: ['--data', process.env.FFE_ENGINE_STOCKS ?? ''] })]);

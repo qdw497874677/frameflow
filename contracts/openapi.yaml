@@ -511,7 +511,10 @@ paths:
         `grade`（滤镜设置阶段）的操作：
         - `set`：`{ photoId, look?: string|null, strength?: 0–1, reviewed?: boolean, reset?: boolean }` ——
           改一张的风格（`null` = 不套用）/ 强度；「已过目」只由显式 `reviewed: true`（通过）/ `false`（撤回）改变，只改风格不算；`reset: true` 清掉覆盖与过目、恢复任务默认。写在 `item.grade`。
-        - `defaults`：`{ look?, strength?, keepGps? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
+        - `defaults`：`{ look?, strength?, keepGps?, film? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
+          `film`（`FilmEffects`，`null` = 清掉）是胶片整帧效果：**只对 `kind: film` 风格、只在导出生效**（预览仍是 LUT）。
+          任一 grain / halation / dirDiffusionUm > 0 时该张改由引擎整帧渲染（18 MP 约 5 s），再按强度混回；
+          没给 `grainSeed` 时按照片 id 派生（重导一致，张张不同）。建任务时也可在 `params.film` 给。
         - `complete`：`{}` —— **只受理，回 202**：锁定配方（任务 `phase: exporting`，之后 set/defaults/complete 都 409），
           后台队列按「任务默认 + 逐张覆盖」限并发（缺省 2 张）逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
           （原片不动）。每张完成即更新 `done`（`to` = 文件名）或 `failed`（`note` = 原因，已自动重试 1 次），
@@ -599,6 +602,16 @@ paths:
                       version: { type: string, nullable: true }
                       restarts: { type: integer }
                       lastError: { type: string, nullable: true }
+                      renders:
+                        type: object
+                        description: 整帧渲染进程池（导出时的颗粒 / 光晕）
+                        properties:
+                          workers: { type: integer }
+                          active: { type: integer }
+                          queued: { type: integer, description: 在内存闸门前排队的张数 }
+                          done: { type: integer }
+                          failed: { type: integer }
+                          lastMs: { type: integer, nullable: true }
 
   /jobs/{id}/cancel:
     post:
@@ -998,6 +1011,17 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   schemas:
+    FilmEffects:
+      type: object
+      additionalProperties: false
+      description: 胶片整帧效果（只在导出）；全 0 / 缺省 = 不做整帧渲染、走 LUT
+      properties:
+        grain: { type: number, minimum: 0, maximum: 4, description: 颗粒强度（Newson 布尔模型，按胶片 RMS 颗粒度标定） }
+        grainSeed: { type: integer, minimum: 0, maximum: 4294967295 }
+        halation: { type: number, minimum: 0, maximum: 1 }
+        halationRadiusMm: { type: number, minimum: 0.02, maximum: 2 }
+        dirDiffusionUm: { type: number, minimum: 0, maximum: 100, description: DIR 抑制剂扩散半径（边缘效应） }
+        filmFormatMm: { type: number, minimum: 8, maximum: 300, description: 底片长边（mm），决定像素间距；缺省 36 }
     Health:
       type: object
       required: [ok, version, roots]

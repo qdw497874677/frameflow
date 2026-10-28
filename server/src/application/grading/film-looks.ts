@@ -4,8 +4,9 @@
  *
  * 降级顺序：缓存命中（同引擎版本 + 参数）→ 让引擎烘焙并落盘 → 引擎不可用时用任意版本的旧缓存 → null。
  */
-import type { FilmParams, FilmStock } from '../../domain/grading/film.ts';
-import { filmLookId, filmLutKey } from '../../domain/grading/film.ts';
+import type { FilmEffects, FilmParams, FilmStock } from '../../domain/grading/film.ts';
+import { filmLookId, filmLutKey, hasFilmEffects } from '../../domain/grading/film.ts';
+import { blendRgb, toRgb, type Effect } from '../../domain/grading/effects.ts';
 import type { Lut3D } from '../../domain/grading/lut.ts';
 import type { Look } from '../../domain/grading/recipe.ts';
 import type { FilmEngine, FilmLutStore, LookSource } from './ports.ts';
@@ -66,6 +67,23 @@ export class FilmLookSource implements LookSource {
 
   has(id: string): boolean {
     return this.stocksById.has(id);
+  }
+
+  /** 整帧渲染效果：引擎从原图整帧算（色彩 + 颗粒 / 光晕 / DIR 边缘），再按强度混回。失败就抛（导出会重试 / 记失败） */
+  frameEffect(id: string, strength: number, film: FilmEffects): Effect | null {
+    const stock = this.stocksById.get(id);
+    if (!stock || !hasFilmEffects(film)) return null;
+    const paper = this.opts.paper ?? this.papers[0]?.id;
+    const params = { ...(this.opts.params ?? {}), ...film };
+    const engine = this.engine;
+    return {
+      id: 'film-render',
+      async apply(pixels, channels, frame) {
+        if (!frame) throw new Error('整帧胶片效果需要整帧尺寸');
+        const out = await engine.render({ stock: stock.id, ...(paper ? { paper } : {}), width: frame.width, height: frame.height, pixels: toRgb(pixels, channels), params });
+        blendRgb(pixels, channels, out, strength);
+      },
+    };
   }
 
   async load(id: string): Promise<Lut3D | null> {
