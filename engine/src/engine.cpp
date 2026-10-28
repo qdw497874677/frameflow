@@ -46,6 +46,8 @@ RenderParams parse_params(const Json& p) {
   r.viewing_kelvin = param(p, "viewingKelvin", r.viewing_kelvin, 2000, 12000);
   r.print_grey = param(p, "printGrey", r.print_grey, 0.05, 0.5);
   r.dir_strength = param(p, "dirStrength", r.dir_strength, 0, 2);
+  r.input_gamma = param(p, "inputGamma", r.input_gamma, 1, 2);
+  r.camera_flare = param(p, "cameraFlare", r.camera_flare, 0, 0.1);
   const Json& black = p["scanBlackPoint"];
   if (!black.is_null()) {
     if (!black.is_bool()) throw RequestError("bad_request", "scanBlackPoint must be a boolean");
@@ -118,9 +120,9 @@ std::shared_ptr<const FilmPipeline> Engine::pipeline(const Json& req) {
   if (!paper || paper->kind != StockKind::Paper) throw RequestError("unknown_stock", "unknown paper: " + paper_id);
   RenderParams p = parse_params(req["params"]);
   char key[256];
-  std::snprintf(key, sizeof key, "%s|%s|%.4f|%.1f|%.1f|%.1f|%.4f|%.3f|%d", neg_id.c_str(), paper_id.c_str(),
-                p.exposure_ev, p.scene_kelvin, p.printer_kelvin, p.viewing_kelvin, p.print_grey, p.dir_strength,
-                p.scan_black_point ? 1 : 0);
+  std::snprintf(key, sizeof key, "%s|%s|%.4f|%.1f|%.1f|%.1f|%.4f|%.3f|%d|%.4f|%.4f", neg_id.c_str(),
+                paper_id.c_str(), p.exposure_ev, p.scene_kelvin, p.printer_kelvin, p.viewing_kelvin, p.print_grey,
+                p.dir_strength, p.scan_black_point ? 1 : 0, p.input_gamma, p.camera_flare);
   std::lock_guard<std::mutex> lock(mu_);
   auto it = pipelines_.find(key);
   if (it != pipelines_.end()) return it->second;

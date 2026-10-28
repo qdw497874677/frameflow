@@ -34,6 +34,9 @@ test('领域：参数范围、风格 id、缓存键、LUT 载荷', () => {
   assert.deepEqual(filmParamProblems({ exposureEv: 1, scanBlackPoint: false, dirStrength: 2 }), []);
   assert.equal(filmParamProblems({ exposureEv: 9 }).length, 1);
   assert.equal(filmParamProblems({ scanBlackPoint: 1 }).length, 1);
+  assert.deepEqual(filmParamProblems({ inputGamma: 1, cameraFlare: 0.1 }), []);
+  assert.equal(filmParamProblems({ inputGamma: 0.9 }).length, 1);
+  assert.equal(filmParamProblems({ cameraFlare: 0.2 }).length, 1);
   assert.equal(filmParamProblems({ nope: 1 }).length, 1);
   assert.equal(filmLookId('Portrait-400'), 'filmportrait400');
   assert.equal(filmLutKey('v', 's', 'p', 33, { b: 1, a: 2 }), filmLutKey('v', 's', 'p', 33, { a: 2, b: 1 }));
