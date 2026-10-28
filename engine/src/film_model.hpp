@@ -57,6 +57,7 @@ struct PipelineReport {
   Mat3 interlayer{};            // fitted DIR inhibition matrix (log H per unit dye amount)
   Mat3 crosstalk_before{};      // grey response without / with interlayer effects (layer-aligned)
   Mat3 crosstalk_after{};
+  std::array<double, 5> crosstalk_ramp{};  // worst |off-diagonal| at -2, -1, 0, +1, +2 EV after DIR
   double system_gamma = 0;      // d log10 output / d log10 input (neutral, at normal grey)
   int balance_iterations = 0;
 };
@@ -72,12 +73,26 @@ class FilmPipeline {
   Vec3 printing_log_exposure(const Vec3& rgb) const;
   const PipelineReport& report() const { return report_; }
 
+  // Stages of process(), exposed for the spatial (full-resolution) render path:
+  //   layer_exposure -> [halation] -> log_exposure -> undeveloped -> [inhibitor diffusion] -> develop
+  //   -> [grain] -> finish.  Chained without the bracketed steps they equal process() exactly.
+  void layer_exposure(const float* in, float* e) const;  // linear layer exposure, scene white ~ 1
+  void log_exposure(const float* e, float* lh) const;
+  // dye amounts before DIR inhibition, and the local interlayer inhibition (log H) each layer receives
+  void undeveloped(const float* lh, float* a, float* inhibit) const;
+  void develop(const float* lh, const float* inhibit, float* a) const;
+  void finish(const float* a, float* out, float* scratch /* L floats */) const;
+  int wavelengths() const { return L_; }
+  float dye_max(int k) const { return neg_dye_max_[k]; }
+  float self_inhibition() const { return dir_self_; }
+
  private:
+  void print_log_from_dye(const float* a, float* logp, float* trans) const;
   void process_one(const float* in, float* out, float* scratch) const;
   void print_log_exposure(const float* in, float* logp, float* scratch) const;
   void balance_printer(const RenderParams& params);
   void fit_interlayer(double strength);
-  Mat3 grey_response() const;  // d logP_layer / d log10 input channel (layer-aligned), at normal grey
+  Mat3 grey_response(double ev = 0) const;  // d logP_layer / d log10 input channel (layer-aligned), at normal grey
 
   int L_ = 0;
   float ootf_inv_exp_ = 0;   // 1/input_gamma - 1
@@ -86,6 +101,8 @@ class FilmPipeline {
   float log_h_grey_offset_ = 0;
   double exposure_ev_ = 0;  // log H of the layer exposure of white
   std::array<Curve, 3> neg_dye_;  // dye amount vs log H
+  std::array<float, 3> neg_dye_max_{};
+  float dir_self_ = 0;  // self-inhibition (log H per unit dye amount) for the spatial edge effect
   std::array<std::array<float, 3>, 3> dir_{};  // inhibition of layer k by developed dye of layer j
   std::vector<float> neg_dmin_;   // L
   std::vector<float> neg_dye_density_;  // 3 x L
