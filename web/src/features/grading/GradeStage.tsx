@@ -6,7 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { LutCanvas } from './LutCanvas';
-import { clampStrength, cycleLook, exportSummary, isExporting, isRawEmbedded, isStageEditable, isOverridden, itemExportLabel, jobDefaults, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
+import { FilmEffectsPanel } from './FilmEffectsPanel';
+import { clampStrength, cycleLook, exportSummary, isExporting, isRawEmbedded, isStageEditable, isOverridden, itemExportLabel, jobDefaults, jobFilm, filmEffectsOn, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
 import { jobProgressView } from '@/features/jobs/jobActions';
 
 /**
@@ -52,6 +53,9 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
   const exportProgress = jobProgressView(job);
   const raws = photos.filter(isRawEmbedded).length;
   const keepGps = job.params?.['keepGps'] === true;
+  const film = jobFilm(job);
+  const hasFilmLooks = looks.some((l) => l.kind === 'film');
+  const isFilm = (id: string | null) => !!id && looks.find((l) => l.id === id)?.kind === 'film';
 
   const act = useCallback((name: string, body: Record<string, unknown>) => onAct(() => jobSource.jobAction(job.id, name, body)), [job.id, onAct]);
   const move = useCallback((step: number) => {
@@ -169,6 +173,7 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
           <input type="checkbox" checked={keepGps} disabled={busy} onChange={(e) => void act('defaults', { keepGps: e.target.checked })} />
           成品保留 GPS 位置（缺省剥掉，外发更安全）
         </label>
+        {hasFilmLooks && <FilmEffectsPanel film={film} disabled={busy} onChange={(next) => void act('defaults', { film: next })} />}
       </div>}
 
       {editable && focused && (
@@ -184,6 +189,9 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className="truncate text-xs">{focused.displayName ?? focused.id}</span>
             {original && <Badge variant="outline">原图</Badge>}
+            {isFilm(recipeOf(job, focused).look) && filmEffectsOn(film) && (
+              <Badge variant="outline" className="border-gold text-gold" title="预览为 LUT；颗粒/光晕只在导出出现">预览为 LUT · 导出加颗粒/光晕</Badge>
+            )}
             <span className="ml-auto text-[11px] text-muted-foreground">按住 \ 对比原图 · Enter 通过 · N 跳过 · Esc 关闭</span>
           </div>
           {strip(recipeOf(job, focused).look, (id) => void act('set', { photoId: focused.id, look: id }))}

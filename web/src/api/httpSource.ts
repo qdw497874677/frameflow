@@ -364,7 +364,7 @@ export function createHttpJobSource(base = '/api/v1'): JobSource {
     },
 
     async listLooks() {
-      return (await request<{ items: Look[] }>(base, '/looks')).items.map(({ id, name, inspiredBy }) => ({ id, name, inspiredBy }));
+      return (await request<{ items: Look[] }>(base, '/looks')).items.map(({ id, name, inspiredBy, kind }) => ({ id, name, inspiredBy, ...(kind ? { kind } : {}) }));
     },
 
     async lookCube(id: string): Promise<string> {

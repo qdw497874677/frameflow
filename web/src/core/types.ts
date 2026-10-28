@@ -219,6 +219,18 @@ export interface Look {
   id: string;
   name: string;
   inspiredBy?: string;
+  /** cube = 内置 .cube；film = 光谱胶片引擎（可加导出时的颗粒 / 光晕） */
+  kind?: 'cube' | 'film';
+}
+
+/** 胶片整帧效果（grade 任务 params.film）：只对 film 风格、只在导出生效 */
+export interface FilmEffects {
+  grain?: number;
+  grainSeed?: number;
+  halation?: number;
+  halationRadiusMm?: number;
+  dirDiffusionUm?: number;
+  filmFormatMm?: number;
 }
 
 /** 批注回流的一项：批注页给某一张的最终结论（`by` 不在里面 —— 由服务端从链接里的批注人推） */

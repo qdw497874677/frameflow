@@ -57,3 +57,13 @@ test('导出中：配方锁定、逐张状态、RAW 内嵌标记', async () => {
   assert.equal(isRawEmbedded({ source: 'embedded_jpeg' }), true);
   assert.equal(isRawEmbedded({}), false);
 });
+
+test('胶片效果：读 params.film、是否开启、改一项与清空', async () => {
+  const { jobFilm, filmEffectsOn, patchFilm } = await import('./cube.ts');
+  assert.deepEqual(jobFilm({ params: {} }), {});
+  assert.deepEqual(jobFilm({ params: { film: [1] } }), {});
+  assert.equal(filmEffectsOn({ filmFormatMm: 60 }), false);
+  assert.equal(filmEffectsOn({ grain: 0.5 }), true);
+  assert.deepEqual(patchFilm({ grain: 1 }, 'halation', 0.2), { grain: 1, halation: 0.2 });
+  assert.equal(patchFilm({ grain: 1 }, 'grain', null), null);
+});
