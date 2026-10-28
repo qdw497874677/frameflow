@@ -60,7 +60,40 @@ void blur_lines(float* data, std::size_t count, std::size_t len, std::size_t str
   }, 16);
 }
 
+// counter-based hash (splitmix64 finaliser): the noise does not depend on threading or tiling
+inline std::uint64_t mix(std::uint64_t z) {
+  z += 0x9E3779B97F4A7C15ull;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+  return z ^ (z >> 31);
+}
+inline float gauss_noise(std::uint32_t seed, int layer, std::size_t i) {
+  const std::uint64_t h = mix(mix(static_cast<std::uint64_t>(seed) * 4 + static_cast<std::uint64_t>(layer)) ^ i);
+  const double u1 = (static_cast<double>(h >> 11) + 0.5) * 0x1.0p-53;
+  const double u2 = static_cast<double>(mix(h) >> 11) * 0x1.0p-53;
+  return static_cast<float>(std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * u2));
+}
+
+constexpr int kGrainTable = 256;
+
 }  // namespace
+
+double boolean_grain_variance(double u, double r, double sigma) {
+  if (!(u > 0) || !(u < 1)) return 0;
+  if (!(sigma > 1e-9)) return u * (1 - u);
+  const double lambda = -std::log(1 - u) / (M_PI * r * r);
+  const double q2 = (1 - u) * (1 - u);
+  const int steps = 400;
+  const double h = 2 * r / steps, s2 = 4 * sigma * sigma;
+  double var = 0;
+  for (int j = 0; j < steps; ++j) {  // midpoint rule over d in [0, 2r)
+    const double d = (j + 0.5) * h;
+    const double lens = 2 * r * r * std::acos(d / (2 * r)) - 0.5 * d * std::sqrt(4 * r * r - d * d);
+    const double cov = q2 * std::expm1(lambda * lens);
+    var += cov * std::exp(-d * d / s2) / (M_PI * s2) * 2 * M_PI * d * h;
+  }
+  return var;
+}
 
 void gaussian_blur(float* plane, int w, int h, double sigma_px, unsigned threads) {
   if (!(sigma_px > 0.05)) return;
@@ -69,7 +102,7 @@ void gaussian_blur(float* plane, int w, int h, double sigma_px, unsigned threads
   blur_lines(plane, W, H, W, [](std::size_t l) { return l; }, sigma_px, threads);
 }
 
-bool spatial_active(const SpatialParams& p) { return p.dir_diffusion_um > 0; }
+bool spatial_active(const SpatialParams& p) { return p.dir_diffusion_um > 0 || p.grain > 0; }
 
 void render_spatial(const FilmPipeline& pipe, const float* in, float* out, int w, int h, const SpatialParams& p,
                     unsigned threads) {
@@ -101,8 +134,8 @@ void render_spatial(const FilmPipeline& pipe, const float* in, float* out, int w
     }
   }
   const float self = pipe.self_inhibition();
+  std::vector<float> dye(3 * n);
   run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
-    std::vector<float> scratch(L);
     for (std::size_t i = s; i < e; ++i) {
       float l[3], q[3], a[3];
       for (int k = 0; k < 3; ++k) {
@@ -111,6 +144,47 @@ void render_spatial(const FilmPipeline& pipe, const float* in, float* out, int w
         if (dir) q[k] += self * (spread[k * n + i] - a0[k * n + i]);
       }
       pipe.develop(l, q, a);
+      for (int k = 0; k < 3; ++k) dye[k * n + i] = a[k];
+    }
+  });
+  if (p.grain > 0) {
+    // Film grain (Newson et al. 2017): each layer's developed dye is a Boolean model of dye clouds of
+    // radius r, with coverage u = a / a_max (intensity lambda = -ln(1-u) / (pi r^2)), seen through the
+    // scanner's Gaussian aperture (sigma = half a pixel). Fast approximation: the per-pixel variance is
+    // the exact Boolean-model variance (tabulated over u); the spatial correlation comes from seeded
+    // white noise blurred to the matching width. Mean density is preserved.
+    const double sigma_f = 0.5;  // px
+    for (int k = 0; k < 3; ++k) {
+      const double r = kGrainRadiusUm[k] * p.grain / pitch_um;  // px
+      std::vector<float> sd(kGrainTable + 1);
+      for (int t = 0; t <= kGrainTable; ++t)
+        sd[t] = static_cast<float>(std::sqrt(boolean_grain_variance(static_cast<double>(t) / kGrainTable, r, sigma_f)));
+      std::vector<float> noise(n);
+      run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
+        for (std::size_t i = s; i < e; ++i) noise[i] = gauss_noise(p.grain_seed, k, i);
+      });
+      const double sigma_n = std::sqrt(0.25 * r * r + sigma_f * sigma_f);
+      gaussian_blur(noise.data(), w, h, sigma_n, threads);
+      double ss = 0;  // renormalise the blurred noise to unit variance
+      for (std::size_t i = 0; i < n; ++i) ss += static_cast<double>(noise[i]) * noise[i];
+      const float norm = ss > 0 ? static_cast<float>(1.0 / std::sqrt(ss / static_cast<double>(n))) : 0.0f;
+      const float amax = pipe.dye_max(k);
+      float* plane = dye.data() + k * n;
+      run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
+        for (std::size_t i = s; i < e; ++i) {
+          const float u = std::clamp(plane[i] / amax, 0.0f, 1.0f);
+          const float ft = u * kGrainTable;
+          const int t = std::min(kGrainTable - 1, static_cast<int>(ft));
+          const float sdev = sd[t] + (sd[t + 1] - sd[t]) * (ft - t);
+          plane[i] = amax * std::clamp(u + sdev * noise[i] * norm, 0.0f, 1.0f);
+        }
+      });
+    }
+  }
+  run_parallel(n, threads, [&](std::size_t s, std::size_t e) {
+    std::vector<float> scratch(L);
+    for (std::size_t i = s; i < e; ++i) {
+      float a[3] = {dye[i], dye[n + i], dye[2 * n + i]};
       pipe.finish(a, out + 3 * i, scratch.data());
     }
   });

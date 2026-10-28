@@ -73,6 +73,8 @@ def main():
     r.add_argument("--ev", type=float, default=0.0)
     r.add_argument("--max", type=int, default=2048)
     r.add_argument("--compare")
+    r.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
+                   help="extra render param, e.g. --param grain=1 (spatial params are not baked into the LUT)")
     args = ap.parse_args()
 
     eng = Engine(args.engine, args.data)
@@ -85,9 +87,10 @@ def main():
         img.thumbnail((args.max, args.max))
         src = np.asarray(img)
         params = {"exposureEv": args.ev}
+        extra = {k: float(v) for k, v in (kv.split("=", 1) for kv in args.param)}
         t = time.time()
         resp, data = eng.call({"op": "render", "stock": args.stock, "width": img.width, "height": img.height,
-                               "format": "rgb8", "params": params}, src.tobytes())
+                               "format": "rgb8", "params": {**params, **extra}}, src.tobytes())
         wall = (time.time() - t) * 1000
         film = np.frombuffer(data, np.uint8).reshape(src.shape)
         Image.fromarray(film).save(args.output, quality=92)
