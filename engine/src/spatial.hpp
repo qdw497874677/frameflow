@@ -12,7 +12,12 @@ struct SpatialParams {
   double dir_diffusion_um = 0.0;  // DIR inhibitor diffusion length (Gaussian sigma on film); 0 = off
   double grain = 0.0;             // grain size multiplier on the per-layer dye-cloud radii; 0 = off
   std::uint32_t grain_seed = 0;   // grain is a pure function of (seed, layer, x, y)
+  double halation = 0.0;          // fraction of red-layer exposure scattered back from the base; 0 = off
+  double halation_radius_mm = 0.25;  // Gaussian sigma of the halo on film
 };
+
+// Relative halation weight of the blue, green, red layer (red sits next to the base).
+inline constexpr double kHalationWeight[3] = {0.0, 0.25, 1.0};
 
 // Effective dye-cloud radius (um on film) of the blue, green, red layer at grain = 1, chosen so the
 // 48 um-aperture RMS granularity at mid density is ~0.005 (typical ISO 400 colour negative). Assumption,

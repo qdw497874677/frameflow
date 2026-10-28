@@ -64,6 +64,8 @@ SpatialParams parse_spatial(const Json& p) {
   s.film_format_mm = param(p, "filmFormatMm", s.film_format_mm, 8, 300);
   s.dir_diffusion_um = param(p, "dirDiffusionUm", s.dir_diffusion_um, 0, 100);
   s.grain = param(p, "grain", s.grain, 0, 4);
+  s.halation = param(p, "halation", s.halation, 0, 1);
+  s.halation_radius_mm = param(p, "halationRadiusMm", s.halation_radius_mm, 0.02, 2);
   s.grain_seed = static_cast<std::uint32_t>(param(p, "grainSeed", 0, 0, 4294967295.0));
   return s;
 }

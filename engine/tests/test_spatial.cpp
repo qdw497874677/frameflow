@@ -145,3 +145,30 @@ TEST(grain_is_seeded_mean_preserving_and_density_dependent) {
   }
   CHECK(std::fabs(sd[0] - sd[1]) > 0.2 * std::min(sd[0], sd[1]) || std::fabs(sd[2] - sd[1]) > 0.2 * std::min(sd[2], sd[1]));
 }
+
+TEST(halation_glows_red_around_highlights_only) {
+  const auto& pl = pipe();
+  const int w = 96, h = 96;
+  std::vector<float> in(3 * w * h, 0.02f);
+  for (int y = 44; y < 52; ++y)
+    for (int x = 44; x < 52; ++x)
+      for (int c = 0; c < 3; ++c) in[3 * (y * w + x) + c] = 40.0f;  // specular highlight
+  ffe::SpatialParams p;
+  p.film_format_mm = 4.8;  // 50 um pixels
+  std::vector<float> flat(in.size()), hal(in.size());
+  ffe::render_spatial(pl, in.data(), flat.data(), w, h, p, 2);
+  p.halation = 0.3;
+  p.halation_radius_mm = 0.2;
+  ffe::render_spatial(pl, in.data(), hal.data(), w, h, p, 2);
+  const std::size_t near = 3 * (48 * w + 58), far = 3 * (5 * w + 5);
+  CHECK(hal[near] > 1.5f * flat[near]);              // red halo next to the highlight
+  CHECK(hal[near] - flat[near] > 3 * (hal[near + 2] - flat[near + 2]));  // red dominates blue
+  CHECK_NEAR(hal[far] / flat[far], 1.0, 0.02);         // far field untouched
+  // uniform frame: unchanged
+  std::vector<float> uni(3 * w * h, 0.18f), u0(uni.size()), u1(uni.size());
+  p.halation = 0;
+  ffe::render_spatial(pl, uni.data(), u0.data(), w, h, p, 2);
+  p.halation = 0.3;
+  ffe::render_spatial(pl, uni.data(), u1.data(), w, h, p, 2);
+  for (std::size_t i = 0; i < u0.size(); ++i) CHECK_NEAR(u1[i], u0[i], 1e-5);
+}
