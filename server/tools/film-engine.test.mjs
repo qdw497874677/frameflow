@@ -8,11 +8,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filmParamProblems, filmLookId, filmLutKey, lutFromEngine } from '../src/domain/grading/film.ts';
+import { filmParamProblems, filmLookId, filmLutKey, lutFromEngine, filmEffectProblems, hasFilmEffects } from '../src/domain/grading/film.ts';
 import { sampleLut } from '../src/domain/grading/lut.ts';
 import { FilmLookSource } from '../src/application/grading/film-looks.ts';
 import { CompositeLookSource } from '../src/application/grading/composite-looks.ts';
-import { ProcessFilmEngine, EngineError, encodeFrame, FrameDecoder, DirFilmLutStore } from '../src/adapters/film/index.ts';
+import { ProcessFilmEngine, FilmEnginePool, EngineError, encodeFrame, FrameDecoder, DirFilmLutStore } from '../src/adapters/film/index.ts';
 import { parseFilm } from '../src/adapters/outbound/config-file.ts';
 import { makeFixture } from './connector-fixture.mjs';
 
@@ -194,7 +194,89 @@ test('HTTP：开关关着与以前一样；打开后 film 风格出现在列表�
   });
 });
 
+test('领域：整帧效果参数', () => {
+  assert.deepEqual(filmEffectProblems({ grain: 1, grainSeed: 7, halation: 0.2, halationRadiusMm: 0.3, dirDiffusionUm: 10, filmFormatMm: 36 }), []);
+  assert.equal(filmEffectProblems({ grain: 5 }).length, 1);
+  assert.equal(filmEffectProblems({ grainSeed: 1.5 }).length, 1);
+  assert.equal(filmEffectProblems({ exposureEv: 1 }).length, 1, 'LUT 参数不算效果');
+  assert.equal(hasFilmEffects({}), false);
+  assert.equal(hasFilmEffects({ grain: 0, halation: 0, filmFormatMm: 60 }), false);
+  assert.equal(hasFilmEffects({ halation: 0.1 }), true);
+});
+
+test('帧编解码：几十 MB 载荷按小块推进来也是线性时间', () => {
+  const big = new Uint8Array(48 * 1024 * 1024);
+  big[big.length - 1] = 7;
+  const f = encodeFrame({ op: 'render' }, big);
+  const d = new FrameDecoder();
+  const t0 = Date.now();
+  const got = [];
+  for (let i = 0; i < f.length; i += 65536) got.push(...d.push(f.subarray(i, i + 65536)));
+  assert.equal(got.length, 1);
+  assert.equal(got[0].payload.length, big.length);
+  assert.equal(got[0].payload[big.length - 1], 7);
+  assert.ok(Date.now() - t0 < 3000, `解帧用了 ${Date.now() - t0} ms`);
+});
+
+test('进程池：整帧渲染、参数透传、按像素定超时、内存闸门、超限拒绝', async () => {
+  const pool = new FilmEnginePool([fakeEngine(), fakeEngine()], { baseMs: 1000, msPerMp: 500, memoryBytes: 64 * 100 * 1.5, maxMegapixels: 1 });
+  try {
+    assert.equal(pool.timeoutFor(6000, 3000), 1000 + 500 * 18);
+    const px = Uint8Array.from({ length: 10 * 10 * 3 }, (_, i) => i % 256);
+    const out = await pool.render({ stock: 'portrait400', width: 10, height: 10, pixels: px, params: { grain: 1 } });
+    assert.equal(out[5], 255 - px[5] + 1);
+    // 预算只够一张 100 像素的：两个进程也只能一张一张来
+    let peak = 0;
+    const origin = pool.health.bind(pool);
+    const runs = Array.from({ length: 4 }, () => pool.render({ stock: 'portrait400', width: 10, height: 10, pixels: px }).then(() => { peak = Math.max(peak, origin().renders.active); }));
+    assert.equal(pool.health().renders.active, 1);
+    assert.equal(pool.health().renders.queued, 3);
+    await Promise.all(runs);
+    assert.equal(pool.health().renders.done, 5);
+    await assert.rejects(pool.render({ stock: 'portrait400', width: 2000, height: 1000, pixels: new Uint8Array(6e6) }), (e) => e.code === 'too_large');
+    await assert.rejects(pool.render({ stock: 'portrait400', width: 3, height: 3, pixels: new Uint8Array(5) }), (e) => e.code === 'bad_request');
+  } finally { await pool.close(); }
+});
+
+test('进程池：渲染挂住按超时杀进程，下一次重新拉起', async () => {
+  await withEnv({ FAKE_FFE_MODE: 'hang-render' }, async () => {
+    const pool = new FilmEnginePool([fakeEngine()], { baseMs: 300, msPerMp: 0.001 });
+    try {
+      const px = new Uint8Array(12);
+      await assert.rejects(pool.render({ stock: 'portrait400', width: 2, height: 2, pixels: px }), (e) => e.code === 'timeout');
+      assert.equal(pool.health().renders.failed, 1);
+      assert.equal(pool.health().renders.active, 0, '超时后闸门要释放');
+      assert.ok((await pool.stocks()).length > 0, '超时后能重启');
+    } finally { await pool.close(); }
+  });
+});
+
+test('配置：整帧渲染进程池缺省与校验', () => {
+  const on = parseFilm({ enabled: true }, {});
+  assert.deepEqual(on.render, { workers: 1, baseMs: 20000, msPerMp: 2000, memoryMb: 3072, maxMegapixels: 100 });
+  assert.equal(parseFilm({ enabled: true, render: { workers: 2 } }, {}).render.workers, 2);
+  assert.throws(() => parseFilm({ enabled: true, render: { workers: 0 } }, {}));
+  assert.throws(() => parseFilm({ enabled: true, render: { memoryMb: -1 } }, {}));
+});
+
 const REAL = process.env.FFE_ENGINE_BINARY;
+test('真引擎：整帧渲染带颗粒，同种子一致、不同种子不同', { skip: !REAL && '没设 FFE_ENGINE_BINARY' }, async () => {
+  const pool = new FilmEnginePool([new ProcessFilmEngine({ binary: REAL, args: ['--data', process.env.FFE_ENGINE_STOCKS ?? ''] })]);
+  try {
+    const w = 64, h = 48;
+    const px = Uint8Array.from({ length: w * h * 3 }, (_, i) => 60 + (i % (w * 3)) % 120);
+    const req = { stock: 'portrait400', width: w, height: h, pixels: px };
+    const plain = await pool.render(req);
+    const a = await pool.render({ ...req, params: { grain: 2, grainSeed: 3, filmFormatMm: 8 } });
+    const b = await pool.render({ ...req, params: { grain: 2, grainSeed: 3, filmFormatMm: 8 } });
+    const c = await pool.render({ ...req, params: { grain: 2, grainSeed: 4, filmFormatMm: 8 } });
+    assert.equal(a.length, w * h * 3);
+    assert.deepEqual(a, b);
+    assert.notDeepEqual(a, c);
+    assert.notDeepEqual(a, plain);
+  } finally { await pool.close(); }
+});
+
 test('真引擎：烘焙 9³ LUT，灰轴中性', { skip: !REAL && '没设 FFE_ENGINE_BINARY' }, async () => {
   const e = new ProcessFilmEngine({ binary: REAL, args: ['--data', process.env.FFE_ENGINE_STOCKS ?? ''], timeoutMs: 60_000 });
   try {

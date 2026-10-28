@@ -49,3 +49,10 @@ logLevel: info
 #   binary: ../engine/build/frameflow-film
 #   stocksDir: ../engine/data/stocks
 #   lutSize: 33
+#   # 导出时整帧渲染（颗粒 / 光晕 / DIR 边缘）的进程池：18 MP 约 5 s、约 1.2 GB 工作内存
+#   render:
+#     workers: 1          # 引擎进程数 1..8
+#     baseMs: 20000       # 超时 = baseMs + msPerMp × 百万像素
+#     msPerMp: 2000
+#     memoryMb: 3072      # 同时在渲染的估算内存上限（每像素约 64 B），超了排队
+#     maxMegapixels: 100  # 超过直接拒绝

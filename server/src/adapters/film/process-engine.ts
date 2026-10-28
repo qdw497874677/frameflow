@@ -7,7 +7,7 @@
  * - 熔断：短时间内连续崩溃就冷却一段时间直接报错，不疯狂重启
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { FilmEngine, FilmEngineHealth } from '../../application/grading/ports.ts';
+import type { FilmEngine, FilmEngineHealth, FilmRenderRequest } from '../../application/grading/ports.ts';
 import type { FilmParams, FilmStock } from '../../domain/grading/film.ts';
 import { lutFromEngine } from '../../domain/grading/film.ts';
 import type { Lut3D } from '../../domain/grading/lut.ts';
@@ -46,6 +46,7 @@ export class ProcessFilmEngine implements FilmEngine {
   private pending: Pending | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private nextId = 1;
+  private inflight = 0;
   private crashes: number[] = [];
   private stderrTail = '';
   private closed = false;
@@ -86,9 +87,27 @@ export class ProcessFilmEngine implements FilmEngine {
     return lutFromEngine(size, f32);
   }
 
+  /** 整帧渲染（rgb8）；超时缺省用 timeoutMs，池子会按像素数传更长的 */
+  async render(req: FilmRenderRequest, timeoutMs?: number): Promise<Uint8Array> {
+    const n = req.width * req.height * 3;
+    if (!Number.isInteger(req.width) || !Number.isInteger(req.height) || req.width < 1 || req.height < 1 || req.pixels.length !== n) {
+      throw new EngineError('bad_request', `render 尺寸与像素长度不符：${req.width}×${req.height}，${req.pixels.length} 字节`);
+    }
+    const { payload } = await this.request({
+      op: 'render', stock: req.stock, ...(req.paper ? { paper: req.paper } : {}),
+      width: req.width, height: req.height, format: 'rgb8', params: req.params ?? {},
+    }, req.pixels, timeoutMs);
+    if (payload.length !== n) throw new EngineError('bad_response', `render 载荷长度不对：${payload.length}`);
+    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+
+  /** 排队中 + 进行中的请求数（池子挑最闲的进程用） */
+  load(): number { return this.inflight; }
+
   /** 任意请求（串行）；ok:false 抛 EngineError(code) */
-  request(header: Record<string, unknown>, payload?: Uint8Array): Promise<EngineFrame> {
-    const run = this.queue.then(() => this.exchange(header, payload, this.opts.timeoutMs ?? 30_000));
+  request(header: Record<string, unknown>, payload?: Uint8Array, timeoutMs?: number): Promise<EngineFrame> {
+    this.inflight++;
+    const run = this.queue.then(() => this.exchange(header, payload, timeoutMs ?? this.opts.timeoutMs ?? 30_000)).finally(() => { this.inflight--; });
     this.queue = run.catch(() => undefined);
     return run;
   }

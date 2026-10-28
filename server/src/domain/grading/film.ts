@@ -38,6 +38,56 @@ const RANGES: Record<Exclude<keyof FilmParams, 'scanBlackPoint'>, readonly [numb
   cameraFlare: [0, 0.1],
 };
 
+/**
+ * 只在整帧渲染里有的胶片效果（依赖邻域像素，进不了 3D LUT）：颗粒、光晕、DIR 边缘效应。
+ * 与引擎 render 的同名参数一一对应；全缺省（或都是 0）= 关，导出走 LUT，与以前一样。
+ */
+export interface FilmEffects {
+  /** 颗粒大小倍数，0 = 关；1 ≈ ISO 400 彩负 */
+  readonly grain?: number;
+  /** 颗粒种子（同种子同尺寸结果一致） */
+  readonly grainSeed?: number;
+  /** 光晕强度（片基反射比例），0 = 关 */
+  readonly halation?: number;
+  /** 光晕在胶片上的半径（mm） */
+  readonly halationRadiusMm?: number;
+  /** DIR 抑制剂扩散长度（µm），0 = 关 */
+  readonly dirDiffusionUm?: number;
+  /** 画幅长边（mm，135 = 36），决定颗粒与光晕的像素尺度 */
+  readonly filmFormatMm?: number;
+}
+
+export const FILM_EFFECT_RANGES: Record<keyof FilmEffects, readonly [number, number]> = {
+  grain: [0, 4],
+  grainSeed: [0, 4294967295],
+  halation: [0, 1],
+  halationRadiusMm: [0.02, 2],
+  dirDiffusionUm: [0, 100],
+  filmFormatMm: [8, 300],
+};
+
+/** 效果参数问题列表（空 = 合法）；与引擎端校验一致 */
+export function filmEffectProblems(p: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(p)) {
+    const range = FILM_EFFECT_RANGES[k as keyof FilmEffects];
+    if (!range) { out.push(`不认识的效果参数：${k}`); continue; }
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < range[0] || v > range[1]) out.push(`${k} 要在 ${range[0]}–${range[1]} 之间`);
+    else if (k === 'grainSeed' && !Number.isInteger(v)) out.push('grainSeed 要是整数');
+  }
+  return out;
+}
+
+/** 有没有真正打开的效果（只有它们才需要整帧渲染；全关就走 LUT） */
+export function hasFilmEffects(e: FilmEffects | null | undefined): boolean {
+  return !!e && ((e.grain ?? 0) > 0 || (e.halation ?? 0) > 0 || (e.dirDiffusionUm ?? 0) > 0);
+}
+
+/** 整帧渲染的工作内存估计（引擎约 50 B/像素 + 进出各 3 B + 进程间拷贝），给内存闸门用 */
+export function filmRenderBytes(width: number, height: number): number {
+  return width * height * 64;
+}
+
 /** 参数问题列表（空 = 合法）；与引擎端校验一致，越界在进程外就挡掉 */
 export function filmParamProblems(p: Record<string, unknown>): string[] {
   const out: string[] = [];

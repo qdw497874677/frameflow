@@ -89,6 +89,20 @@ export interface FilmCfg {
   threads: number;
   /** 相纸 id；空 = 引擎目录里第一张相纸 */
   paper: string;
+  /** 整帧渲染（颗粒 / 光晕导出）的进程池 */
+  render: FilmRenderCfg;
+}
+
+export interface FilmRenderCfg {
+  /** 引擎进程数 = 同时渲染几张（每个进程内部多线程；缺省 1） */
+  workers: number;
+  /** 超时 = baseMs + msPerMp × 百万像素 */
+  baseMs: number;
+  msPerMp: number;
+  /** 进行中渲染的估计工作内存上限（MB，约 64 B/像素） */
+  memoryMb: number;
+  /** 单张上限（百万像素） */
+  maxMegapixels: number;
 }
 
 const ENGINE_DIR = resolve(import.meta.dirname, '..', '..', '..', '..', 'engine');
@@ -108,7 +122,24 @@ export function parseFilm(raw: unknown, env: NodeJS.ProcessEnv = process.env): F
     lutSize,
     threads: num(r['threads'], 0),
     paper: String(r['paper'] ?? ''),
+    render: parseFilmRender(r['render'], num),
   };
+}
+
+function parseFilmRender(raw: unknown, num: (v: unknown, d: number) => number): FilmRenderCfg {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const out = {
+    workers: num(r['workers'], 1),
+    baseMs: num(r['baseMs'], 20_000),
+    msPerMp: num(r['msPerMp'], 2_000),
+    memoryMb: num(r['memoryMb'], 3072),
+    maxMegapixels: num(r['maxMegapixels'], 100),
+  };
+  if (!Number.isInteger(out.workers) || out.workers < 1 || out.workers > 8) throw new Error('film.render.workers 要是 1–8 的整数');
+  for (const k of ['baseMs', 'msPerMp', 'memoryMb', 'maxMegapixels'] as const) {
+    if (!(out[k] > 0)) throw new Error(`film.render.${k} 要是正数`);
+  }
+  return out;
 }
 
 function parseIngest(raw: unknown): IngestCfg | null {
