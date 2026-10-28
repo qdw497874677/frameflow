@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <vector>
 
 #include "check.hpp"
@@ -70,3 +71,77 @@ TEST(dir_diffusion_leaves_uniform_areas_and_sharpens_edges) {
 }
 
 TEST_MAIN
+
+TEST(boolean_variance_matches_monte_carlo) {
+  // Boolean model of discs (radius 3 px) on a 512^2 grid, Gaussian-filtered (sigma 2 px)
+  const int N = 512;
+  const double r = 3.0, sigma = 2.0;
+  std::mt19937_64 rng(42);
+  for (double u : {0.2, 0.5, 0.8}) {
+    const double lambda = -std::log(1 - u) / (M_PI * r * r);
+    std::poisson_distribution<int> pois(lambda * N * N);
+    std::uniform_real_distribution<double> uni(0, N);
+    std::vector<float> img(N * N, 0.0f);
+    const int count = pois(rng);
+    for (int c = 0; c < count; ++c) {
+      const double cx = uni(rng), cy = uni(rng);
+      for (int y = int(cy - r) - 1; y <= int(cy + r) + 1; ++y)
+        for (int x = int(cx - r) - 1; x <= int(cx + r) + 1; ++x) {
+          const double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+          if (dx * dx + dy * dy <= r * r) img[((y + N) % N) * N + (x + N) % N] = 1.0f;  // periodic
+        }
+    }
+    double mean0 = 0;
+    for (float v : img) mean0 += v;
+    mean0 /= N * N;
+    CHECK_NEAR(mean0, u, 0.02);
+    ffe::gaussian_blur(img.data(), N, N, sigma, 1);
+    double m = 0, v2 = 0;
+    const int b = 16;  // skip clamped borders
+    int cnt = 0;
+    for (int y = b; y < N - b; ++y)
+      for (int x = b; x < N - b; ++x) { m += img[y * N + x]; v2 += double(img[y * N + x]) * img[y * N + x]; ++cnt; }
+    m /= cnt;
+    const double var = v2 / cnt - m * m;
+    CHECK_NEAR(var / ffe::boolean_grain_variance(u, r, sigma), 1.0, 0.12);
+  }
+  CHECK_NEAR(ffe::boolean_grain_variance(0.3, 2.0, 0.0), 0.21, 1e-12);
+}
+
+TEST(grain_is_seeded_mean_preserving_and_density_dependent) {
+  const auto& pl = pipe();
+  const int w = 192, h = 64;
+  std::vector<float> in(3 * w * h);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      const float v = x < w / 3 ? 0.02f : x < 2 * w / 3 ? 0.18f : 0.9f;  // shadow, grey, highlight bands
+      for (int c = 0; c < 3; ++c) in[3 * (y * w + x) + c] = v;
+    }
+  ffe::SpatialParams p;
+  p.film_format_mm = 2.0;  // ~10 um pixels: grain visible at this tiny size
+  std::vector<float> flat(in.size()), g1(in.size()), g2(in.size()), g3(in.size());
+  ffe::render_spatial(pl, in.data(), flat.data(), w, h, p, 2);
+  p.grain = 1.0;
+  p.grain_seed = 7;
+  ffe::render_spatial(pl, in.data(), g1.data(), w, h, p, 1);
+  ffe::render_spatial(pl, in.data(), g2.data(), w, h, p, 4);
+  CHECK(g1 == g2);  // deterministic regardless of threads
+  p.grain_seed = 8;
+  ffe::render_spatial(pl, in.data(), g3.data(), w, h, p, 2);
+  CHECK(!(g1 == g3));
+  double sd[3];
+  for (int band = 0; band < 3; ++band) {
+    double m = 0, mf = 0, v = 0;
+    int cnt = 0;
+    for (int y = 0; y < h; ++y)
+      for (int x = band * w / 3 + 4; x < (band + 1) * w / 3 - 4; ++x) {
+        const std::size_t i = 3 * (y * w + x) + 1;
+        m += g1[i]; mf += flat[i]; v += double(g1[i] - flat[i]) * (g1[i] - flat[i]); ++cnt;
+      }
+    m /= cnt; mf /= cnt;
+    sd[band] = std::sqrt(v / cnt);
+    CHECK_NEAR(m / mf, 1.0, 0.08);  // mean roughly preserved in output linear light
+    CHECK(sd[band] > 1e-4);
+  }
+  CHECK(std::fabs(sd[0] - sd[1]) > 0.2 * std::min(sd[0], sd[1]) || std::fabs(sd[2] - sd[1]) > 0.2 * std::min(sd[2], sd[1]));
+}

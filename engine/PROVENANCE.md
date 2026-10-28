@@ -72,6 +72,7 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
 | DIR 拟合（M2） | 同上（Hunt 层间效应） | 6 个系数改为在 −2、−1、0、+1、+2 EV 灰阶上（权重 0.5/1/2/1/0.5）最小化非对角串扰的加权最小二乘（阻尼高斯-牛顿）。灰阶最差串扰 0.070 → 0.057，代价是中灰从 0 变为 0.013。权重是我们的选择 |
 | DIR 抑制剂扩散 / 边缘效应（M2） | James (ed.), *The Theory of the Photographic Process*, 4th ed.（edge effects、interimage effects 章节）；Hunt | 层间抑制量和各层未抑制染料量在胶片上做高斯扩散（σ = `dirDiffusionUm`），自抑制项 = 自抑制系数 ×（扩散后 − 本地）染料量。自抑制系数取 6 个层间系数绝对值的均值，**这是假设**，没有厂商数据 |
 | 高斯模糊 | Wells, “Efficient synthesis of Gaussian filters by cascaded uniform filters”, IEEE PAMI 1986；Kovesi, “Fast Almost-Gaussian Filtering”, DICTA 2010 | σ < 3 px 用精确可分离核；否则三次盒式滤波，宽度按 Kovesi 的公式 |
+| 颗粒（M2） | Newson, Delon, Galerne, “A Stochastic Film Grain Model for Resolution-Independent Rendering”, *Computer Graphics Forum* 36(8), 2017；Selwyn 颗粒度定律（James 书中 granularity 章节）；Kodak Portra 400 数据表 E-4050（Print Grain Index） | 每层是半径 r 的圆盘布尔模型，强度 λ = −ln(1−u)/(πr²)；像素方差按论文的协方差积分精确计算（覆盖协方差 (1−u)²(e^{λ·A∩(d)}−1) 对高斯滤波自相关积分，扫描孔径 σ = 0.5 像素），蒙特卡洛测试核对到 ±12%。**快速近似**：空间相关用种子白噪声模糊到 σ = √(r²/4 + σ_f²) 代替逐粒子渲染。等效半径（蓝 0.14、绿 0.11、红 0.12 µm）是**假设**：数据表只给 PGI、没有 RMS 颗粒度，我们取「48 µm 孔径、中密度 RMS ≈ 0.005」这一 ISO 400 彩负的典型量级来反推；圆盘在模型里是满密度，所以等效半径远小于真实染料云 |
 | 印放 / 扫描 | 一般的负片—相纸系统原理（Hunt） | 印放灯 3200 K × 相纸感光度；用每层印放光量把 18% 灰平衡到中性；扫描把相纸白映射为白、D-max 映射为黑（每通道黑点） |
 
 Status 密度计双侧高斯参数（峰值 nm、左 σ、右 σ），由 ISO 5-3 的十倍衰减点手工拟合：
