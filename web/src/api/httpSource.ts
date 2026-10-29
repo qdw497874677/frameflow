@@ -33,6 +33,7 @@ import type {
   InboundItem,
   Job,
   Look,
+  LookKindSchema,
   MarkChange,
   MarkInput,
   MarkResult,
@@ -367,8 +368,12 @@ export function createHttpJobSource(base = '/api/v1'): JobSource {
       return (await request<{ items: Look[] }>(base, '/looks')).items.map(({ id, name, inspiredBy, kind }) => ({ id, name, inspiredBy, ...(kind ? { kind } : {}) }));
     },
 
-    async lookCube(id: string): Promise<string> {
-      const res = await fetch(`${base}/looks/${encodeURIComponent(id)}.cube`, { credentials: 'include' });
+    async listLookKinds() {
+      return (await request<{ items: LookKindSchema[] }>(base, '/look-kinds')).items;
+    },
+
+    async lookCube(id: string, query?: string): Promise<string> {
+      const res = await fetch(`${base}/looks/${encodeURIComponent(id)}.cube${query ? `?${query}` : ''}`, { credentials: 'include' });
       if (res.status === 401) throw new AuthRequiredError();
       if (!res.ok) throw new Error(`读不到风格 ${id}：HTTP ${res.status}`);
       return res.text();

@@ -3,7 +3,7 @@ import type { Lut } from './cube.ts';
 import { lutRenderer } from './lutRenderer.ts';
 import { cn } from '@/lib/utils';
 
-/** 一张照片的滤镜预览：图片加载后经共享 WebGL2 渲染器画进 2D canvas */
+/** 一张照片的风格预览：图片加载后经共享 WebGL2 渲染器画进 2D canvas */
 export function LutCanvas({ src, lut, strength, original = false, className, alt }: {
   src: string;
   lut: Lut | null;

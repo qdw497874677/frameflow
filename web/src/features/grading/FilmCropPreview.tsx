@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ZoomIn } from 'lucide-react';
 import { jobSource } from '@/api';
-import type { FilmEffects } from '@/core/types';
+import type { LookParams } from '@/core/types';
 import { Button } from '@/components/ui/button';
 
 /**
  * 100% 裁切预览：让服务端引擎对一块 512×512 真渲染颗粒 / 光晕（约 1 秒），对照 LUT 预览。
  * 中心取上次在大图上点的位置（缺省正中）。颗粒统计与导出一致，具体图样不逐像素一致。
  */
-export function FilmCropPreview({ photoId, look, strength, film, center }: { photoId: string; look: string; strength: number; film: FilmEffects; center: { cx: number; cy: number } }) {
+export function FilmCropPreview({ photoId, look, params, center }: { photoId: string; look: string; params: LookParams; center: { cx: number; cy: number } }) {
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +18,7 @@ export function FilmCropPreview({ photoId, look, strength, film, center }: { pho
     setBusy(true);
     setError(null);
     try {
-      const blob = await jobSource.filmPreview({ photoId, look, strength, film, ...center, size: 512 });
+      const blob = await jobSource.filmPreview({ photoId, look, params, ...center, size: 512 });
       setUrl(URL.createObjectURL(blob));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

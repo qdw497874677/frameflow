@@ -126,7 +126,7 @@ function toHalf(v: number): number {
 }
 
 let shared: Renderer | null | undefined;
-/** 不支持 WebGL2 时返回 null：预览退回原图，导出仍由服务端套滤镜 */
+/** 不支持 WebGL2 时返回 null：预览退回原图，导出仍由服务端套风格 */
 export function lutRenderer(): Renderer | null {
   if (shared === undefined) {
     try {

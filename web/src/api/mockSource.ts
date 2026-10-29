@@ -450,7 +450,7 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
       return job;
     },
 
-    // 滤镜阶段：mock 没有风格文件（预览即原图），只演示状态流转
+    // 风格阶段：mock 没有风格文件（预览即原图），只演示状态流转
     async jobAction(id: string, name: string, body: Record<string, unknown> = {}): Promise<Job> {
       const job = await api.getJob(id);
       if (name !== 'complete' && job.phase) throw new Error('正在后台导出，配方已锁定');
@@ -491,6 +491,10 @@ export function createMockSource(): PhotoSource & JobSource & AnnotateSource {
     },
 
     async listLooks() {
+      return [];
+    },
+
+    async listLookKinds() {
       return [];
     },
 
