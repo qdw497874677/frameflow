@@ -67,3 +67,31 @@ test('胶片效果：读 params.film、是否开启、改一项与清空', async
   assert.deepEqual(patchFilm({ grain: 1 }, 'halation', 0.2), { grain: 1, halation: 0.2 });
   assert.equal(patchFilm({ grain: 1 }, 'grain', null), null);
 });
+
+test('配方：新字段 recipe 优先，旧 look / strength / film 折算', async () => {
+  const { jobRecipe, jobDefaults, jobFilm } = await import('./cube.ts');
+  assert.deepEqual(jobRecipe({ params: { recipe: { lookId: 'a', kind: 'film', params: { strength: 0.4, grain: 1 } } } }), { lookId: 'a', kind: 'film', params: { strength: 0.4, grain: 1 } });
+  assert.deepEqual(jobDefaults({ params: { recipe: { lookId: 'a', params: { strength: 0.4 } } } }), { look: 'a', strength: 0.4 });
+  assert.deepEqual(jobRecipe({ params: { look: 'b', strength: 0.5, film: { grain: 2 } } }), { lookId: 'b', params: { strength: 0.5, grain: 2 } });
+  assert.deepEqual(jobFilm({ params: { recipe: { lookId: 'a', params: { grain: 1, paper: 'edgepaper' } } } }), { grain: 1 });
+});
+
+test('参数模式：.cube 查询串只带影响 LUT 且改过的项；归一按类型；缺省值不存', async () => {
+  const { cubeQuery, paramsForKind, patchParams } = await import('./cube.ts');
+  const schema = { kind: 'film', label: 'f', groups: [{ id: 'look', label: 'l' }], params: [
+    { key: 'strength', label: 's', group: 'look', type: 'number', min: 0, max: 1, step: 0.1, default: 1, preview: 'lut' },
+    { key: 'paper', label: 'p', group: 'look', type: 'enum', options: [], default: 'premierpaper', preview: 'lut' },
+    { key: 'grain', label: 'g', group: 'look', type: 'number', min: 0, max: 4, step: 0.25, default: 0, preview: 'export' },
+  ] } as unknown as import('../../core/types.ts').LookKindSchema;
+  assert.equal(cubeQuery(schema, { strength: 0.5, paper: 'edgepaper', grain: 1 }), 'paper=edgepaper');
+  assert.equal(cubeQuery(schema, { paper: 'premierpaper' }), '');
+  assert.deepEqual(paramsForKind(schema, { grain: 1, borderWidth: 0.1 }), { grain: 1 });
+  assert.deepEqual(patchParams(schema, { grain: 1 }, 'grain', 0), {});
+  assert.deepEqual(patchParams(schema, {}, 'paper', 'edgepaper'), { paper: 'edgepaper' });
+});
+
+test('边框画布：与服务端同一算法', async () => {
+  const { borderLayout } = await import('./cube.ts');
+  assert.deepEqual(borderLayout(300, 200, { width: 0.1, ratio: 'original' }), { width: 340, height: 240, x: 20, y: 20 });
+  assert.deepEqual(borderLayout(300, 200, { width: 0, ratio: '1:1' }), { width: 300, height: 300, x: 0, y: 50 });
+});

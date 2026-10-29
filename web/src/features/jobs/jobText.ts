@@ -34,7 +34,7 @@ export function isActive(state: JobState): boolean {
 /** 能力名 → 人话；没登记的 kind 原样显示（插件可以贡献新 kind） */
 const KIND_LABEL: Record<string, string> = {
   annotate: '批注',
-  grade: '滤镜',
+  grade: '风格',
   export: '导出',
   process: '处理',
 };

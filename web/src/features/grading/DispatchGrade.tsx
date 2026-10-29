@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
-/** 挑片页的「套滤镜」入口：把当前选择集变成一个 grade 任务，然后去任务页的滤镜设置阶段 */
+/** 挑片页的「套风格」入口：把当前选择集变成一个 grade 任务，然后去任务页的风格设置阶段 */
 export function DispatchGradeButton() {
   const { selection, items, dir } = useAppState();
   const [open, setOpen] = useState(false);
@@ -73,13 +73,13 @@ export function DispatchGradeButton() {
     <>
       <Button size="sm" variant="outline" onClick={() => setOpen(true)} disabled={items.length === 0}>
         <Palette className="size-3.5" />
-        套滤镜
+        套风格
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>套胶片滤镜</DialogTitle>
-            <DialogDescription>建一个滤镜任务：在任务页选风格、逐张过目，完成后导出 JPEG 到数据目录（原片不动）。</DialogDescription>
+            <DialogTitle>套风格</DialogTitle>
+            <DialogDescription>建一个风格任务：在任务页选风格、逐张过目，完成后导出 JPEG 到数据目录（原片不动）。</DialogDescription>
           </DialogHeader>
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
