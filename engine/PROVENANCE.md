@@ -18,6 +18,7 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
 | `e4040_portra_800.pdf` | Kodak Professional Portra 800 Film, Technical Data E-4040（2025 年 1 月） | https://www.kodakprofessional.com/sites/default/files/2025-07/e4040.pdf | `13581198dffa01c5a2a38ab87d96a73cf2e2755b6514d55c65206fe621a60b5a` |
 | `E7022_Gold_200.pdf` | Kodak Gold 200 Film, Technical Data E-7022（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/resources/E7022_Gold_200.pdf | `9f19012f258b5e61be9b043c554483f01d338d0a8aff28163cb4ef6d7ddbe7df` |
 | `f4017_TriX.pdf` | Kodak Professional Tri-X 320 and 400 Films, Technical Data F-4017（2016 年 2 月） | https://imaging.kodakalaris.com/sites/default/files/files/resources/f4017_TriX.pdf | `51d738f4f996c98716d153bab75e41d0359637a18ea49f9be52062652b0b27d2` |
+| `e7020_ektacolor_edge.pdf` | Kodak Ektacolor Edge Paper, Technical Data E-7020（相纸：特性曲线第 3 页、光谱灵敏度第 4 页、染料光谱密度第 3 页） | https://business.kodakmoments.com/sites/default/files/files/products/e7020.pdf | `5c6ae49b0f1a85474acb9a57aa7933179997d087f7c1176f084602ac6e881fa0` |
 
 **使用条款。** 我们于 2026-10-27 查阅了 Kodak Alaris 的网站条款
 （https://www.kodakalaris.com/legal/website-terms-and-conditions 及其 FAQ）。条款允许出于非商业、
@@ -27,7 +28,7 @@ spectral_film_lut、RawTherapee、darktable。SpektraLab 只作为“这类引�
 - **不提交** PDF，也**不提交**从 PDF 数字化出来的曲线和生成的胶片数据文件（`engine/data/` 已在 `.gitignore` 中）。
 - 只提交工具和元数据：下载地址、sha256、坐标轴标定点、路径编号和拟合方法。
 - 构建时由 `engine/tools/fetch_stocks.sh` 从原地址下载，先校验 sha256，再在本地生成数据。
-- 胶片 ID 使用中性名称（`portrait400`、`portrait160`、`portrait800`、`vivid100`、`golden200`、`classicbw400`、`premierpaper`），不使用 Kodak 商标作为产品名；`inspiredBy` 字段只用于说明数据来源。
+- 胶片 ID 使用中性名称（`portrait400`、`portrait160`、`portrait800`、`vivid100`、`golden200`、`classicbw400`、`premierpaper`、`edgepaper`），不使用 Kodak 商标作为产品名；`inspiredBy` 字段只用于说明数据来源。
 - **待确认：** 在商业产品或分发的镜像（含 Docker 镜像中打包生成的数据）里使用这些衍生数据之前，需要法务确认，或取得 Kodak Alaris 的书面许可。测量数值本身是否受版权保护因司法辖区而异，网站条款属于合同约束。
 
 **数字化方法**（`tools/datasheets/digitize.py`、`spec.json`）：
@@ -95,6 +96,14 @@ Status 密度计双侧高斯参数（峰值 nm、左 σ、右 σ），由 ISO 5-
 
 - Status M：B (450, 10.9, 15.8)，G (540, 16.6, 16.5)，R (640, 5.5, 20.0)
 - Status A：B (440, 7.9, 12.6)，G (530, 7.6, 15.1)，R (620, 6.0, 25.0)
+
+## 2a. 预设与附加项（FrameFlow 调校假设，不是厂商数据）
+
+`server/src/domain/grading/film-presets.ts` 的 `signature` / `soft` 预设只改引擎公开的渲染参数
+（曝光 EV、DIR 层间抑制强度、印放中灰、相机杂散光、场景色温），**数值是 FrameFlow 凭观感定的假设**，
+没有任何数据表或第三方实现作依据；色彩本身仍全部来自上表的数据表。`neutral` = 引擎缺省。
+其中 Portrait 800 / Golden 200 的 `sceneKelvin`（5000 K / 4800 K）用于偏暖，方向未用标准色卡验证。
+边框（等宽加边 + 补画幅）与暗角（smoothstep 径向压暗）是 FrameFlow 自己的简单图像操作，不模拟任何物理过程或产品。
 
 ## 3. 代码
 

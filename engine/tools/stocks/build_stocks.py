@@ -188,7 +188,13 @@ NEGATIVES = [
 ]
 
 
-def build_endura(src):
+PAPERS = [
+    ("kodak-endura-premier.json", {"id": "premierpaper", "name": "Premier Paper", "inspiredBy": "Kodak Endura Premier (datasheet E-4070)"}),
+    ("kodak-ektacolor-edge.json", {"id": "edgepaper", "name": "Edge Paper", "inspiredBy": "Kodak Ektacolor Edge (datasheet E-7020)"}),
+]
+
+
+def build_paper(src, meta):
     ch = src["charts"]
     sens = {k: arr(resample_sensitivity(ch["sensitivity"]["curves"][n]), 3) for k, n in (("b", "yellow"), ("g", "magenta"), ("r", "cyan"))}
     dyes, info = endura_dyes(ch["dye_density"]["curves"])
@@ -197,9 +203,9 @@ def build_endura(src):
     lo, hi = np.ceil(lo / LOGH_STEP) * LOGH_STEP, np.floor(hi / LOGH_STEP) * LOGH_STEP
     grid, _ = resample_density_curve(cc["red"], lo, hi)
     return {
-        "id": "premierpaper", "name": "Premier Paper", "inspiredBy": "Kodak Endura Premier (datasheet E-4070)",
+        "id": meta["id"], "name": meta["name"], "inspiredBy": meta["inspiredBy"],
         "kind": "paper",
-        "source": {"datasheet": "kodak-endura-premier.json", "sha256": src["sha256"], "url": src["url"]},
+        "source": {"datasheet": meta["datasheet"], "sha256": src["sha256"], "url": src["url"]},
         "wavelengths": {"start": 380, "step": 5, "count": int(WL.size)},
         "logSensitivity": sens,
         "dyeDensity": {k: arr(v) for k, v in dyes.items()},
@@ -215,7 +221,7 @@ def main():
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(DATA, "stocks")
     os.makedirs(out, exist_ok=True)
     jobs = [(name, lambda src, b=b, m=m, name=name: b(src, {**m, "datasheet": name})) for name, b, m in NEGATIVES]
-    jobs.append(("kodak-endura-premier.json", build_endura))
+    jobs += [(name, lambda src, m=m, name=name: build_paper(src, {**m, "datasheet": name})) for name, m in PAPERS]
     for name, build in jobs:
         stock = build(json.load(open(os.path.join(ds, name))))
         with open(os.path.join(out, stock["id"] + ".json"), "w") as f:

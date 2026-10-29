@@ -678,5 +678,119 @@
         }
       }
     }
+  },
+  "kodak-ektacolor-edge": {
+    "pdf": "e7020_ektacolor_edge.pdf",
+    "url": "https://business.kodakmoments.com/sites/default/files/files/products/e7020.pdf",
+    "document": "Kodak Ektacolor Edge Paper, Technical Data E-7020 (PDF ModDate 2017-12)",
+    "charts": {
+      "characteristic": {
+        "page": 3,
+        "x": {
+          "pt": [
+            368.2,
+            555.4
+          ],
+          "value": [
+            -4.0,
+            1.0
+          ],
+          "quantity": "log10 exposure (lux seconds)"
+        },
+        "y": {
+          "pt": [
+            269.7,
+            87.4
+          ],
+          "value": [
+            0.0,
+            4.0
+          ],
+          "quantity": "Status A reflection density"
+        },
+        "notes": "Process RA-4, 38 C 45 s. Densitometry: Status A. Curves drawn as short segments.",
+        "curves": {
+          "red": [
+            [
+              3,
+              17
+            ]
+          ],
+          "blue": [
+            [
+              30,
+              42
+            ]
+          ],
+          "green": [
+            [
+              43,
+              54
+            ]
+          ]
+        }
+      },
+      "sensitivity": {
+        "page": 4,
+        "x": {
+          "pt": [
+            73.6,
+            274.1
+          ],
+          "value": [
+            250,
+            750
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            252.5,
+            101.1
+          ],
+          "value": [
+            -2.0,
+            2.0
+          ],
+          "quantity": "log10 relative sensitivity"
+        },
+        "curves": {
+          "yellow": 26,
+          "magenta": 27,
+          "cyan": 28
+        }
+      },
+      "dye_density": {
+        "page": 3,
+        "x": {
+          "pt": [
+            367.3,
+            551.8
+          ],
+          "value": [
+            400,
+            700
+          ],
+          "quantity": "wavelength (nm)"
+        },
+        "y": {
+          "pt": [
+            515.0,
+            330.6
+          ],
+          "value": [
+            0.0,
+            2.5
+          ],
+          "quantity": "spectral density, normalized dyes"
+        },
+        "curves": {
+          "cyan": 71,
+          "magenta": 72,
+          "yellow": 73
+        }
+      }
+    },
+    "sha256": "5c6ae49b0f1a85474acb9a57aa7933179997d087f7c1176f084602ac6e881fa0"
   }
 }

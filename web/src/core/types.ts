@@ -208,20 +208,36 @@ export interface JobItem {
   del?: boolean | null;
   clientRef?: string | null;
   at?: string | null;
-  /** grade（滤镜设置阶段）：这张的覆盖与过目时刻；缺省字段跟任务默认 */
+  /** grade（风格设置阶段）：这张的覆盖与过目时刻；缺省字段跟任务默认 */
   grade?: { look?: string | null; strength?: number; reviewedAt?: string | null } | null;
   /** grade：只有 RAW 时像素用机内内嵌 JPEG */
   source?: 'embedded_jpeg' | null;
 }
 
-/** 内置胶片风格（GET /looks） */
+/** 风格（GET /looks），由一个风格类型承载（ADR 0006） */
 export interface Look {
   id: string;
   name: string;
   inspiredBy?: string;
-  /** cube = 内置 .cube；film = 光谱胶片引擎（可加导出时的颗粒 / 光晕） */
-  kind?: 'cube' | 'film';
+  /** 风格类型：lut = 内置 .cube；film = 光谱胶片引擎 */
+  kind?: string;
 }
+
+/** 风格参数的预览方式：lut = 烘进 .cube；approx = 前端近似；export = 只在导出 */
+export type ParamPreview = 'lut' | 'approx' | 'export';
+interface ParamBase { key: string; label: string; group: string; preview: ParamPreview; hint?: string }
+export type ParamDescriptor =
+  | (ParamBase & { type: 'number'; min: number; max: number; step: number; default: number; unit?: string })
+  | (ParamBase & { type: 'enum'; options: Array<{ value: string; label: string; hint?: string }>; default: string })
+  | (ParamBase & { type: 'bool'; default: boolean })
+  | (ParamBase & { type: 'color'; default: string })
+  | (ParamBase & { type: 'seed'; default?: number });
+export interface ParamGroup { id: string; label: string; extra?: boolean; hint?: string }
+/** 风格类型的参数模式（GET /look-kinds） */
+export interface LookKindSchema { kind: string; label: string; groups: ParamGroup[]; params: ParamDescriptor[] }
+export type LookParams = Record<string, number | string | boolean>;
+/** 任务默认配方（grade 任务 params.recipe） */
+export interface LookRecipe { lookId: string | null; kind?: string; params: LookParams }
 
 /** 胶片整帧效果（grade 任务 params.film）：只对 film 风格、只在导出生效 */
 export interface FilmEffects {

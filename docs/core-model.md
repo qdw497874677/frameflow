@@ -125,7 +125,7 @@ POST /selections                 可选：保存命名选择集（v1 不做 —�
 | 想加的能力 | 怎么加 | 前端改动 |
 |---|---|---|
 | **导出**（挑好的照片交到别处） | `jobs/export.ts`：`plan` 展开目标路径 + 冲突处理，`apply` 复制 + 写 manifest，`params.recipe` | 任务页 + 一个「导出」入口 |
-| **滤镜 / 处理** | 就是 export 的 **recipe 参数**（`{filters: [...], resize: {...}, format}`），不是新管线 | 同上 |
+| **风格 / 处理** | 风格（Look）由风格类型（LookKind）承载，配方 `{ lookId, kind, params }`，参数按类型自带的模式（[ADR 0006](adr/0006-look-and-look-kind.md)）；新类型 = 注册一个 LookKind，不是新管线 | 无（面板按模式自动生成） |
 | **推送到飞书批注** | `jobs/annotate.ts` + `channels/feishu.ts`：推送选择集为卡片（先展开 `items` 快照），回执经 `POST /jobs/{id}/inbound` 写成标注（`by: 'link:<批注人>'`） | 任务页显示「待外部批注」 |
 | **AI 自动挑选** | 一个 `annotate` 任务的执行者（产出标注，`by: 'ai'`），不是新架构 | 无 |
 | **定时任务**（每周导出四星） | `selection` + `schedule` 两个字段，加一个 cron 触发；**调度器最后做** | 无 |
@@ -136,7 +136,7 @@ POST /selections                 可选：保存命名选择集（v1 不做 —�
 2. **筛选升级为 `Selection`**：store 里从零散 `filter` 字段变成可序列化对象，并且能在 URL 里表达（`?sel=stars>=3`）。规范：`contracts/selection.md`；实现：`web/src/core/selection.ts`（`matchesSelection` 是后端的参考实现）。
 3. **契约预留任务层**：`contracts/openapi.yaml` 写下 `/jobs`、`/channels` 的形状（`x-implemented: false`），`server/README.md` 记下 JobHandler 接缝。**已落地（2026-10-07）**：`server/src/core/jobs.ts`（JSONL 双日志 + 状态机）+ `server/src/jobs/*`（registry/service/annotate/channels），契约全部 `x-implemented: true`，回归 `node tools/e2e-jobs.mjs`（81/0）与 `node tools/e2e-annotate.mjs`（76/0）。
 
-**明确不做**（省下的都是复杂度）：工作流引擎 / DAG、消息队列 / 事件总线、插件市场、账号与权限体系（RBAC）、cron 调度器、通用滤镜 DSL、把现在同步的动作异步化。
+**明确不做**（省下的都是复杂度）：工作流引擎 / DAG、消息队列 / 事件总线、插件市场、账号与权限体系（RBAC）、cron 调度器、通用风格 DSL、把现在同步的动作异步化。
 
 ## 10. 四件待拍板的事（已拍 —— 2026-09，用户确认「按这个做」）
 

@@ -1,21 +1,24 @@
 /**
- * 滤镜阶段的出站端口。application 只认这些接口；sharp、文件系统、.cube 文件都在 adapters/outbound/grading。
+ * 风格阶段（grade）的出站端口。application 只认这些接口；sharp、文件系统、.cube 文件都在 adapters/outbound/grading。
  * 加来源 / 渲染器 / 导出目标 = 多写一个适配器，在组装根换上即可。
  */
 import type { Effect } from '../../domain/grading/effects.ts';
 import type { Lut3D } from '../../domain/grading/lut.ts';
 import type { Look } from '../../domain/grading/recipe.ts';
+import type { LookParams } from '../../domain/grading/look-kind.ts';
+import type { LookKindRegistry } from './look-kinds.ts';
 import type { FilmEffects, FilmParams, FilmStock } from '../../domain/grading/film.ts';
 
-/** 风格从哪来（内置 .cube、以后用户导入…） */
+/** 风格从哪来（内置 .cube、光谱胶片、以后用户导入…） */
 export interface LookSource {
   list(): Look[];
-  load(id: string): Promise<Lut3D | null>;
+  /** variant = 影响 LUT 本身的风格参数（模式里 preview: 'lut' 的那些，如相纸 / 预设 / 曝光）；不认识的忽略 */
+  load(id: string, variant?: LookParams): Promise<Lut3D | null>;
   /**
    * 可选：整帧效果（只有光谱胶片有）。返回 null = 这个风格不支持 / 没开效果，调用方退回 LUT。
    * 预览永远走 LUT；这个只在导出（和 100% 裁切预览）里用。
    */
-  frameEffect?(id: string, strength: number, film: FilmEffects): Effect | null;
+  frameEffect?(id: string, strength: number, film: FilmEffects, variant?: LookParams): Effect | null;
 }
 
 /** 光谱胶片引擎（独立进程，见 engine/）。适配器负责进程池、超时、重启与健康状态 */
@@ -80,6 +83,8 @@ export interface ExportMetadata {
 
 export interface GradingPorts {
   looks: LookSource;
+  /** 风格类型注册表（参数模式 + 各类型自己的效果组装）；不给就把 looks 全当 `lut` 类型 */
+  kinds?: LookKindRegistry;
   renderer: Renderer;
   exports: ExportTarget;
   /** 没接（如单测）就不抄元数据 */

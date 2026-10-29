@@ -1,12 +1,13 @@
 import type {
   Channel,
-  FilmEffects,
   FolderListing,
   InboundItem,
   Job,
   JobEvent,
   JobState,
   Look,
+  LookKindSchema,
+  LookParams,
   MarkChange,
   MarkInput,
   MarkResult,
@@ -141,10 +142,12 @@ export interface JobSource {
   listChannels(): Promise<Channel[]>;
   /** 阶段操作（POST /jobs/{id}/actions/{name}），如 grade 的 set / defaults / complete */
   jobAction(id: string, name: string, body?: Record<string, unknown>): Promise<Job>;
-  /** 内置胶片风格 */
+  /** 风格（带风格类型） */
   listLooks(): Promise<Look[]>;
-  /** 风格的 .cube 原文（WebGL2 预览用，与导出同一份） */
-  lookCube(id: string): Promise<string>;
+  /** 风格类型与参数模式（配置面板据此生成） */
+  listLookKinds(): Promise<LookKindSchema[]>;
+  /** 风格的 .cube 原文（WebGL2 预览用，与导出同一份）；query = 影响 LUT 的参数（cubeQuery） */
+  lookCube(id: string, query?: string): Promise<string>;
   /** 100% 裁切预览（服务端引擎真渲染颗粒 / 光晕；胶片开关打开才有）→ JPEG Blob */
   filmPreview(req: FilmPreviewRequest): Promise<Blob>;
 }
@@ -152,8 +155,8 @@ export interface JobSource {
 export interface FilmPreviewRequest {
   photoId: string;
   look: string;
-  strength: number;
-  film: FilmEffects;
+  /** film 类型参数（强度、相纸、颗粒……） */
+  params: LookParams;
   /** 裁切中心 0–1 */
   cx?: number;
   cy?: number;

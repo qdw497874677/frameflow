@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, RotateCcw, SkipForward } from 'lucide-react';
 import { jobSource, source } from '@/api';
-import type { Job, Look } from '@/core/types';
+import type { Job, Look, LookKindSchema, LookParams } from '@/core/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { LutCanvas } from './LutCanvas';
-import { FilmEffectsPanel } from './FilmEffectsPanel';
+import { LookParamsPanel } from './LookParamsPanel';
+import { FrameApprox } from './FrameApprox';
 import { FilmCropPreview } from './FilmCropPreview';
-import { clampStrength, cycleLook, exportSummary, isExporting, isRawEmbedded, isStageEditable, isOverridden, itemExportLabel, jobDefaults, jobFilm, filmEffectsOn, parseCube, recipeOf, reviewProgress, type Lut } from './cube';
+import { clampStrength, cycleLook, exportSummary, isExporting, isRawEmbedded, isStageEditable, isOverridden, itemExportLabel, jobDefaults, jobFilm, jobRecipe, filmEffectsOn, parseCube, cubeQuery, paramsForKind, patchParams, recipeOf, reviewProgress, type Lut } from './cube';
 import { jobProgressView } from '@/features/jobs/jobActions';
 
 /**
- * 滤镜设置阶段（grade 任务 running/interrupted 时的工作台）：
- * 先定任务默认风格与强度 → 逐张过目（可覆盖）→「完成并导出」由服务端套同一份 .cube 写 JPEG。
+ * 风格设置阶段（grade 任务 running/interrupted 时的工作台）：
+ * 先定任务默认风格与配置（配置面板由风格类型的参数模式生成，ADR 0006）→ 逐张过目（可覆盖）→「完成并导出」由服务端套同一份 .cube 写 JPEG。
  * 快捷键：[ ] 换风格、- = 强度、按住 \ 看原图、Enter 通过并下一张、N 跳过、R 重置、Esc 关闭、← → 翻页。
  */
 export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAct: (fn: () => Promise<Job>) => Promise<void> }) {
   const [looks, setLooks] = useState<Look[]>([]);
+  const [kinds, setKinds] = useState<LookKindSchema[]>([]);
   const [luts, setLuts] = useState<Record<string, Lut>>({});
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -26,22 +28,39 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
 
   useEffect(() => {
     let alive = true;
-    jobSource.listLooks().then(async (list) => {
-      if (!alive) return;
-      setLooks(list);
-      for (const l of list) {
-        try {
-          const lut = parseCube(await jobSource.lookCube(l.id));
-          if (alive) setLuts((m) => ({ ...m, [l.id]: lut }));
-        } catch (e) {
-          if (alive) setError(`风格 ${l.name} 加载失败：${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-    }, (e) => alive && setError(e instanceof Error ? e.message : String(e)));
+    jobSource.listLooks().then((list) => alive && setLooks(list), (e) => alive && setError(e instanceof Error ? e.message : String(e)));
+    jobSource.listLookKinds().then((list) => alive && setKinds(list), () => undefined);
     return () => {
       alive = false;
     };
   }, []);
+
+  const recipe = jobRecipe(job);
+  const schemaOf = useCallback((id: string | null) => (id ? kinds.find((k) => k.kind === looks.find((l) => l.id === id)?.kind) : undefined), [kinds, looks]);
+  /** 这个风格在任务配方下的参数（按它的类型归一） */
+  const paramsOf = (id: string | null): LookParams => paramsForKind(schemaOf(id), recipe.params);
+  /** LUT 按「风格 + 影响 LUT 的参数」缓存：换相纸 / 预设 / 曝光就重取一份 */
+  const lutKey = (id: string) => `${id}?${cubeQuery(schemaOf(id), recipe.params)}`;
+  const wanted = looks.map((l) => lutKey(l.id)).join('|');
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      for (const key of wanted ? wanted.split('|') : []) {
+        if (luts[key]) continue;
+        const [id, q] = key.split('?') as [string, string];
+        try {
+          const lut = parseCube(await jobSource.lookCube(id, q));
+          if (alive) setLuts((m) => ({ ...m, [key]: lut }));
+        } catch (e) {
+          if (alive) setError(`风格 ${id} 加载失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted]);
 
   const photos = useMemo(() => job.items.filter((i) => i.status !== 'skipped'), [job.items]);
   const defaults = jobDefaults(job);
@@ -56,10 +75,13 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
   const raws = photos.filter(isRawEmbedded).length;
   const keepGps = job.params?.['keepGps'] === true;
   const film = jobFilm(job);
-  const hasFilmLooks = looks.some((l) => l.kind === 'film');
   const isFilm = (id: string | null) => !!id && looks.find((l) => l.id === id)?.kind === 'film';
 
   const act = useCallback((name: string, body: Record<string, unknown>) => onAct(() => jobSource.jobAction(job.id, name, body)), [job.id, onAct]);
+  const defaultSchema = schemaOf(defaults.look);
+  const setDefaultStrength = useCallback((v: number) => (defaultSchema
+    ? act('defaults', { recipe: { params: patchParams(defaultSchema, paramsForKind(defaultSchema, recipe.params), 'strength', v) } })
+    : act('defaults', { strength: v })), [act, defaultSchema, recipe.params]);
   const move = useCallback((step: number) => {
     if (!photos.length) return;
     const i = Math.max(0, photos.findIndex((p) => p.id === focus));
@@ -73,7 +95,7 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
       if (e.key === '\\') return setOriginal(true);
       if (!focused) {
         if (e.key === '[' || e.key === ']') void act('defaults', { look: cycleLook(ids, defaults.look, e.key === ']' ? 1 : -1) });
-        else if (e.key === '-' || e.key === '=') void act('defaults', { strength: clampStrength(defaults.strength + (e.key === '=' ? 0.1 : -0.1)) });
+        else if (e.key === '-' || e.key === '=') void setDefaultStrength(clampStrength(defaults.strength + (e.key === '=' ? 0.1 : -0.1)));
         else if (e.key === 'ArrowRight' || e.key === 'Enter') move(0);
         else return;
         e.preventDefault();
@@ -99,9 +121,9 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
     };
-  }, [editable, busy, focused, job, ids, defaults.look, defaults.strength, act, move]);
+  }, [editable, busy, focused, job, ids, defaults.look, defaults.strength, act, move, setDefaultStrength]);
 
-  const lutOf = (id: string | null) => (id ? luts[id] ?? null : null);
+  const lutOf = (id: string | null) => (id ? luts[lutKey(id)] ?? null : null);
   const strip = (current: string | null, pick: (id: string | null) => void) => (
     <div className="flex gap-1.5 overflow-x-auto pb-1">
       {[null, ...ids].map((id) => (
@@ -129,7 +151,7 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
   return (
     <div className="mt-3 rounded-lg border border-border/60 p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm">滤镜设置</p>
+        <p className="text-sm">风格设置</p>
         {editable ? (
           <>
             <Badge variant="outline">已过目 {progress.reviewed}/{progress.total}</Badge>
@@ -169,13 +191,13 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       {editable && <div className="mt-2 space-y-2">
         <p className="text-xs text-muted-foreground">任务默认（未选中照片时 [ ] 与 - = 调这里）</p>
-        {strip(defaults.look, (id) => void act('defaults', { look: id }))}
-        {strength(defaults.strength, (v) => void act('defaults', { strength: v }))}
+        {strip(defaults.look, (id) => void act('defaults', id ? { recipe: { lookId: id } } : { look: null }))}
+        {!defaultSchema && strength(defaults.strength, (v) => void setDefaultStrength(v))}
         <label className="flex items-center gap-2 text-xs text-muted-foreground" title="拍摄时间、相机/镜头、作者/版权总会保留；朝向已摆正">
           <input type="checkbox" checked={keepGps} disabled={busy} onChange={(e) => void act('defaults', { keepGps: e.target.checked })} />
           成品保留 GPS 位置（缺省剥掉，外发更安全）
         </label>
-        {hasFilmLooks && <FilmEffectsPanel film={film} disabled={busy} onChange={(next) => void act('defaults', { film: next })} />}
+        {defaultSchema && <LookParamsPanel schema={defaultSchema} params={paramsOf(defaults.look)} disabled={busy} onChange={(next) => void act('defaults', { recipe: { params: next } })} />}
       </div>}
 
       {editable && focused && (
@@ -186,14 +208,16 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
               setCenter({ cx: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), cy: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) });
             }}
           >
+          <FrameApprox schema={original ? undefined : schemaOf(recipeOf(job, focused).look)} params={paramsOf(recipeOf(job, focused).look)}>
           <LutCanvas
             src={source.thumbUrl(focused.id, 2048)}
             lut={lutOf(recipeOf(job, focused).look)}
             strength={recipeOf(job, focused).strength}
             original={original}
             alt={focused.displayName ?? focused.id}
-            className="max-h-[60vh] w-full object-contain"
+            className="block max-h-[60vh] max-w-full object-contain"
           />
+          </FrameApprox>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className="truncate text-xs">{focused.displayName ?? focused.id}</span>
@@ -204,7 +228,7 @@ export function GradeStage({ job, busy, onAct }: { job: Job; busy: boolean; onAc
             <span className="ml-auto text-[11px] text-muted-foreground">按住 \ 对比原图 · Enter 通过 · N 跳过 · Esc 关闭</span>
           </div>
           {isFilm(recipeOf(job, focused).look) && filmEffectsOn(film) && (
-            <FilmCropPreview photoId={focused.id} look={recipeOf(job, focused).look!} strength={recipeOf(job, focused).strength} film={film} center={center} />
+            <FilmCropPreview photoId={focused.id} look={recipeOf(job, focused).look!} params={{ ...paramsOf(recipeOf(job, focused).look), strength: recipeOf(job, focused).strength }} center={center} />
           )}
           {strip(recipeOf(job, focused).look, (id) => void act('set', { photoId: focused.id, look: id }))}
           <div className="flex flex-wrap items-center gap-2">

@@ -36,6 +36,7 @@ import { FilmCropPreview, type FilmPreviewRequest } from '../../outbound/grading
 import { registerLookRoutes, type LookCatalog } from './routes/looks.ts';
 import { CubeLookSource } from '../../outbound/grading/cube-looks.ts';
 import { CompositeLookSource } from '../../../application/grading/composite-looks.ts';
+import { FilmKind, LookKindRegistry, LutKind } from '../../../application/grading/look-kinds.ts';
 import { formatCube } from '../../../domain/grading/lut.ts';
 import { createFilmModule, type FilmModule } from '../../film/index.ts';
 import { SharpRenderer } from '../../outbound/grading/sharp-renderer.ts';
@@ -72,24 +73,29 @@ export async function buildServer(cfg: Config, lib: Library, deps: ServerDeps = 
   // 风格来源：内置 .cube + （开关打开时）光谱胶片引擎
   const cubeLooks = new CubeLookSource();
   const film: FilmModule | null = cfg.film ? createFilmModule(cfg.film, cfg.dataDir, (m) => app.log.warn(m)) : null;
-  const looks = new CompositeLookSource([{ kind: 'cube', source: cubeLooks }, ...(film ? [{ kind: 'film', source: film.looks }] : [])]);
+  const looks = new CompositeLookSource([{ kind: 'lut', source: cubeLooks }, ...(film ? [{ kind: 'film', source: film.looks }] : [])]);
+  // 风格类型：每个来源由一个类型承载（参数模式 + 效果组装），见 docs/adr/0006
+  const filmKind = film ? new FilmKind(film.looks) : null;
+  const kinds = new LookKindRegistry([{ kind: new LutKind(cubeLooks), source: cubeLooks }, ...(film && filmKind ? [{ kind: filmKind, source: film.looks }] : [])]);
   const filmPreview = new FilmCropPreview(lib, looks);
   const lookCatalog: LookCatalog = {
-    entries: () => looks.entries(),
-    cubeText: async (id) => {
-      const owner = looks.ownerOf(id);
-      if (!owner) return null;
-      if (owner.kind === 'cube') return cubeLooks.cubeText(id);
-      const lut = await owner.source.load(id);
+    entries: () => kinds.entries(),
+    kinds: () => kinds.kinds(),
+    kindOf: (id) => kinds.kindOf(id),
+    cubeText: async (id, params) => {
+      const kind = kinds.kindOf(id);
+      if (!kind) return null;
+      if (kind.kind === 'lut') return cubeLooks.cubeText(id);
+      const lut = await kinds.sourceOf(id)!.load(id, filmKind && params ? filmKind.variant(params) : undefined);
       return lut ? formatCube(lut, id) : 'unavailable';
     },
     filmStatus: () => film?.status() ?? { enabled: false },
-    ...(film ? { filmPreview: (req: FilmPreviewRequest) => filmPreview.render(req) } : {}),
+    ...(film && filmKind ? { filmPreview: (req: FilmPreviewRequest) => filmPreview.render(req), filmKind } : {}),
   };
   const jobs = new JobsService(new JobsStore(cfg.dataDir), registry, {
     lib,
     // 滤镜阶段：内置 .cube 风格、sharp 渲染全尺寸、成品写数据目录 exports/<jobId>/
-    grading: { looks, renderer: new SharpRenderer(lib), exports: new DirExportTarget(cfg.dataDir), metadata: new ExiftoolMetadata(lib) },
+    grading: { looks, kinds, renderer: new SharpRenderer(lib), exports: new DirExportTarget(cfg.dataDir), metadata: new ExiftoolMetadata(lib) },
     signRangeToken: (jobId, alias, tokenId) => auth.issueRangeToken(jobId, alias, tokenId),
     // F29：完成通知（只发给确认时同意通知的目标；同代次不重发）
     onDone: (job, generation) => { onJobDone(job.id, generation); },
