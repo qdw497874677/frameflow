@@ -82,7 +82,8 @@ test('grade：逐张覆盖、过目、完成后导出到数据目录，原片不
     r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/set`, { photoId: a.id, strength: 3 });
     assert.equal(r.status, 400);
     r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/defaults`, { look: 'chrome64' });
-    assert.equal(r.json.params.look, 'chrome64');
+    assert.equal(r.json.params.recipe.lookId, 'chrome64');
+    assert.equal(r.json.params.recipe.kind, 'lut');
     r = await fx.call('POST', `/api/v1/jobs/${job.id}/actions/explode`, {});
     assert.equal(r.status, 400);
 

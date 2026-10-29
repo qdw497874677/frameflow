@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import { filmCropPlan, type FilmEffects } from '../../../domain/grading/film.ts';
 import { lutEffect, runEffects, type Effect } from '../../../domain/grading/effects.ts';
 import type { LookSource } from '../../../application/grading/ports.ts';
+import type { LookParams } from '../../../domain/grading/look-kind.ts';
 import type { MasterSource } from './sharp-renderer.ts';
 
 export interface FilmPreviewRequest {
@@ -14,6 +15,8 @@ export interface FilmPreviewRequest {
   readonly look: string;
   readonly strength: number;
   readonly film: FilmEffects;
+  /** 烘 LUT 的风格参数（相纸 / 预设 / 曝光） */
+  readonly variant?: LookParams;
   /** 裁切中心（0–1，相对摆正后的整帧） */
   readonly cx: number;
   readonly cy: number;
@@ -38,9 +41,9 @@ export class FilmCropPreview {
     const plan = filmCropPlan(fullW, fullH, req.cx, req.cy, req.size, req.film);
     const { data, info } = await sharp(path).rotate().extract(plan.region).removeAlpha().toColourspace('srgb').raw().toBuffer({ resolveWithObject: true });
     const pixels = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    let effect: Effect | null = this.looks.frameEffect?.(req.look, req.strength, { ...req.film, filmFormatMm: plan.filmFormatMm }) ?? null;
+    let effect: Effect | null = this.looks.frameEffect?.(req.look, req.strength, { ...req.film, filmFormatMm: plan.filmFormatMm }, req.variant) ?? null;
     if (!effect) {
-      const lut = await this.looks.load(req.look);
+      const lut = await this.looks.load(req.look, req.variant);
       if (!lut) return null;
       effect = lutEffect(lut, req.strength);
     }

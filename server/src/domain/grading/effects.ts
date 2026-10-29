@@ -9,11 +9,13 @@ export interface Effect {
   /**
    * 原地改写交错排列的 8 位像素（channels ≥ 3，多出来的 alpha 不动）。
    * frame 给整帧尺寸（整帧效果如颗粒 / 光晕要用）；可返回 Promise（交给外部进程算的效果）。
+   * 改尺寸的效果（如边框）返回新的 Image，后面的效果接着处理新图。
    */
-  apply(pixels: Uint8Array, channels: number, frame?: Frame): void | Promise<void>;
+  apply(pixels: Uint8Array, channels: number, frame?: Frame): void | Image | Promise<void | Image>;
 }
 
 export interface Frame { readonly width: number; readonly height: number }
+export interface Image extends Frame { readonly pixels: Uint8Array }
 
 /** 按强度把 LUT 结果和原色混合（strength 0 = 原图，1 = 完全套用） */
 export function lutEffect(lut: Lut3D, strength: number): Effect {
@@ -34,8 +36,14 @@ export function lutEffect(lut: Lut3D, strength: number): Effect {
   };
 }
 
-export async function runEffects(pixels: Uint8Array, channels: number, effects: readonly Effect[], frame?: Frame): Promise<void> {
-  for (const effect of effects) await effect.apply(pixels, channels, frame);
+/** 依次跑完效果；返回最终图像（尺寸可能被边框之类的效果改过） */
+export async function runEffects(pixels: Uint8Array, channels: number, effects: readonly Effect[], frame?: Frame): Promise<Image | undefined> {
+  let cur = pixels, f = frame;
+  for (const effect of effects) {
+    const next = await effect.apply(cur, channels, f);
+    if (next) { cur = next.pixels; f = { width: next.width, height: next.height }; }
+  }
+  return f ? { pixels: cur, width: f.width, height: f.height } : undefined;
 }
 
 /** 把另算出来的 RGB 成品按强度混回原图（out 为 w×h×3；pixels 可带 alpha） */

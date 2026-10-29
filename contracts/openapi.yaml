@@ -508,13 +508,16 @@ paths:
         操作表在各 kind 的 handler 里（`handler.actions`），没有这个操作 400；任务不在 `running` / `interrupted` 409
         （interrupted 收到操作会接着跑）。批注链接不能调用。
 
-        `grade`（滤镜设置阶段）的操作：
+        `grade`（风格设置阶段）的操作。术语：**风格（Look）** 由一个**风格类型（LookKind：`lut` / `film`）**承载，
+        每个类型有自己的参数模式（见 `GET /look-kinds`）；任务默认配方存为 `params.recipe = { lookId, kind, params }`（ADR 0006）：
         - `set`：`{ photoId, look?: string|null, strength?: 0–1, reviewed?: boolean, reset?: boolean }` ——
           改一张的风格（`null` = 不套用）/ 强度；「已过目」只由显式 `reviewed: true`（通过）/ `false`（撤回）改变，只改风格不算；`reset: true` 清掉覆盖与过目、恢复任务默认。写在 `item.grade`。
-        - `defaults`：`{ look?, strength?, keepGps?, film? }` —— 改任务默认（写在 `params`），没覆盖的照片都跟着变。
-          `film`（`FilmEffects`，`null` = 清掉）是胶片整帧效果：**只对 `kind: film` 风格、只在导出生效**（预览仍是 LUT）。
-          任一 grain / halation / dirDiffusionUm > 0 时该张改由引擎整帧渲染（18 MP 约 5 s），再按强度混回；
-          没给 `grainSeed` 时按照片 id 派生（重导一致，张张不同）。建任务时也可在 `params.film` 给。
+        - `defaults`：`{ recipe?: { lookId?, kind?, params? }, keepGps? }` —— 改任务默认（写在 `params.recipe`），没覆盖的照片都跟着变。
+          `params` 整体替换、按该风格类型的模式严格校验（未知键 400）；只换 `lookId` 时旧参数按新类型归一（带不过去的丢掉）。
+          **兼容旧写法** `{ look?, strength?, film?: FilmEffects | null }`：折算进 `recipe.params`，旧字段从 `params` 里移除。
+          film 类型的 grain / halation / dirDiffusionUm（`preview: export`）只在导出生效，任一 > 0 时该张由引擎整帧渲染（18 MP 约 5 s）；
+          没给 `grainSeed` 时按照片 id 派生。相纸 / 预设 / 曝光（`preview: lut`）改变烘出的 LUT；
+          边框 / 暗角（`preview: approx`）导出时服务端真做（边框会改变成品尺寸），预览是前端近似。建任务时同样可给 `params.recipe` 或旧字段。
         - `complete`：`{}` —— **只受理，回 202**：锁定配方（任务 `phase: exporting`，之后 set/defaults/complete 都 409），
           后台队列按「任务默认 + 逐张覆盖」限并发（缺省 2 张）逐张全尺寸渲染，成品写到数据目录 `exports/<jobId>/原名_风格.jpg`
           （原片不动）。每张完成即更新 `done`（`to` = 文件名）或 `failed`（`note` = 原因，已自动重试 1 次），
@@ -537,8 +540,9 @@ paths:
 
   /looks:
     get:
-      summary: 内置胶片风格列表（grade 任务的 params.look）
+      summary: 风格（Look）列表（grade 任务的 params.recipe.lookId）
       description: |
+        每项带 `kind`（风格类型，参数模式见 `GET /look-kinds`）。**`kind` 的值 `cube` 已改名 `lut`**（ADR 0006）。
         7 个中性命名风格，由 RawTherapee Film Simulation HaldCLUT 转换为 33³ .cube，CC BY-SA 4.0
         （Pat David / Pavlov Dmitry / Michael Ezra），见 `server/assets/looks/NOTICE`。
       x-implemented: true
@@ -560,8 +564,26 @@ paths:
                         name: { type: string, example: Portrait 400 }
                         inspiredBy: { type: string, description: 近似的胶卷（只作说明） }
                         cube: { type: string, example: /api/v1/looks/portrait400.cube }
-                        kind: { type: string, enum: [cube, film], description: "cube = 内置 .cube；film = 光谱胶片引擎烘焙（开关打开时才有）" }
+                        kind: { type: string, enum: [lut, film], description: "lut = 内置 .cube；film = 光谱胶片引擎烘焙（开关打开时才有）" }
                   license: { type: string }
+
+  /look-kinds:
+    get:
+      summary: 风格类型（LookKind）与各自的参数模式（前端据此自动生成配置面板）
+      description: |
+        每个类型声明参数分组与参数：`number`（min / max / step / unit）、`enum`（options）、`bool`、`color`（#rrggbb）、`seed`（0–2³²−1 整数）。
+        `preview` 说明预览如何体现：`lut` = 改变 .cube（带查询参数取 `/looks/{file}`），`approx` = 前端近似（边框 / 暗角），
+        `export` = 只在导出（或 `/film/preview` 裁切）里真渲染。分组 `extra: true` 是类型自带的附加项（边框、镜头、边缘效应等）。
+      x-implemented: true
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/LookKindSchema" } }
 
   /looks/{file}:
     get:
@@ -569,8 +591,10 @@ paths:
       x-implemented: true
       parameters:
         - { name: file, in: path, required: true, schema: { type: string, example: portrait400.cube } }
+        - { name: params, in: query, required: false, style: form, explode: true, schema: { type: object, additionalProperties: { type: string } }, description: "该风格类型的参数（如 film 的 `paper=edgepaper&preset=soft&exposureEv=0.5`）；只有 `preview: lut` 的参数影响结果，未知键忽略" }
       responses:
         "200": { description: Adobe .cube 文本, content: { text/plain: { schema: { type: string } } } }
+        "400": { description: 查询参数不合该类型的模式 }
         "404": { description: 没这个风格 }
         "503": { description: film 风格，但胶片引擎不可用且没有缓存 }
 
@@ -631,7 +655,8 @@ paths:
               properties:
                 photoId: { type: string }
                 look: { type: string, description: "`kind: film` 的风格 id" }
-                strength: { type: number, minimum: 0, maximum: 1, default: 1 }
+                params: { type: object, additionalProperties: true, description: "film 类型参数（见 GET /look-kinds）；给了就不看 strength / film" }
+                strength: { type: number, minimum: 0, maximum: 1, default: 1, description: 旧写法（兼容） }
                 film: { $ref: "#/components/schemas/FilmEffects" }
                 cx: { type: number, minimum: 0, maximum: 1, default: 0.5 }
                 cy: { type: number, minimum: 0, maximum: 1, default: 0.5 }
@@ -1040,6 +1065,40 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   schemas:
+    LookKindSchema:
+      type: object
+      required: [kind, label, groups, params]
+      properties:
+        kind: { type: string, example: film }
+        label: { type: string, example: 光谱胶片 }
+        groups:
+          type: array
+          items: { type: object, required: [id, label], properties: { id: { type: string }, label: { type: string }, extra: { type: boolean }, hint: { type: string } } }
+        params:
+          type: array
+          items:
+            type: object
+            required: [key, type, label, group, default, preview]
+            properties:
+              key: { type: string }
+              type: { type: string, enum: [number, enum, bool, color, seed] }
+              label: { type: string }
+              group: { type: string }
+              default: {}
+              preview: { type: string, enum: [lut, approx, export] }
+              min: { type: number }
+              max: { type: number }
+              step: { type: number }
+              unit: { type: string }
+              hint: { type: string }
+              options: { type: array, items: { type: object, properties: { value: { type: string }, label: { type: string } } } }
+    LookRecipe:
+      type: object
+      required: [lookId, params]
+      properties:
+        lookId: { type: string }
+        kind: { type: string }
+        params: { type: object, additionalProperties: true }
     FilmEffects:
       type: object
       additionalProperties: false

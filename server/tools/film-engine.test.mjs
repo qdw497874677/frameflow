@@ -168,7 +168,7 @@ test('HTTP：开关关着与以前一样；打开后 film 风格出现在列表�
   const off = await makeFixture({ photos: 0 });
   try {
     assert.deepEqual((await off.call('GET', '/api/v1/film/status')).json, { enabled: false });
-    assert.ok((await off.call('GET', '/api/v1/looks')).json.items.every((l) => l.kind === 'cube'));
+    assert.ok((await off.call('GET', '/api/v1/looks')).json.items.every((l) => l.kind === 'lut'));
   } finally { await off.dispose(); }
 
   const bin = path.join(tmp(), 'ffe');
@@ -183,7 +183,7 @@ test('HTTP：开关关着与以前一样；打开后 film 风格出现在列表�
       const items = (await fx.call('GET', '/api/v1/looks')).json.items;
       const film = items.find((l) => l.id === 'filmportrait400');
       assert.equal(film.kind, 'film');
-      assert.ok(items.some((l) => l.id === 'portrait400' && l.kind === 'cube'), '同名 .cube 风格不受影响');
+      assert.ok(items.some((l) => l.id === 'portrait400' && l.kind === 'lut'), '同名 .cube 风格不受影响');
       const cube = await fx.call('GET', '/api/v1/looks/filmportrait400.cube');
       assert.equal(cube.status, 200);
       assert.match(cube.text, /LUT_3D_SIZE 33/);
@@ -276,7 +276,10 @@ test('HTTP：grade 带 film 效果时导出走引擎整帧渲染；参数校验�
       assert.equal(badDef.status, 400);
       const ok = await fx.call('POST', `/api/v1/jobs/${j.id}/actions/defaults`, { film: { grain: 1, halation: 0.2 } });
       assert.equal(ok.status, 200);
-      assert.deepEqual(ok.json.params.film, { grain: 1, halation: 0.2 });
+      assert.equal(ok.json.params.film, undefined, '旧字段折算进 recipe');
+      assert.equal(ok.json.params.recipe.kind, 'film');
+      assert.equal(ok.json.params.recipe.params.grain, 1);
+      assert.equal(ok.json.params.recipe.params.halation, 0.2);
       const c = await fx.call('POST', `/api/v1/jobs/${j.id}/actions/complete`, {});
       assert.equal(c.status, 202);
       for (let i = 0; i < 500 && j.state === 'running'; i++) { await new Promise((x) => setTimeout(x, 10)); j = (await fx.call('GET', `/api/v1/jobs/${j.id}`)).json; }

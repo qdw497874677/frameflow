@@ -10,6 +10,10 @@ import { blendRgb, toRgb, type Effect } from '../../domain/grading/effects.ts';
 import type { Lut3D } from '../../domain/grading/lut.ts';
 import type { Look } from '../../domain/grading/recipe.ts';
 import type { FilmEngine, FilmLutStore, LookSource } from './ports.ts';
+import type { LookParams } from '../../domain/grading/look-kind.ts';
+import { FILM_PRESETS, filmRenderParams, type FilmPreset } from '../../domain/grading/film-presets.ts';
+
+export const DEFAULT_PAPER = 'premierpaper';
 
 export interface FilmLookOptions {
   readonly lutSize?: number;
@@ -51,7 +55,8 @@ export class FilmLookSource implements LookSource {
 
   private setCatalog(stocks: readonly FilmStock[]): void {
     this.stocksById = new Map();
-    this.papers = stocks.filter((s) => s.kind === 'paper');
+    // 缺省相纸 = 列表第一张：Premier（最早接入、所有基准用它）排最前，其余按引擎顺序
+    this.papers = stocks.filter((s) => s.kind === 'paper').sort((a, b) => Number(b.id === DEFAULT_PAPER) - Number(a.id === DEFAULT_PAPER));
     this.looks = [];
     for (const s of stocks) {
       if (s.kind !== 'negative') continue;
@@ -70,11 +75,33 @@ export class FilmLookSource implements LookSource {
   }
 
   /** 整帧渲染效果：引擎从原图整帧算（色彩 + 颗粒 / 光晕 / DIR 边缘），再按强度混回。失败就抛（导出会重试 / 记失败） */
-  frameEffect(id: string, strength: number, film: FilmEffects): Effect | null {
+  /** 可选的相纸（给 film 风格类型的 paper 枚举） */
+  paperList(): FilmStock[] {
+    return this.papers.map((p) => ({ ...p }));
+  }
+
+  /** 引擎 id（不带 film 前缀） */
+  stockOf(id: string): string | null {
+    return this.stocksById.get(id)?.id ?? null;
+  }
+
+  /** variant（相纸 / 预设 / 曝光）→ 相纸 + 引擎参数；没给 variant = 配置里的固定相纸与参数（老行为） */
+  private variantOf(stockId: string, variant?: LookParams): { paper: string | null; params: FilmParams } {
+    const base = this.opts.params ?? {};
+    const want = variant?.['paper'];
+    const paper = typeof want === 'string' && this.papers.some((p) => p.id === want) ? want : this.opts.paper ?? this.papers[0]?.id ?? null;
+    if (!variant) return { paper, params: base };
+    const preset = FILM_PRESETS.includes(variant['preset'] as FilmPreset) ? (variant['preset'] as FilmPreset) : 'neutral';
+    const ev = typeof variant['exposureEv'] === 'number' ? variant['exposureEv'] : 0;
+    return { paper, params: { ...base, ...filmRenderParams(stockId, preset, ev) } };
+  }
+
+  frameEffect(id: string, strength: number, film: FilmEffects, variant?: LookParams): Effect | null {
     const stock = this.stocksById.get(id);
     if (!stock || !hasFilmEffects(film)) return null;
-    const paper = this.opts.paper ?? this.papers[0]?.id;
-    const params = { ...(this.opts.params ?? {}), ...film };
+    const v = this.variantOf(stock.id, variant);
+    const paper = v.paper ?? undefined;
+    const params = { ...v.params, ...film };
     const engine = this.engine;
     return {
       id: 'film-render',
@@ -86,11 +113,10 @@ export class FilmLookSource implements LookSource {
     };
   }
 
-  async load(id: string): Promise<Lut3D | null> {
+  async load(id: string, variant?: LookParams): Promise<Lut3D | null> {
     const stock = this.stocksById.get(id);
     if (!stock) return null;
-    const paper = this.opts.paper ?? this.papers[0]?.id ?? null;
-    const params = this.opts.params ?? {};
+    const { paper, params } = this.variantOf(stock.id, variant);
     const version = this.engine.version();
     const key = filmLutKey(version ?? '?', stock.id, paper, this.lutSize, params);
     const hit = version ? this.memo.get(key) : undefined;
